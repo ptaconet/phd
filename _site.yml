@@ -1,8 +1,7 @@
-name: "my-website"
+name: "phd_scripts"
+exclude: ["^r_scripts_database$","^r_scripts$","^extdata$"]
 navbar:
-  title: "My Website"
+  title: "R scripts developed in the frame of my PhD"
   left:
     - text: "Home"
-      href: index.html
-    - text: "About"
-      href: about.html
+      href: README.html

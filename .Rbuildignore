@@ -1,1 +1,4 @@
-^README\.Rmd$
+^r_scripts$
+^extdata$
+^figures$
+^r_scripts_database$

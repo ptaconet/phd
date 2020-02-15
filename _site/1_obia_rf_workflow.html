@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+
+<head>
+
+<meta charset="utf-8" />
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<meta name="generator" content="pandoc" />
+<meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
+
+
+<meta name="author" content="Paul Taconet" />
+
+<meta name="date" content="2020-02-15" />
+
+<title>A classification scheme/workflow for fine-scale LU/LC mapping at different nomenclature levels built on a combined random forest and OBIA approach using multisource data (HRS, VHRS and DEM) and implemented with open-source softwares (FLOSS)</title>
+
+<script src="site_libs/jquery-1.11.3/jquery.min.js"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link href="site_libs/bootstrap-3.3.5/css/bootstrap.min.css" rel="stylesheet" />
+<script src="site_libs/bootstrap-3.3.5/js/bootstrap.min.js"></script>
+<script src="site_libs/bootstrap-3.3.5/shim/html5shiv.min.js"></script>
+<script src="site_libs/bootstrap-3.3.5/shim/respond.min.js"></script>
+<script src="site_libs/navigation-1.1/tabsets.js"></script>
+<link href="site_libs/highlightjs-9.12.0/default.css" rel="stylesheet" />
+<script src="site_libs/highlightjs-9.12.0/highlight.js"></script>
+
+<style type="text/css">code{white-space: pre;}</style>
+<style type="text/css">
+  pre:not([class]) {
+    background-color: white;
+  }
+</style>
+<script type="text/javascript">
+if (window.hljs) {
+  hljs.configure({languages: []});
+  hljs.initHighlightingOnLoad();
+  if (document.readyState && document.readyState === "complete") {
+    window.setTimeout(function() { hljs.initHighlighting(); }, 0);
+  }
+}
+</script>
+
+
+
+<style type="text/css">
+h1 {
+  font-size: 34px;
+}
+h1.title {
+  font-size: 38px;
+}
+h2 {
+  font-size: 30px;
+}
+h3 {
+  font-size: 24px;
+}
+h4 {
+  font-size: 18px;
+}
+h5 {
+  font-size: 16px;
+}
+h6 {
+  font-size: 12px;
+}
+.table th:not([align]) {
+  text-align: left;
+}
+</style>
+
+
+
+
+<style type = "text/css">
+.main-container {
+  max-width: 940px;
+  margin-left: auto;
+  margin-right: auto;
+}
+code {
+  color: inherit;
+  background-color: rgba(0, 0, 0, 0.04);
+}
+img {
+  max-width:100%;
+  height: auto;
+}
+.tabbed-pane {
+  padding-top: 12px;
+}
+.html-widget {
+  margin-bottom: 20px;
+}
+button.code-folding-btn:focus {
+  outline: none;
+}
+summary {
+  display: list-item;
+}
+</style>
+
+
+<style type="text/css">
+/* padding for bootstrap navbar */
+body {
+  padding-top: 51px;
+  padding-bottom: 40px;
+}
+/* offset scroll position for anchor links (for fixed navbar)  */
+.section h1 {
+  padding-top: 56px;
+  margin-top: -56px;
+}
+.section h2 {
+  padding-top: 56px;
+  margin-top: -56px;
+}
+.section h3 {
+  padding-top: 56px;
+  margin-top: -56px;
+}
+.section h4 {
+  padding-top: 56px;
+  margin-top: -56px;
+}
+.section h5 {
+  padding-top: 56px;
+  margin-top: -56px;
+}
+.section h6 {
+  padding-top: 56px;
+  margin-top: -56px;
+}
+.dropdown-submenu {
+  position: relative;
+}
+.dropdown-submenu>.dropdown-menu {
+  top: 0;
+  left: 100%;
+  margin-top: -6px;
+  margin-left: -1px;
+  border-radius: 0 6px 6px 6px;
+}
+.dropdown-submenu:hover>.dropdown-menu {
+  display: block;
+}
+.dropdown-submenu>a:after {
+  display: block;
+  content: " ";
+  float: right;
+  width: 0;
+  height: 0;
+  border-color: transparent;
+  border-style: solid;
+  border-width: 5px 0 5px 5px;
+  border-left-color: #cccccc;
+  margin-top: 5px;
+  margin-right: -10px;
+}
+.dropdown-submenu:hover>a:after {
+  border-left-color: #ffffff;
+}
+.dropdown-submenu.pull-left {
+  float: none;
+}
+.dropdown-submenu.pull-left>.dropdown-menu {
+  left: -100%;
+  margin-left: 10px;
+  border-radius: 6px 0 6px 6px;
+}
+</style>
+
+<script>
+// manage active state of menu based on current page
+$(document).ready(function () {
+  // active menu anchor
+  href = window.location.pathname
+  href = href.substr(href.lastIndexOf('/') + 1)
+  if (href === "")
+    href = "index.html";
+  var menuAnchor = $('a[href="' + href + '"]');
+
+  // mark it active
+  menuAnchor.parent().addClass('active');
+
+  // if it's got a parent navbar menu mark it active as well
+  menuAnchor.closest('li.dropdown').addClass('active');
+});
+</script>
+
+<!-- tabsets -->
+
+<style type="text/css">
+.tabset-dropdown > .nav-tabs {
+  display: inline-table;
+  max-height: 500px;
+  min-height: 44px;
+  overflow-y: auto;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.tabset-dropdown > .nav-tabs > li.active:before {
+  content: "";
+  font-family: 'Glyphicons Halflings';
+  display: inline-block;
+  padding: 10px;
+  border-right: 1px solid #ddd;
+}
+
+.tabset-dropdown > .nav-tabs.nav-tabs-open > li.active:before {
+  content: "&#xe258;";
+  border: none;
+}
+
+.tabset-dropdown > .nav-tabs.nav-tabs-open:before {
+  content: "";
+  font-family: 'Glyphicons Halflings';
+  display: inline-block;
+  padding: 10px;
+  border-right: 1px solid #ddd;
+}
+
+.tabset-dropdown > .nav-tabs > li.active {
+  display: block;
+}
+
+.tabset-dropdown > .nav-tabs > li > a,
+.tabset-dropdown > .nav-tabs > li > a:focus,
+.tabset-dropdown > .nav-tabs > li > a:hover {
+  border: none;
+  display: inline-block;
+  border-radius: 4px;
+}
+
+.tabset-dropdown > .nav-tabs.nav-tabs-open > li {
+  display: block;
+  float: none;
+}
+
+.tabset-dropdown > .nav-tabs > li {
+  display: none;
+}
+</style>
+
+<!-- code folding -->
+
+
+
+
+</head>
+
+<body>
+
+
+<div class="container-fluid main-container">
+
+
+
+
+<div class="navbar navbar-default  navbar-fixed-top" role="navigation">
+  <div class="container">
+    <div class="navbar-header">
+      <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target="#navbar">
+        <span class="icon-bar"></span>
+        <span class="icon-bar"></span>
+        <span class="icon-bar"></span>
+      </button>
+      <a class="navbar-brand" href="index.html">My Website</a>
+    </div>
+    <div id="navbar" class="navbar-collapse collapse">
+      <ul class="nav navbar-nav">
+        <li>
+  <a href="index.html">Home</a>
+</li>
+<li>
+  <a href="about.html">About</a>
+</li>
+      </ul>
+      <ul class="nav navbar-nav navbar-right">
+        
+      </ul>
+    </div><!--/.nav-collapse -->
+  </div><!--/.container -->
+</div><!--/.navbar -->
+
+<div class="fluid-row" id="header">
+
+
+
+<h1 class="title toc-ignore">A classification scheme/workflow for fine-scale LU/LC mapping at different nomenclature levels built on a combined random forest and OBIA approach using multisource data (HRS, VHRS and DEM) and implemented with open-source softwares (FLOSS)</h1>
+<h4 class="author">Paul Taconet</h4>
+<h4 class="date">2020-02-15</h4>
+
+</div>
+
+
+<p>An open and reusable R workflow for fine-scale land cover mapping at different nomenclature levels built on a combined random forest and OBIA approach using multisource data (HRS, VHRS and DEM)</p>
+<p>## Key points / highlights</p>
+<p>-&gt; Fine-scale land cover maps are useful yet complex products to generate -&gt; Many Free and open source softwares (FOSS) include image processing and classification algorithms for land cover mapping, each with its own strengths. Sometimes the best solution for an end-to-end land cover mapping work involves to use several softwares. -&gt; We have implemented an open data analysis workflow for fine-scale land cover mapping at different nomenclature levels. Is combines an geographic object based image analysis (GEOBIA) with a hierarchical random forest classification. The workflow uses several open-source RS/GIS softwares. It was implemented in the R environment and language for statistical computing, a fast evolving and widely used programming langage, that has been gaining more popularity across all scientific disciplines including the Remote Sensing (RS)/EO and GIS communities. -&gt; The workflow takes as input a Very High Spatial Resolution (VHRS) image, a High resolution image, a Digital Elevation Model and a ground-truth dataset enventually with a hierarchical, tree‐like structure classification scheme. Outputs are GIS land cover layers at each classification nomenclature level along with sets of broadly-used indicators of classification performance and variable importance. A hierarchical classification model, that takes into account the tree‐like structure classification scheme, is proposed. -&gt; Expected benefits of such open workflow for scientists are, among other, time and effort saving, easier access to and understand of image processing techniques for fine-scale land cover mapping, as well as co-construction and improvement of efficient end-to-end land cover mapping workflows.</p>
+<div id="abstract" class="section level2">
+<h2>Abstract</h2>
+<p>Image processing and classification for fine-scale land cover mapping is challenging because i) it involves many steps, ii) even though many Free and open source software (FOSS) for image processing do exist, it still often relies on proprietary and expensive softwares</p>
+<p>In addition to the benefits of transparent and reproducible data analysis,</p>
+<p>Producing open, described and as-much-as-possible reusable workflows for complex data analyses can have impacts on research : link scientists across disciplines, save time and effort (<a href="https://hal.archives-ouvertes.fr/hal-01544818/document" class="uri">https://hal.archives-ouvertes.fr/hal-01544818/document</a> partie 3.2.1 et <a href="https://doi.org/10.1016/j.future.2017.01.001" class="uri">https://doi.org/10.1016/j.future.2017.01.001</a> ) shared, reused and adapted</p>
+<p>Even though probably not the most performing language for image processing, R is an interesting langage because it is a widely used langage in data science, and : (langage qui est utilisé par bcp de monde, qui évolue rapidement, etc. ) (<a href="https://esajournals.onlinelibrary.wiley.com/doi/full/10.1002/ecs2.2567" class="uri">https://esajournals.onlinelibrary.wiley.com/doi/full/10.1002/ecs2.2567</a>) Nomenclature levels are intrisic to land cover (<a href="https://www.sciencedirect.com/science/article/pii/S0924271617303696?via%3Dihub" class="uri">https://www.sciencedirect.com/science/article/pii/S0924271617303696?via%3Dihub</a>)</p>
+<p>We have implemented a workflow in the open-source R programming language for fine-scale land cover mapping at different nomenclature levels, built on a combined object based image analysis and random forest classification approach using multisource data (HRS, VHRS and DEM). Along with a set of R packages for GIS, image processing and machine learning, the workflow uses external free and open source softwares (FOSS) for tasks where we either found that R not / poorly performing or that other software were very well performing.</p>
+<p>Inputs to be brougth by the user are a Very High Spatial Resolution (VHRS) image and a ground-truth dataset eventually with a hierarchical, tree‐like structure classification scheme. The workflow also enables the integration of additional free data : High Spatial Resolution (HRS) images and a Digital Elevation Model (DEM). Outputs are raster and vector land cover datasets at each nomenclature level along with sets of broadly-used classification performance and variable importance indicators.</p>
+<p>Our work also shows that several FOSS can be used - taking the best of each - and combined to create a single transparent, reproducible and re-usable workflow that uses modern techniques for fine-scale land cover mapping and image processing and classification in general. // Our work also shows that several FOSS can be used - taking the best of each - and combined within a single workflow, enabling the methods used for fine-scale land cover mapping - and by extension image processing and classification - to be transparent, reproducible and re-usable.</p>
+<p><a href="https://www.tandfonline.com/doi/full/10.1080/01431161.2018.1452075" class="uri">https://www.tandfonline.com/doi/full/10.1080/01431161.2018.1452075</a></p>
+<p><a href="https://www.tandfonline.com/doi/full/10.1080/01431161.2018.1433343?src=recsys" class="uri">https://www.tandfonline.com/doi/full/10.1080/01431161.2018.1433343?src=recsys</a> -&gt; An added benefit of R, scikit-learn, and Weka is that they are all currently free. ## Introduction</p>
+<p>The usefulness of land cover products is not to be demonstrated anymore : knowledge of the physical material at the surface of the earth is crucial for many research studies, in a wide variety of fields. When facing the need to use a land cover product, two options are usually offered :</p>
+<ul>
+<li><strong>use one or more of the many already and freely available products</strong> [mettre des exemples ie corine land cover, etc.] . Each product has its own combination of spatial coverage, spatial resolution and land cover classes, and these characteristics usually drive the choice of whether to use one product or another ;</li>
+<li>if for any reason none of the already available products is satisfying, <strong>generate own dataset</strong> by processing and classifying images of the Earth taken by remote sensing platforms such as Earth observation satellites.</li>
+</ul>
+<p>Image processing and classification is a whole science and has been long used and improved over time, as techniques have evolved</p>
+<p>involves many steps and</p>
+<p>The script takes as input a Very high resolution image of the area of interesed (Spot 6/7) + the Copernicus scihub identifiers of a High resolution image (Sentinel 2) + a learning/validation ground truth dataset, enventually with a class hierarchical structure. It performs all the pre-processing, data preparation, classification and post-processing steps. Details are provided below. The script uses various R packages (see section “prepare workflow” for a list of packages used) and open-source libraries that are called through R : the Orfeo Toolbox v6.6.1 (<a href="https://www.orfeo-toolbox.org/" class="uri">https://www.orfeo-toolbox.org/</a>), the GRASS library v7.4 (<a href="https://grass.osgeo.org" class="uri">https://grass.osgeo.org</a>), the GDAL library v2.2.1 (<a href="https://www.gdal.org/" class="uri">https://www.gdal.org/</a>) and SAGA GIS v2.3.1 (<a href="http://www.saga-gis.org/en/index.html" class="uri">http://www.saga-gis.org/en/index.html</a>). In addition, the workflow uses a personal release of the Orfeo Toolbox for the segmentation process (since no relevant application was found in the official OTB release for the segmentation of very large images using the Baatz and Shape Generic Region Merging algorithm). The release was generated and kindly provided by Rafaelle Gaetano. It is available here: <a href="http://napoli.teledetection.fr/logiciels/otb_moringa_build_win_x64.zip" class="uri">http://napoli.teledetection.fr/logiciels/otb_moringa_build_win_x64.zip</a> The methodology used in this workflow was inspired from these two articles and uses an R package developed in the frame of the Gavish et al. article (unfortunataly neither available on a git repository nor on the CRAN) (with minor adaptations for this workflow): - Gavish et al., Comparing the performance of flat and hierarchical Habitat/Land-Cover classification models in a NATURA 2000 site, ISPRS Journal of Photogrammetry and Remote Sensing. Volume 136, February 2018, Pages 1-12 <a href="https://doi.org/10.1016/j.isprsjprs.2017.12.002" class="uri">https://doi.org/10.1016/j.isprsjprs.2017.12.002</a> - Lebourgeois et al., A Combined Random Forest and OBIA Classification Scheme for Mapping Smallholder Agriculture at Different Nomenclature Levels Using Multisource Data (Simulated Sentinel-2 Time Series, VHRS and DEM). Remote Sens. 2017, 9, 259. <a href="https://doi.org/10.3390/rs9030259" class="uri">https://doi.org/10.3390/rs9030259</a></p>
+<div id="workflow-steps" class="section level4">
+<h4>Workflow steps :</h4>
+</div>
+<div id="step-1---download-the-digital-elevation-model-srtm-tiles-for-the-roi" class="section level3">
+<h3>Step 1 - Download the Digital Elevation Model (SRTM tiles) for the ROI</h3>
+</div>
+<div id="step-2---download-the-ancillary-data" class="section level3">
+<h3>Step 2 - Download the ancillary data :</h3>
+</div>
+</div>
+<div id="download-the-hrs-sentinel-2-images-from-the-copernicus-scihub" class="section level2">
+<h2>2.1 - Download the HRS Sentinel 2 image(s) from the Copernicus scihub</h2>
+<div id="step-3---pre-process-the-vhrs-spot67-images" class="section level3">
+<h3>Step 3 - Pre-process the VHRS Spot6/7 image(s) :</h3>
+</div>
+</div>
+<div id="fusion-the-tiles-of-the-panchromatic-image" class="section level2">
+<h2>3.1 - fusion the tiles of the panchromatic image</h2>
+</div>
+<div id="convert-the-multispectral-and-panchromatic-images-from-digital-numbers-to-toa-reflectance" class="section level2">
+<h2>3.2 - convert the multispectral and panchromatic images from digital numbers to TOA reflectance</h2>
+</div>
+<div id="orthorectify-the-multispectral-and-panchromatic-images" class="section level2">
+<h2>3.3 - orthorectify the multispectral and panchromatic images</h2>
+</div>
+<div id="extract-the-roi" class="section level2">
+<h2>3.4 - extract the ROI</h2>
+</div>
+<div id="pansharpen-the-ms-image-using-the-pan-image" class="section level2">
+<h2>3.5 - pansharpen the MS image using the PAN image</h2>
+</div>
+<div id="mosaic-the-various-tiles-covering-the-roi-if-relevant" class="section level2">
+<h2>3.6 - mosaic the various tiles covering the ROI (if relevant)</h2>
+<div id="step-4---preprocess-the-ancillary-data" class="section level3">
+<h3>Step 4 - Preprocess the ancillary data :</h3>
+</div>
+</div>
+<div id="preprocess-the-dem-mosaic-the-various-tiles-covering-the-roi-if-relevant-and-then-extract-the-roi" class="section level2">
+<h2>4.1 - preprocess the DEM : mosaic the various tiles covering the ROI (if relevant), and then extract the ROI</h2>
+</div>
+<div id="preprocess-the-sentinel-2-images-mosaic-the-various-images-covering-the-roi-if-relevant-and-then-extract-the-roi" class="section level2">
+<h2>4.2 - preprocess the Sentinel 2 image(s) : mosaic the various images covering the ROI (if relevant), and then extract the ROI</h2>
+<div id="step-5---prepare-the-data-for-the-classification" class="section level3">
+<h3>Step 5 - Prepare the data for the classification :</h3>
+</div>
+</div>
+<div id="extract-ancillary-indices-from-the-dem-slope-aspect-flow-accumulation-flow-direction-topographic-convergence-index" class="section level2">
+<h2>5.1 - extract ancillary indices from the DEM : slope, aspect, flow accumulation, flow direction, topographic convergence index</h2>
+</div>
+<div id="extract-textural-indices-from-the-spot67-panchromatic-image-at-various-moving-windows-sizes" class="section level2">
+<h2>5.2 - extract textural indices from the Spot6/7 panchromatic image at various moving windows sizes</h2>
+</div>
+<div id="extract-radiometric-indices-from-the-spot67-pansharpened-image" class="section level2">
+<h2>5.3 - extract radiometric indices from the Spot6/7 pansharpened image</h2>
+</div>
+<div id="extract-radiometric-indices-from-the-s2-image" class="section level2">
+<h2>5.4 - extract radiometric indices from the S2 image</h2>
+</div>
+<div id="split-the-bands-of-the-spot67-image" class="section level2">
+<h2>5.5 - Split the bands of the Spot6/7 image</h2>
+<div id="step-6---segment-the-spot67-image-using-the-baatz-and-shape-generic-region-merging-algorithm" class="section level3">
+<h3>Step 6 - Segment the Spot6/7 image using the Baatz and Shape Generic Region Merging algorithm</h3>
+</div>
+<div id="step-7---extract-the-zonal-statistics-reflectance-spectral-indices-textural-indices-ancillary-shape-contextual" class="section level3">
+<h3>Step 7 - Extract the zonal statistics (reflectance, spectral indices, textural indices, ancillary, shape, contextual)</h3>
+</div>
+</div>
+<div id="extract-zonal-statistics-for-the-ground-truth-dataset" class="section level2">
+<h2>7.1 - Extract zonal statistics for the ground truth dataset</h2>
+</div>
+<div id="extract-zonal-statistics-for-the-segmented-objects-dataset" class="section level2">
+<h2>7.2 - Extract zonal statistics for the segmented objects dataset</h2>
+<div id="step-8---prepare-classification-generate-a-set-of-random-forest-classifiers-using-the-training-dataset-with-two-approaches-i-a-flat-classification-approach-ii-a-class-hierarchical-structure-approach.-classify-the-objects-output-of-the-segmentation-process-using-the-approach-that-gives-the-best-results" class="section level3">
+<h3>Step 8 - Prepare classification : generate a set of random forest classifiers using the training dataset with two approaches: i) a flat classification approach, ii) a class hierarchical structure approach. Classify the objects output of the segmentation process using the approach that gives the best results</h3>
+</div>
+</div>
+<div id="generate-the-rf-classifiers-at-each-class-hierarchical-level-using-i-a-flat-approach-ii-a-hierarchical-approach-and-compare-the-results" class="section level2">
+<h2>8.1 - Generate the RF classifiers at each class hierarchical level using i) a flat approach, ii) a hierarchical approach, and compare the results</h2>
+</div>
+<div id="get-useful-information-on-the-classification-discriminant-variables-etc.-considering-the-class-hierarchical-structure" class="section level2">
+<h2>8.2 - Get useful information on the classification (discriminant variables, etc.) considering the class hierarchical structure</h2>
+<div id="step-9---classify" class="section level3">
+<h3>Step 9 - Classify</h3>
+</div>
+</div>
+<div id="classify-the-objects-output-of-the-segmentation-using-the-approach-that-gives-the-best-results" class="section level2">
+<h2>9.1 - Classify the objects output of the segmentation using the approach that gives the best results</h2>
+</div>
+<div id="save-the-classification-as-gis-data-in-various-formats-vector-and-raster" class="section level2">
+<h2>9.2 - Save the classification as GIS data in various formats (vector and raster)</h2>
+</div>
+<div id="add-user-criterions-to-enhance-the-classification" class="section level2">
+<h2>9.3 - Add user criterions to enhance the classification</h2>
+<div id="outputs-in-the-path_to_processing_folder-the-following-folders-and-files-will-be-available" class="section level4">
+<h4>Outputs: In the path_to_processing_folder, the following folders and files will be available :</h4>
+</div>
+<div id="folder-dem_srtm-data-regarding-the-srtm-digital-elevation-model-generated-by-the-wf-as-well-as-all-sub-folder-and-files" class="section level3">
+<h3>folder “DEM_SRTM” : data regarding the SRTM Digital Elevation Model [GENERATED BY THE WF AS WELL AS ALL SUB-FOLDER AND FILES]</h3>
+</div>
+</div>
+<div id="dem_srtmraw_data-srtm-tiles-covering-the-roi-step-1" class="section level2">
+<h2>DEM_SRTM/raw_data : SRTM tile(s) covering the ROI (step 1)</h2>
+</div>
+<div id="dem_srtmprocessed_data-a-set-of-files-derived-from-the-dem-output-of-the-workflow" class="section level2">
+<h2>DEM_SRTM/processed_data : a set of files derived from the DEM, output of the workflow :</h2>
+</div>
+<div id="dem.tif-srtm-dem-cut-following-the-roi-and-re-projected-in-the-proj_srs-step-4" class="section level1">
+<h1>- DEM.tif : SRTM DEM cut following the ROI and re-projected in the proj_srs (step 4) ;</h1>
+</div>
+<div id="slope.tif-slope-dataset-derived-from-the-dem-step-5.1" class="section level1">
+<h1>- slope.tif : slope dataset derived from the DEM (step 5.1) ;</h1>
+</div>
+<div id="aspect.tif-aspect-dataset-derived-from-the-dem-step-5.1" class="section level1">
+<h1>- aspect.tif : aspect dataset derived from the DEM (step 5.1);</h1>
+</div>
+<div id="accumulation.tif-flow-accumulation-dataset-derived-from-the-dem-step-5.1" class="section level1">
+<h1>- accumulation.tif : flow accumulation dataset derived from the DEM (step 5.1);</h1>
+</div>
+<div id="direction.tif-flow-direction-dataset-derived-from-the-dem-step-5.1" class="section level1">
+<h1>- direction.tif : flow direction dataset derived from the DEM (step 5.1);</h1>
+</div>
+<div id="tci.tif-topographic-convergence-index-derived-from-the-dem-note-not-used-in-further-analysis-step-5.1" class="section level1">
+<h1>- tci.tif : topographic convergence index derived from the DEM (note : not used in further analysis) (step 5.1);</h1>
+</div>
+<div id="accumulation_treshold.tif-raster-with-two-values-0-if-the-flow-accumulation-is-above-the-threshold_accumulation_raster-1-if-it-is-under.-this-information-is-used-for-the-calculation-of-the-distance-from-the-objects-to-the-flow-accumulation-network-used-as-primitive-in-the-classification.-step-5.1" class="section level1">
+<h1>- accumulation_treshold.tif : raster with two values : 0 if the flow accumulation is above the threshold_accumulation_raster , 1 if it is under. This information is used for the calculation of the distance from the objects to the flow accumulation network (used as primitive in the classification). (step 5.1) ;</h1>
+</div>
+<div id="accumulation_treshold_vector.gpkg-vector-version-of-accumulation_treshold.tif-step-5.1" class="section level1">
+<h1>- accumulation_treshold_vector.gpkg : vector version of accumulation_treshold.tif (step 5.1) ;</h1>
+<div id="folder-vhr_spot6-data-regarding-the-vhrs-spot-67-satellite-images" class="section level3">
+<h3>folder “VHR_SPOT6” : data regarding the VHRS Spot 6/7 satellite images</h3>
+</div>
+<div id="vhr_spot6raw_data-the-input-spot-67-data-as-provided-by-the-cnes.-must-be-provided-by-the-user-before-execution-of-the-workflow.-there-must-be-1-sub-folder-by-image-covering-the-roi.-each-sub-folder-contains-the-two-.tar.gz-files-as-provided-by-the-cnes-one-for-the-panchromatic-image-and-one-for-the-multispectral-image-provided-by-the-user" class="section level2">
+<h2>VHR_SPOT6/raw_data : the input Spot 6/7 data (as provided by the CNES). Must be provided by the user before execution of the workflow. There must be 1 sub-folder by image covering the ROI. Each sub-folder contains the two .tar.gz files as provided by the CNES : one for the panchromatic image and one for the multispectral image [PROVIDED BY THE USER]</h2>
+</div>
+<div id="vhr_spot6processed_data-a-set-of-files-derived-from-the-spot-67-datasets-output-of-the-workflow-generated-by-the-wf-as-well-as-all-sub-folder-and-files" class="section level2">
+<h2>VHR_SPOT6/processed_data : a set of files derived from the Spot 6/7 datasets, output of the workflow: [GENERATED BY THE WF AS WELL AS ALL SUB-FOLDER AND FILES]</h2>
+</div>
+</div>
+<div id="pan.tif-the-panchromatic-image-mosaiced-orthorectified-and-cut-following-the-roi-step-3.x" class="section level1">
+<h1>- PAN.TIF : the panchromatic image, mosaiced, orthorectified and cut following the ROI (step 3.x) ;</h1>
+</div>
+<div id="pansharpen.tif-the-multispectral-image-pansharpened-using-the-panshromatic-image-orthorectified-and-cut-following-the-roi-step-3.x" class="section level1">
+<h1>- PANSHARPEN.TIF : the multispectral image pansharpened using the panshromatic image, orthorectified and cut following the ROI (step 3.x) ;</h1>
+</div>
+<div id="pansharpen_0.tif-pansharpen_1.tif-pansharpen_2.tif-pansharpen_3.tif-respectively-the-blue-green-red-and-nir-bands-of-the-vhrs-step-3.x" class="section level1">
+<h1>- PANSHARPEN_0.TIF, PANSHARPEN_1.TIF, PANSHARPEN_2.TIF, PANSHARPEN_3.TIF : respectively the blue, green, red and nir bands of the VHRS (step 3.x) ;</h1>
+</div>
+<div id="haralicktextures_xxxx.tif-the-set-of-textures-generated-using-from-the-panchromatic-image-at-various-moving-windows-sizes-step-5.2" class="section level1">
+<h1>- HaralickTextures_xxxx.TIF : the set of textures generated using from the panchromatic image, at various moving windows sizes (step 5.2) ;</h1>
+</div>
+<div id="ndvi.tif-ndwi.tif-bi.tif-the-radiometric-indices-derived-from-the-vhrs-step-5.3." class="section level1">
+<h1>- NDVI.TIF, NDWI.TIF, BI.TIF : the radiometric indices derived from the VHRS (step 5.3).</h1>
+<div id="folder-hr_sentinel2-data-regarding-the-hrs-sentinel-2-satellite-images-generated-by-the-wf-as-well-as-all-sub-folder-and-files" class="section level3">
+<h3>folder “HR_Sentinel2” : data regarding the HRS Sentinel 2 satellite images [GENERATED BY THE WF AS WELL AS ALL SUB-FOLDER AND FILES]</h3>
+</div>
+<div id="hr_sentinel2raw_data-the-input-sentinel-2-data-as-downloaded-by-the-wf-in-the-copernicus-scihub-step-2.1." class="section level2">
+<h2>HR_Sentinel2/raw_data : the input Sentinel 2 data (as downloaded by the WF in the Copernicus Scihub) (step 2.1).</h2>
+</div>
+<div id="hr_sentinel2processed_data-a-set-of-files-derived-from-the-sentinel-2-datasets-output-of-the-workflow" class="section level2">
+<h2>HR_Sentinel2/processed_data : a set of files derived from the Sentinel 2 dataset(s), output of the workflow</h2>
+</div>
+</div>
+<div id="b01.tif-bo2.tif-etc-b12.tif-bands-of-the-sentinel-2-images-cut-following-the-roi.-if-multiple-images-are-provided-as-input-i.e.if-the-roi-is-covered-by-multiple-tiles-the-images-will-be-mosaiced-first-step-4.2-and-5.5" class="section level1">
+<h1>B01.TIF, BO2.TIF, etc… B12.TIF : bands of the Sentinel 2 images cut following the ROI. If multiple images are provided as input (i.e. if the ROI is covered by multiple tiles), the images will be mosaiced first (step 4.2 and 5.5) ;</h1>
+</div>
+<div id="bri.tif-mndvi.tif-mndwi.tif-ndvi.tif-ndwi.tif-rndvi.tif-the-radiometric-indices-derived-from-the-hrs.-formulas-are-provided-in-the-workflow-section-5.4-step-5.4" class="section level1">
+<h1>BRI.TIF, MNDVI.TIF, MNDWI.TIF, NDVI.TIF, NDWI.TIF, RNDVI.TIF : the radiometric indices derived from the HRS. Formulas are provided in the workflow, section 5.4 (step 5.4) ;</h1>
+<div id="folder-segmentation-generated-by-the-wf-as-well-as-all-sub-folder-and-files" class="section level3">
+<h3>folder “Segmentation” : [GENERATED BY THE WF AS WELL AS ALL SUB-FOLDER AND FILES]</h3>
+</div>
+</div>
+<div id="segmentation_vector.gpkg-vector-output-of-the-segmentation-process-i.e.objects-that-will-further-be-classified-step-6" class="section level1">
+<h1>segmentation_vector.gpkg : vector output of the segmentation process (i.e. objects that will further be classified) (step 6) ;</h1>
+</div>
+<div id="segmentation_dataset_stats.gpkg-segmented-datasets-with-the-zonal-statistics-for-each-object-step-7.2." class="section level1">
+<h1>segmentation_dataset_stats.gpkg : segmented datasets with the zonal statistics for each object (step 7.2).</h1>
+<div id="folder-ground_truth-data-regarding-the-ground-truth-i.e.trainingvalidation-dataset" class="section level3">
+<h3>folder “Ground_truth” : data regarding the ground truth (i.e. training/validation) dataset</h3>
+</div>
+</div>
+<div id="path_to_ground_truth_data-ground-truth-dataset-provided-by-the-user-including-the-class-hierarchical-structure" class="section level1">
+<h1>path_to_ground_truth_data : ground truth dataset provided by the user, including the class hierarchical structure ;</h1>
+</div>
+<div id="ground_truth_stats.gpkg-ground-truth-dataset-with-the-zonal-statistics-for-each-object-step-7.1" class="section level1">
+<h1>ground_truth_stats.gpkg : ground truth dataset with the zonal statistics for each object (step 7.1)</h1>
+<div id="folder-classification-data-regarding-the-classification-generated-by-the-wf-as-well-as-all-sub-folder-and-files-a-finir" class="section level3">
+<h3>folder “Classification” : data regarding the classification [GENERATED BY THE WF AS WELL AS ALL SUB-FOLDER AND FILES] ########## A FINIR</h3>
+</div>
+</div>
+<div id="classes_hierarchy.png-a-figure-of-the-class-hierarchical-structure-step-8.2" class="section level1">
+<h1>classes_hierarchy.png : a figure of the class hierarchical structure (step 8.2) ;</h1>
+</div>
+<div id="flat_classif_stats_xxx.png-a-figure-with-the-confusion-matrix-plot-of-variable-importance-at-the-class-hierarchical-level-xxx-using-a-flat-classification-approach-step-8.1" class="section level1">
+<h1>flat_classif_stats_xxx.png : a figure with the confusion matrix + plot of variable importance at the class hierarchical level xxx, using a flat classification approach (step 8.1)</h1>
+</div>
+<div id="hierar_classif_stats_xx.png-a-figure-with-the-confusion-matrix-plot-of-variable-importance-at-the-class-level-xxx-step-8.1" class="section level1">
+<h1>hierar_classif_stats_xx.png : a figure with the confusion matrix + plot of variable importance at the class level xxx (step 8.1)</h1>
+</div>
+<div id="var_importance_yyyy.png-a-figure-showing-the-variables-importance-at-each-classification-level-sorted-by-yyy-variable-source-variable-stat-type-variable-type" class="section level1">
+<h1>var_importance_yyyy.png : a figure showing the variables importance at each classification level, sorted by yyy {variable source, variable stat type, variable type}</h1>
+</div>
+<div id="classification.gpkg-vector-with-the-objects-classified-the-zonal-stats-step-9.2" class="section level1">
+<h1>classification.gpkg : Vector with the objects classified + the zonal stats (step 9.2)</h1>
+</div>
+<div id="classification.tif-raster-version-of-the-classification-step-9.2" class="section level1">
+<h1>classification.tif : Raster version of the classification (step 9.2)</h1>
+</div>
+<div id="classification_group.gpkg-vector-with-adjacent-objects-having-the-same-class-grouped-step-9.2" class="section level1">
+<h1>classification_group.gpkg : Vector with adjacent objects having the same class grouped (step 9.2)</h1>
+</div>
+
+
+
+
+</div>
+
+<script>
+
+// add bootstrap table styles to pandoc tables
+function bootstrapStylePandocTables() {
+  $('tr.header').parent('thead').parent('table').addClass('table table-condensed');
+}
+$(document).ready(function () {
+  bootstrapStylePandocTables();
+});
+
+
+</script>
+
+<!-- tabsets -->
+
+<script>
+$(document).ready(function () {
+  window.buildTabsets("TOC");
+});
+
+$(document).ready(function () {
+  $('.tabset-dropdown > .nav-tabs > li').click(function () {
+    $(this).parent().toggleClass('nav-tabs-open')
+  });
+});
+</script>
+
+<!-- code folding -->
+
+
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+  (function () {
+    var script = document.createElement("script");
+    script.type = "text/javascript";
+    script.src  = "https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML";
+    document.getElementsByTagName("head")[0].appendChild(script);
+  })();
+</script>
+
+</body>
+</html>

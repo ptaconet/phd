@@ -29,12 +29,8 @@ Our work uses exclusively free and open source softwares/libraries. All the scri
 
 Our vignettes : 
 
-- [*Automatic import of spatial-temporal environmental data and extraction within buffers around sampling points*](https://ptaconet.github.io/malamodpkg/articles/import_tidy_transform_envdata.html)
-- Other vignettes to come [TODO...]
-
-Side vignette : 
-
 - [*Land cover mapping at different nomenclature levels built on a combined random forest and object based image analysis approach using multisource data (HRS, VHRS and DEM)*](https://github.com/ptaconet/r_react/blob/master/workflow_object_based_data_analysis.R)  TODO rmd ...
+- [*Automatic import of spatial-temporal environmental data and extraction within buffers around sampling points*](https://ptaconet.github.io/malamodpkg/articles/import_tidy_transform_envdata.html)
 
 This work is part of my PhD project realized at the [MIVEGEC](https://www.mivegec.ird.fr/en/) unit of the [French Research Institute for Sustainable Development](https://en.ird.fr/). 
 

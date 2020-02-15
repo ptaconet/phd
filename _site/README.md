@@ -4,7 +4,7 @@
 # R scripts to model the risk of residual malaria transmission at a micro-scale
 
 How can we **predict where and when people are likely to contract
-malaria in a near future** 🦟 ☀️ 🌂 ?
+malaria in a near future** 🦟 ☀️ ⛱ ?
 
 How can we make the **results of these predictions easily accessible to
 anyone**, including the authorities in charge of malaria prevention ?
