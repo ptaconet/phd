@@ -6,8 +6,14 @@ usethis::use_build_ignore("r_scripts/")
 usethis::use_build_ignore("extdata/")
 usethis::use_build_ignore("figures/")
 usethis::use_build_ignore("r_scripts_database/")
+usethis::use_build_ignore("docs/")
+
+
+
 file.copy("README.Rmd","index.Rmd",overwrite=T)
 tx  <- readLines("index.Rmd")
 tx2  <- gsub(pattern = "#  R scripts to model the risk of residual malaria transmission at a micro-scale", replace = "", x = tx)
 tx2  <- gsub(pattern = "output: github_document", replace = "title: \"R scripts to model the risk of residual malaria transmission at a micro-scale\"", x = tx2)
 writeLines(tx2, con="index.Rmd")
+
+rmarkdown::render_site()

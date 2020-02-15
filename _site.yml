@@ -1,5 +1,6 @@
 name: "phd_scripts"
-exclude: ["^r_scripts_database$","^r_scripts$","^extdata$"]
+output_dir: docs
+exclude: ["^r_scripts_database$","^r_scripts$","^extdata$","^docs$"]
 navbar:
   title: "R scripts developed in the frame of my PhD"
   left:
