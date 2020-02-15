@@ -1,0 +1,2312 @@
+---
+title: "Automatic import of spatial-temporal environmental data and extraction within buffers around sampling points"
+author: "Paul Taconet"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_document
+vignette: >
+  %\VignetteIndexEntry{import_tidy_transform_envdata}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r call_lib , include = FALSE}
+library(dplyr)
+library(tidyverse)
+library(sf)
+library(mapview)
+library(kableExtra)
+library(emo)
+library(RSQLite)
+library(getRemoteData)
+library(htmltools)
+```
+
+```{r read_db , include = FALSE}
+path_to_db <- "/home/ptaconet/react/datasets/react_db.gpkg"
+con <- dbConnect(RSQLite::SQLite(),path_to_db)
+dataSources<-getRemoteData::getAvailableDataSources()
+```
+
+## Introduction
+
+In ecological sciences, scientists often need to model a natural phenomenon (e.g. the distribution of a species) using environmental data. A simplified workflow of such task may be :
+
+- collecting the data of the phenomenon to model (e.g. occurences of species at sampling points) ;
+- **collecting, tidying and transforming environmental data that are likely to influence the phenomenon (e.g. land cover, precipitation, temperature)** ;
+- modeling the phenomenon using the environmental covariates.
+
+In this vignette, we focus on the second step : **how to import, tidy and transform environmental data**. We show how, starting from a simple table of dates and geographic locations of interest (sampling points in our case), we use R to i) import various climatic / environmental / landscape data mostly from satellite-based observations and ii) extract the related time-space statistics in the surroundings of the sampling points in a suitable format for further modeling (i.e. 1 row / observation). We illustrate the method with a typical problem from the epidemiological field. 
+
+The overall methodology and script are generic, and most of the environmental data used are open and available at global scale : do not hesitate to reuse parts of the scripts !  
+  
+## Big picture : what the script does
+
+Hereunder is a workflow of what is achieved by the script.  
+
+```{r dev='svg', echo=F}
+knitr::include_graphics("../reference/figures/diagram_data_import_tidy_transform1.svg")
+```
+
+## Case study 
+
+We have counts of malaria vector mosquitoes collected in 32 villages in a rural area of Ivory Coast. The mosquitoes have been collected during epidemiological campains using the Human Landing Catch (HLC) method in each village at 4 different locations and for 8 nights spread over 3 years (from 2016 to 2018). We want to model the presence and abundance of the mosquitoes in this area using environmental covariates that are known to influence their development (temperature, precipitations, land cover, etc). Our case study uses data collected in the frame of the [REACT project](https://burkina-faso.ird.fr/la-recherche/projets-de-recherche2/gestion-de-la-resistance-aux-insecticides-au-burkina-faso-et-en-cote-d-ivoire-recherche-sur-les-strategies-de-lutte-anti-vectorielle-react) conducted by the [French Research Institute for Sustainable Development](https://en.ird.fr/) and local partners. 
+
+The locations and dates of the epidemiological campains are provided and mapped below.
+
+```{r, echo=F, eval=T}
+raw_sampling_points <- dbGetQuery(con, "SELECT idpointdecapture as id, date_capture as date, X as longitude, Y as latitude FROM ent_hlcmetadata WHERE codepays='CI'")
+points <- raw_sampling_points %>%
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326)
+tibble(raw_sampling_points)
+mapview(points)
+# *id* is a unique identifier for each sampling {location; date}. 
+```
+
+Technically speaking, we need to extract : at the **location** and **date** of each sampling point, within various **buffer sizes**, a **summary** (e.g. mean) of various **climatic / environmental / landscape variables**.
+
+The challenges to overcome :
+
+- we have almost 1000 sampling points, i.e. couples of {dates, locations}, spread over an area of 2500 km^2^ and 3 years time frame ;
+- we want to extract the data over three different sizes of buffers (to further study which is the more relevant) : 0.5 km, 1 km, 2 km ;
+- for the climatic variables (temperature, precipitation, etc.), we want to include temporality : extract the data in the past, i.e. many days before the HLC date (to study how the environmental conditions do influence the presence or development of the mosquitoes) ;
+- the source environmental data are quite heterogeneous : many providers, formats, access protocols, spatial resolutions, etc.
+
+The R script that we propose in this vignette includes the various steps previously mentioned : given i) a set of sampling points, ii) a time-lag (i.e. number of days prior to the sampling points dates for which to also extract the data) and iii) the buffer sizes of interest, it sequentially :
+
+- downloads the environmental datasets at the sampling points locations and dates - including the time-lagged days ;
+- tidies and transforms the data ;
+- extracts the summary statistic for the various buffers sizes around each sampling point ;
+- enventually fills-in the missing values.
+
+The output tables look like below, where each row is an observation : 
+
+```{r outputs_result, eval=T, echo=F, message=F, warning=F}
+TND<-read_csv(file.path("/home/ptaconet/react/datasets/data_CIV/envCov_TND_M.csv"))
+```
+```{r eval=T, echo=T}
+TND
+```
+
+- *id* is the identifier of the input sampling point ;
+- *buffer* is the buffer size around the sampling point (in meters) ;
+- *time_lag* is the time lag separating the observation from the sampling point date ;
+- *val* is the summary value ;
+- *var* is the code of the environmental variable (cf. table below) ; 
+- *qval* is a self-created quality index.
+
+The table below details the covariates that will be extracted with this script.
+
+```{r, echo=F, eval=T}
+tab_env_cov <- read.csv(system.file("extdata/environmental_covariates_dictionary.csv", package = "malamodpkg"),stringsAsFactors = F,fileEncoding = "latin1")
+tab_env_cov %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+Last note - but not least, most of the data used in the workflow are open, free, and available at global scale, making the workflow reusable at (almost) any place worldwide. Do not hesitate to test and reuse part of the workflow if you are interested ! 
+
+Let's start coding now !
+
+## Setup workflow
+
+### Setup input parameters 
+
+Provide the input parameters : 
+
+- Path to the local folder where the output files will be downloaded/written (NB : the folder must have writing permissions) ;
+- Path to the file containing the credentials to the EarthData account (needed to retrieve MODIS and GPM datasets) ;
+- Path to the table containing the sampling points. In our case, the table is stored in a local database. Go to the first chunk of section [Workflow preparation](#workflow-preparation) to get the structure of the input table ;
+- Buffer sizes ; 
+- Some of our data are stored in a local database : path to that database as well as names of the tables used in the database ;
+- Additional parameters (check the comments in the script).
+
+```{r setup_param, eval=T, echo=T, results='hide'}
+## Setup path to the datasets (both input and output)
+path_to_output_datasets<-"/home/ptaconet/react/datasets/data_BF"  
+## Setup the path to the file containing the EarthData credentials (for NASA datasets). See example at system.file("example-data/credentials_earthdata.txt", package = "getRemoteData")
+path_to_earthdata_credentials<-"/home/ptaconet/react/datasets/credentials_earthdata.txt"
+## Setup the path to the input dataset of dates, latitudes and longitudes of interest. The dataset in our case is stored in a geopackage database. For the reproducibility we also provide the path to the same dataset as a simple csv file (see first chunk of section "Workflow preparation")
+path_to_db<-"/home/ptaconet/react/datasets/react_db.gpkg"
+query_input_sampling_points<-"SELECT idpointdecapture as id, date_capture as date, X as longitude, Y as latitude FROM ent_hlcmetadata WHERE codepays='BF'"
+# Setup buffer sizes in meters (i.e. buffers within which the statistics will be calculated). Multiple sizes might be provided as a vector.
+buffer_sizes<-c(500,1000,2000)
+## Specific to time series data : 
+#Setup the time frames/lags for time-series data
+lagTime_timeSeries<-40
+hourStart_Dday<-"18"
+hourEnd_Dday<-"08"
+# GPM, TAMSAT and ERA-5 data are originally provided at approx. respectively 10km, 4km and 27km spatial resolutions. Resample them spatially ? If TRUE, resampling will use bilinear interpolation
+gpm_resample<-TRUE
+tamsat_resample<-TRUE
+era5_resample<-TRUE
+gpm_resample_output_res<-250 # Spatial resolution (in meters) for output resampled data. Must be setup only if xxx_resample is set to TRUE
+tamsat_resample_output_res<-250
+era5_resample_output_res<-1000
+
+## For some covariates (Settlements and population, Built-up, Topography, Pedology, Land use / cover) we need own data. These data are stored in the geopackage database (stored under "path_to_db"). We provide the names of the tables that we will use (parameters starting with "db_table")
+
+# Specific to Settlements and population : 
+db_table_pop_by_village<-"rst_villages"  # table containing the population for each village
+db_table_loc_households_by_village<-"rst_menages"  # table containing the location of each house in each village
+
+# Specific to Population (HRSL)
+path_to_hrls_raster<-"/home/ptaconet/react/datasets/data_BF/HRSL/hrsl_bfa_pop.tif"
+
+## Specific to Topography and hydrographic network: 
+path_to_grassApplications_folder<-"/usr/lib/grass74" # Path to the GRASS application folder, for the setup of the rgrass7 package. Can be retrieved in the terminal with grass74 --config path . More info on the use of rgrass7 at https://grasswiki.osgeo.org/wiki/R_statistics/rgrass7
+threshold_accumulation_raster<-800  # threshold for the accumulaton raster dataset (all values above this threshold are considered as the hydrographic network). # For CIV: 800 ; For BF: 1000
+
+## Specific to Pedology : 
+db_table_pedology_rast<-"lco_bfpedology"  # Name of pedology raster in the DB
+hydromorphic_classes_pixels<-c(2,3,8,9,10) # pixels values whose classes are considered hydromorphic.   for CIV: c(11,14,5,2,13)  for BF: c(2,3,8,9,10)
+
+## Specific to Land use / cover : 
+db_table_metadata_lulc<-"lco_metadata" # Name of land use / cover metadata table in the DB. This table contains the information to use to compute land use / land cover landscape metrics : the various LU/LC rasters, the path to the rasters, etc.
+layers_lulc<-c("lco_bfL2","lco_bfL3","lco_bfL4","lco_bfL5","ESACCI-LC-L4-LC10-Map-20m-P1Y-2016-v1.0","W020N20_ProbaV_LC100_epoch2015_global_v2.0.1") # Names of the LU/LC layers in the table "db_table_metadata_lulc" to use for the computation of landscape metrics
+  lsm_to_extract<-c("lsm_l_shdi","lsm_l_siei","lsm_l_prd","lsm_c_np","lsm_c_pland","lsm_c_ed")  # landscape metrics to calculate for the LU/LC maps. A list of available LSM can be found with landscapemetrics::list_lsm()
+
+```
+
+### Load packages
+
+Many packages are used : for data import ([`getRemoteData`](https://github.com/ptaconet/getRemoteData), [`RSQLite`](https://cran.r-project.org/web/packages/RSQLite/index.html)), data wrangling ([`tidyverse`](https://www.tidyverse.org/) suite), spatial data handling ([`raster`](https://cran.r-project.org/web/packages/raster/index.html),[`sp`](https://cran.r-project.org/web/packages/sp/index.html),[`sf`](https://cran.r-project.org/web/packages/sf/index.html),[`rgrass7`](https://cran.r-project.org/web/packages/rgrass7/index.html), etc.), parallel processing ([`furrr`](https://cran.r-project.org/web/packages/furrr/index.html)), lanscape metrics extraction ([`landscapemetrics`](https://cran.r-project.org/web/packages/landscapemetrics/index.html)).
+
+
+```{r setup_packages,  results='hide', eval = T, echo=T, message=F, warning=F}
+require(raster)
+require(sp)
+require(sf)
+require(spatstat)
+require(maptools)
+require(rgrass7)
+require(rgdal)
+require(gdalUtils)
+require(rgeos)
+require(tidyverse)
+require(httr)
+require(furrr)
+require(reticulate)
+require(RSQLite)
+require(landscapemetrics)
+require(sen2r)
+if(!require(getRemoteData)){
+ require(devtools)
+ devtools::install_github("ptaconet/getRemoteData")
+}
+require(getRemoteData)
+
+```
+
+### Setup functions
+
+Setup some local functions that will be used throughout the workflow, to process multiple dates / times series at once, impute the missing values of the time series, etc. 
+
+```{r setup_functions, eval=F}
+
+.convertMetersToDegrees<-function(length_meters,
+                                 latitude_4326){
+
+  length_degrees <- length_meters / (111.32 * 1000 * cos(latitude_4326 * ((pi / 180))))
+
+  return(length_degrees)
+}
+
+.getUTMepsg<-function(roi){
+
+  bbox<-sf::st_bbox(roi)
+  #  cat("Warning: ROIs overlapping more than 1 UTM zone are currently not adapted in this workflow\n")
+  utm_zone_number<-(floor((bbox$xmin + 180)/6) %% 60) + 1
+  if(bbox$ymin>0){ # if latitudes are North
+    epsg<-as.numeric(paste0("326",utm_zone_number))
+  } else { # if latitude are South
+    epsg<-as.numeric(paste0("325",utm_zone_number))
+  }
+
+  return(epsg)
+}
+
+
+# Reshaping a list to get a data.frame of data to download, used as input of the getRemoteData::getRemoteData::downloadData function.
+.getDftoDl<-function(data_md){
+  DftoDl<- data_md %>%
+   flatten %>%
+   do.call(rbind,.) %>%
+   distinct %>%
+   set_names("time_start","name","url","destfile")
+  return(DftoDl)
+}
+
+# Get the names of the time-series rasters to use for each date
+.getRastersNames_timeSeries<-function(df_sampling_points,xxxData_md,dataCollection){
+  rastsNames<-map(df_sampling_points$date_numeric,~pluck(xxxData_md,as.character(.))) %>%
+    map(.,pluck(dataCollection)) %>%
+    map(.,pluck("name")) %>%
+    map(.,as.character)
+  return(rastsNames)
+}
+
+# Get the path of local rasters
+.getRastersPaths<-function(xxxData_md,dataCollection){
+  path<-modify(xxxData_md,dataCollection) %>%
+    map(~list_modify(.,"url" = NULL)) %>%
+    map(data.frame) %>%
+    reduce(bind_rows) %>%
+    dplyr::select(name,destfile) %>%
+    unique
+  return(path)
+}
+
+# Time series data: Extract a summary of a variable over 1 buffer
+.extractVar_ts_singleBuff<-function(rasts,names_rasts_to_use,spPoints,buffer_size,fun_summarize){
+  res<-rasts[names_rasts_to_use] %>%  # filter only the rasters of the time series
+    map_dfr(~raster::extract(.,spTransform(spPoints,proj4string(.)),buffer=buffer_size,fun=eval(parse(text=fun_summarize)), na.rm=TRUE, small=TRUE)) %>% # for each raster, calculate the stats
+    #set_names(origin_date-as.numeric(names(.))) %>% ## to name by the number of days separating the date of interest from the the day of the data
+    set_names(seq(0,ncol(.)-1,1)) %>%   ## to name by the lag index 
+    mutate(id=as.character(spPoints$id)) %>%
+    mutate(buffer=buffer_size) %>%
+    gather(time_lag,val,-c(id,buffer)) %>%
+    mutate(time_lag=as.numeric(time_lag))
+  return(res) # to put in wide format : res <- res %>% unite(var,var,time_lag)) %>% spread(key=var,value=val)
+}
+
+
+# Time series data: Extract a summary of a variable over multiple buffers
+.extractVar_ts<-function(buffer_sizes,df_sampling_points,names_rasts_to_use,rasters,fun_summarize){
+  res<-buffer_sizes %>% # for each buffer, calculate stats
+    set_names %>%
+    future_map_dfr(~pmap_dfr(list(names_rasts_to_use,df_sampling_points$sp_points,.,fun_summarize),
+                             ~.extractVar_ts_singleBuff(rasters,..1,..2,..3,..4)))  %>%
+    #mutate(var=var_name) %>%
+    dplyr::select(id,buffer,time_lag,val)
+  # to put in wide format : lst_min <- lst_min %>% unite(var,var,time_lag) %>% spread(key=var,value=val)
+  return(res)
+}
+
+# Static (non time-series) data: Extract a summary of a variable over 1 buffer
+.extractVar_rast_singleBuff<-function(rasts,spPoints,buffer_size,fun_summarize){
+  res<-raster::extract(rasts,spTransform(spPoints,proj4string(rasts)),buffer=buffer_size,fun=eval(parse(text=fun_summarize)), na.rm=TRUE, small=TRUE,df=TRUE) %>% 
+    mutate(id=as.character(spPoints$id)) %>%
+    mutate(buffer=buffer_size) %>%
+    dplyr::select(-ID) %>%
+    gather(var,val,-c(id,buffer))
+  return(res)
+}
+
+  # Static (non time-series) data: Extract a summary of line (vector) variable over 1 buffer
+.extractVar_line_singleBuff<-function(network_sf,sfPoints,buffer_size){
+  buffer<-st_buffer(sfPoints,dist=buffer_size) # Create the buffer around each point
+  sfPoints <- sfPoints %>%
+      rename(geometry_pt=geometry) # rename point geometry column, else an error is sent back on the pipe flow
+  res<-st_join(buffer,network_sf, join = st_intersects,left = TRUE) %>% # Get the lines inside each buffer
+      left_join(as.data.frame(network_sf)) %>%  # get the line geometry 
+      rename(geometry_line=geom) %>% # rename line geometry column to be more clear
+      left_join(as.data.frame(sfPoints),by="id")  %>%  # get the point geometry
+      mutate(dist_line_to_pt=st_distance(geometry_pt,geometry_line,by_element = T)) %>% # get the distance between each point and line
+      st_drop_geometry() %>%
+      dplyr::select(id,length_stream,dist_line_to_pt,accumulation) %>%
+      group_by(id) %>%
+        summarise(mean_dist_to_stream=as.numeric(mean(dist_line_to_pt)),min_dist_to_stream=as.numeric(min(dist_line_to_pt)),length_stream=as.numeric(sum(length_stream)),mean_acc_by_dist=as.numeric(mean(accumulation/dist_line_to_pt))) %>% # compute stats related to hydrographic network
+    mutate(mean_dist_to_stream=na_if(mean_dist_to_stream,0)) %>%
+   mutate(min_dist_to_stream=na_if(min_dist_to_stream,0)) %>%
+       mutate(length_stream = if_else(is.na(length_stream), 0, length_stream)) %>%
+       mutate(mean_acc_by_dist = if_else(is.na(mean_acc_by_dist), 0, mean_acc_by_dist))
+
+
+  res <- res %>%
+    mutate(buffer=buffer_size) %>%
+    gather(var,val,-c(id,buffer)) 
+  return(res)
+}
+
+# Spatially resample a product (using bilinear interpolation)
+.resampleProd<-function(rast,resample_output_res){
+  resample_output_res<-.convertMetersToDegrees(resample_output_res,latitude_4326=mean(c(extent(rast)[3],extent(rast)[4])))
+  r<-rast
+  res(r)<-resample_output_res
+  rast<-raster::resample(rast,r,method='bilinear')
+}
+
+# Impute NAs and setup quality flag
+# qval=1 is for values that where retrieved using the LST 1km/1day products (best quality)
+# qval=2 is for values that where retrieved using the temperature of the upper(s) buffer(s) for the same day / time lag
+# qval=3 is for values that where retrieved using the mean temperature of the previous and the following day / time lag
+# qval=4 is for values that where retrieved using the LST 1km/8day temperature for the week of interest
+# qval=5 is for values that where retrieved using the mean temperature of the previous and the following LST 1km/8day temperature
+# qval=0 is for NAs remaining after these imputings
+
+# qval=1
+.modis_fillNA_l1<-function(df,qvalue){
+df <- df %>%
+  mutate(qval=if_else(!is.na(val),qvalue,0))
+return(df)
+}
+
+# qval=2
+.modis_fillNA_l2<-function(df,qvalue){
+df <- df %>%
+  arrange(id,time_lag,buffer) %>%
+  group_by(id,time_lag) %>%
+  fill(val, .direction = "up") %>%
+  mutate(qval=if_else((qval==0 & !is.na(val)),qvalue,qval)) %>%
+  as.data.frame()
+return(df)
+}
+
+# qval=3
+.modis_fillNA_l3<-function(df,qvalue){
+df <- df %>% 
+  arrange(id,buffer,time_lag) %>% 
+  mutate(val_ahead=lead(val)) %>% 
+  mutate(val_lag=lag(val)) %>% 
+  mutate(val_mean=map2_dbl(.x=val_ahead,.y=val_lag,~mean(c(.x,.y),na.rm=T))) %>% 
+  mutate(val_mean=replace(val_mean, which(is.nan(val_mean)), NA)) %>% 
+  mutate(val=if_else(!is.na(val),val,val_mean)) %>% 
+  mutate(qval=if_else((qval==0 & !is.na(val)),qvalue,qval))  %>% 
+  dplyr::select(-c(val_ahead,val_lag,val_mean))
+return(df)
+}
+
+# qval=4
+.modis_fillNA_l4<-function(df,df_lst8day,qvalue){
+lst8day_as_1day <- df_lst8day %>%
+  slice(rep(1:n(), each = 7)) %>%
+  group_by(id,buffer) %>%
+  mutate(time_lag=seq(0,n()-1,1))
+
+df<-left_join(df,lst8day_as_1day,by=c("id","buffer","time_lag")) %>%
+  mutate(val.x=if_else(!is.na(val.x),val.x,val.y)) %>%
+  dplyr::select(-c(val.y,var.y,qval.y)) %>%
+  rename(val=val.x,var=var.x,qval=qval.x) %>%
+  mutate(qval=if_else((qval==0 & !is.na(val)),qvalue,qval))
+return(df)
+}
+
+```
+
+### Workflow preparation
+
+Open the dataset that contains the sampling points (i.e. dates and locations of epidemiological campains) as a data.frame. *id* is a unique sampling point identifier, *date*, *latitude*, *longitude* are respectively the date and the location of the point. 
+
+```{r prepare_datesloc, eval=T, echo=T, message = FALSE}
+con <- dbConnect(RSQLite::SQLite(),path_to_db)
+raw_sampling_points<-dbGetQuery(con, query_input_sampling_points)
+##   to reproduce without access to the DB, you might use : 
+# raw_sampling_points<-read.csv(system.file("extdata/CIV_sampling_points.csv", package = "malamodpkg"),stringsAsFactors = F)
+head(raw_sampling_points)
+```
+
+From this file we create the region of interest (ROI) (i.e. bounding box including all our observations) as a `sf` polygon object.
+Whenever possible, the environmental data provided in raster format will be downloaded strictly over this bounding box with the [`getRemoteData`](https://github.com/ptaconet/getRemoteData) package..
+
+```{r prepare_roi, eval=T, echo=T}
+roi<-sf::st_as_sf(raw_sampling_points, coords = c("longitude", "latitude"), crs = 4326) %>% 
+  sf::st_bbox()
+
+mean_roi_latitude<-mean(c(roi$ymin,roi$ymax))
+roi[1]<-roi[1]-0.05-.convertMetersToDegrees(max(buffer_sizes),mean_roi_latitude) #xmin
+roi[2]<-roi[2]-0.05-.convertMetersToDegrees(max(buffer_sizes),mean_roi_latitude) #ymin
+roi[3]<-roi[3]+0.05-.convertMetersToDegrees(max(buffer_sizes),mean_roi_latitude) #xmin
+roi[4]<-roi[4]+0.05-.convertMetersToDegrees(max(buffer_sizes),mean_roi_latitude) #ymin
+
+roi<-roi %>% 
+  sf::st_as_sfc() %>% 
+  sf::st_sf()
+
+utm_zone<-.getUTMepsg(roi)
+roi_utm<-st_transform(roi,utm_zone)
+
+# Convert points as sp and sf objects for further processing
+spPoints <- SpatialPointsDataFrame(coords=data.frame(raw_sampling_points$longitude,raw_sampling_points$latitude),data=raw_sampling_points,proj4string=CRS("+init=epsg:4326"))
+sfPoints <- st_as_sf(spPoints)
+```
+
+Aggregate by date of interest. Output is a tibble whose observations (i.e. rows) are, for each date of interest, a `SpatialPointsDataFrame` with all the sampling points for that date. 
+
+Note : we choose the sp class rather than sf, because the `raster::extract` function - that we will use to extract the values around the each point - uses the sp class.
+
+```{r prepare2_datesloc, eval=F, echo=T}
+df_sampling_points<-raw_sampling_points %>% 
+  mutate(date=as.Date(date)) %>%
+  group_by(date) %>%
+  arrange(date) %>%
+  nest(latitude,longitude,id) %>%
+  set_names(c("date_date","coords")) %>%
+  mutate(sp_points=map(coords,~SpatialPointsDataFrame(coords=data.frame(.$longitude,.$latitude),data=.,proj4string=CRS("+init=epsg:4326")))) %>%
+  dplyr::select(-coords) %>%
+  mutate(date_numeric=as.integer(date_date))  %>%
+  mutate(lagTime_timeSeries=lagTime_timeSeries)
+df_sampling_points
+
+datesDday<-as.Date(unique(raw_sampling_points$date))
+head(datesDday)
+
+datesTimesSeries<-df_sampling_points$date_date %>%
+  map(~seq(.,.-lagTime_timeSeries,-1)) %>%
+  unlist %>%
+  unique %>%
+  sort %>%
+  as.Date(origin="1970-01-01")
+head(datesTimesSeries)
+```
+
+Whenever possible, we will parallelize the script with the `furrr` package. We extend the maximum size to be exported for the `furrr` future expression to 20 GB.
+
+```{r prepare_parralel, eval=F, echo=T}
+plan(multiprocess)
+options(future.globals.maxSize= 20000*1024^2) # 20 GB for the max size to be exported for the furrr future expression (https://stackoverflow.com/questions/40536067/how-to-adjust-future-global-maxsize-in-r)
+```
+
+Setup GRASS environment (mandatory to use the `rgrass7` package).
+
+```{r prepare_grass, eval=F, echo=T}
+loc <- rgrass7::initGRASS(path_to_grassApplications_folder, home=path_to_output_datasets, gisDbase="GRASS_TEMP", override=TRUE,mapset = "PERMANENT" )
+rgrass7::execGRASS("g.proj",flags="c",parameters = list(proj4=sf::st_crs(roi_utm)$proj4string))
+```
+
+To download NASA's MODIS and GPM data you must create an [EarthData](https://earthdata.nasa.gov/) account. Here we read the EarthData credentials that are stored in a text file (under *path_to_earthdata_credentials*).
+
+```{r prepare_earthdata , eval=F, echo=T, results='hide'}
+earthdata_credentials<-readLines(path_to_earthdata_credentials)
+username_EarthData<-strsplit(earthdata_credentials,"=")[[1]][2]
+password_EarthData<-strsplit(earthdata_credentials,"=")[[2]][2]
+getRemoteData::login_earthdata(username_EarthData,password_EarthData)
+```
+
+Everything is prepared, time to import, tidy, transform the data !!
+
+## Temperature
+
+* **Covariates extracted**:
+```{r , eval=T, echo=F,results="asis"}
+env_cov_filt<-tab_env_cov %>% filter(type=="Temperature")
+for (i in 1:nrow(env_cov_filt)){
+  cat("\n   + ",env_cov_filt$code[i],": ",env_cov_filt$long_name[i]," (",env_cov_filt$unit[i],") \n") 
+}
+```
+
+* **Data sources**:
+```{r , eval=T, echo=F,results="asis"}
+dataSources_filt<-dataSources %>% filter(collection %in% c("MOD11A1.v006","MYD11A1.v006","MOD11A2.v006","MYD11A2.v006","VNP21A1D.v001","VNP21A1N.v001","VNP21A2.v001"))
+for (i in 1:nrow(dataSources_filt)){
+  cat("\n   + [",dataSources_filt$collection[i],"](",dataSources_filt$url_metadata[i],") : ",dataSources_filt$long_name[i],"(provider : ",dataSources_filt$provider[i],") \n") 
+}
+```
+
+### Import
+
+We use the [`getRemoteData`](https://github.com/ptaconet/getRemoteData) R package (with the function `getData_modis`) to download the MODIS and VNP data over our region of interest (ROI) only. Internally, `getRemoteData` makes use of the [OPeNDAP](https://opendap.cr.usgs.gov/opendap/hyrax/) standard data access protocol to spatially subset the data over a given ROI only directly at the data download phase. Go to [Github page of `getRemoteData`](https://github.com/ptaconet/getRemoteData) to get additional details on the package.
+
+We import the MODIS and the VNP data in 3 steps :
+
+- 1/ we extract the set of parameters that will be parsed in the `getData_modis` function. These are not mandatory parameters of the function (they are automatically calculated within the function if not provided), however providing them makes the process faster ;
+- 2/ we retrieve the URLs of all the MODIS datasets to download using the [`getData_modis`](https://ptaconet.github.io/getRemoteData/reference/getData_modis.html) function of the [`getRemoteData`] package ;
+- 3/ we download the data using the [`downloadData`](https://ptaconet.github.io/getRemoteData/reference/downloadData.html) function of the [`getRemoteData`] package. To fasten the download we parrallize it with the `parallelDL` argument set to `TRUE`.
+
+
+```{r modis_vnp_import, eval=F, echo=T}
+
+##########  1/ we extract the set of parameters that will be parsed in the `getRemoteData::getData_modis` function
+
+# Set MODIS collections and dimensions of interest
+modis_collections_df <- data.frame(collection = c("MOD11A1.006","MYD11A1.006","MOD11A2.006","MYD11A2.006","MOD13Q1.006","MYD13Q1.006","MOD16A2.006","MYD16A2.006","VNP21A1D.001","VNP21A1N.001","VNP21A2.001","VNP13A1.001"),stringsAsFactors = F) %>%
+   mutate(dimensions=case_when(collection %in% c("MOD11A1.006","MYD11A1.006","MOD11A2.006","MYD11A2.006") ~ list(c("LST_Day_1km","LST_Night_1km")),
+                                        collection %in% c("MOD13Q1.006","MYD13Q1.006") ~ list(c("_250m_16_days_NDVI","_250m_16_days_EVI")),
+                                        collection %in% c("MOD16A2.006","MYD16A2.006") ~ list(c("ET_500m")),
+                                        collection %in% c("VNP21A1D.001","VNP21A1N.001") ~ list(c("LST_1KM")),
+                                        collection %in% c("VNP21A2.001") ~ list(c("LST_Day_1KM","LST_Night_1KM")),
+                                        collection %in% c("VNP13A1.001") ~ list(c("_500_m_16_days_EVI","_500_m_16_days_EVI2","_500_m_16_days_NDVI"))
+                                        ))
+
+##########  2/ we retrieve the URLs of all the MODIS datasets to download using the `getRemoteData::getData_modis` function
+
+# Get OpenDAP optional arguments and set dimensions of interest
+modis_collections_df <- modis_collections_df %>% 
+  mutate(optionals_opendap=map(collection,~getRemoteData::.getOpendapOptArguments_modis_vnp(roi = roi,collection = .,modisTile = modis_tile)))
+
+modisData_md<-datesDday %>%
+    set_names(as.numeric(.)) %>% # names will be numeric format of the dates (days since 1970-01-01)
+  map(.,~pmap(list(.,modis_collections_df$collection,modis_collections_df$dimensions,modis_collections_df$optionals_opendap),
+            ~getRemoteData::getUrl_modis_vnp(
+                           timeRange = c(..1-lagTime_timeSeries,..1),
+                           roi = roi,
+                           collection = ..2,
+                           dimensions = ..3,
+                           optionals_opendap = ..4,
+                           single_ncfile = FALSE)) %>%
+        set_names(modis_collections_df$collection)) 
+
+modisData_md <- modify_depth(modisData_md,2,~mutate(.,destfile=file.path(path_to_output_datasets,substr(.$name,1,11),.$name)))
+
+head(modisData_md)
+
+##########  3/ we download the data using the `getRemoteData::downloadData` function.
+DftoDl<-.getDftoDl(modisData_md)
+cat("Downloading MODIS and VNP data...\n")
+Dl_res<-getRemoteData::downloadData(DftoDl,parallelDL=TRUE,data_source="earthdata")
+# Check if the datasets were downloaded
+head(file.exists(DftoDl$destfile))
+```
+
+### Tidy, transform 
+
+#### MODIS
+
+* **Main processings**:
+  + Combine Terra and Aqua *LST_Day_1km* for TMD/TMW (resp. *LST_Night_1km* for TND/TNW) bands ;
+  + Keep only the highest (resp. lowest) available value for each pixel ;
+  + Extract the average temperature value within each buffer.
+  
+* **Missing values imputation** :
+  + first degree : use the value of the wider buffer(s) for the same day (qval = 2 in the output table);
+  + second degree : use the average temperature between the previous and the next day (qval = 3);
+  + third degree : use the value of the average 8-day temperature (qval = 4);
+  + fourth degree : use the average value between the previous and the next average 8-day temperature (qval = 5).
+  
+* **Details, notes, comments**:
+
+Bad quality pixels are already set to NA in the original MODIS LST products.
+There are very few missing values remaining after NA imputation. 
+
+```{r temperatureMODIS_tidytransform, eval=F, echo=T}
+# Local function to extract MODIS LST data 
+.extract_modis_lst<-function(MOD_collection, MYD_collection){
+  # For each date of interest, get the related time-series rasters names (i.e. the whole set of 40 days rasters)
+  rastsNames_LST<-.getRastersNames_timeSeries(df_sampling_points,modisData_md,MOD_collection)
+
+  # Build the path to the Terra (MOD) and Aqua (MYD) products
+  path_to_mod<-.getRastersPaths(modisData_md,MOD_collection)
+  path_to_myd<-.getRastersPaths(modisData_md,MYD_collection)
+  path_to_mod_myd<-merge(path_to_mod,path_to_myd,by="name",suffixes = c("_mod","_myd"))
+
+  # Pre-process LstMin
+  rasts_LstMin<-path_to_mod_myd %>%
+    mutate(rast_mod=map(destfile_mod,~getRemoteData::importData_modis(.,"LST_Night_1km"))) %>%  # open Terra products as raster
+    mutate(rast_myd=map(destfile_myd,~getRemoteData::importData_modis(.,"LST_Night_1km"))) %>%  # Open Aqua products as raster
+    mutate(rast=map2(rast_mod,rast_myd,~min(.x,.y,na.rm = T))) %>%  # Take the minimum value available between Terra and Aqcua 
+    mutate(rast=map(rast,~.-273.15)) %>%  # convert into celcius degrees
+    pluck("rast") %>%
+    set_names(path_to_mod_myd$name)
+
+  # Pre-process LstMax
+  rasts_LstMax<-path_to_mod_myd %>%
+    mutate(rast_mod=map(destfile_mod,~getRemoteData::importData_modis(.,"LST_Day_1km"))) %>%
+    mutate(rast_myd=map(destfile_myd,~getRemoteData::importData_modis(.,"LST_Day_1km"))) %>%
+    mutate(rast=map2(rast_mod,rast_myd,~max(.x,.y,na.rm = T))) %>%
+    mutate(rast=map(rast,~.-273.15)) %>%
+    pluck("rast") %>%
+    set_names(path_to_mod_myd$name)
+   
+  # Extract the variables 
+  cat("Extracting LstMin...\n")
+  lstMin<-.extractVar_ts(buffer_sizes,df_sampling_points,rastsNames_LST,rasts_LstMin,"mean") # to put in wide format : lstMin <- lstMin %>% unite(var,var,time_lag) %>% spread(key=var,value=val)
+  lstMin$var<-"lstMin"
+  cat("Extracting LstMax...\n")
+  lstMax<-.extractVar_ts(buffer_sizes,df_sampling_points,rastsNames_LST,rasts_LstMax,"mean")
+  lstMax$var<-"lstMax"
+  #head(lstMin)
+  
+  return(list(lstMin,lstMax))
+}
+
+# Extract MODIS LST 1 day
+cat("extracting MODIS LST 1 day...\n")
+lst1day<-.extract_modis_lst("MOD11A1.006","MYD11A1.006")
+lst1day[[1]]$var<-"TND_M"
+lst1day[[2]]$var<-"TMD_M"
+# Extract MODIS LST 8 days
+cat("extracting MODIS LST 8 days...\n")
+lst8day<-.extract_modis_lst("MOD11A2.006","MYD11A2.006")
+lst8day[[1]]$var<-"TNW_M"
+lst8day[[2]]$var<-"TMW_M"
+
+## Impute NAs
+lst8day<-lst8day %>%
+  map(.,~.modis_fillNA_l1(.,1))
+
+lst1day<-lst1day %>%
+  map(.,~.modis_fillNA_l1(.,1)) %>%
+  map(.,~.modis_fillNA_l2(.,2)) %>%
+  map(.,~.modis_fillNA_l3(.,3)) %>%
+  map2(.x=.,.y=lst8day,~.modis_fillNA_l4(.x,.y,4))
+
+lst8day<-lst8day %>%
+  map(.,~.modis_fillNA_l2(.,2)) %>%
+  map(.,~.modis_fillNA_l3(.,3))
+
+lst1day<-lst1day %>%
+    map2(.x=.,.y=lst8day,~.modis_fillNA_l4(.x,.y,5))
+
+
+TND_M<-lst1day[[1]]
+TMD_M<-lst1day[[2]]
+TNW_M<-lst8day[[1]]
+TMW_M<-lst8day[[2]]
+
+# Export
+write.csv(TND_M,file.path(path_to_output_datasets,"envCov_TND_M.csv"),row.names = F)
+write.csv(TMD_M,file.path(path_to_output_datasets,"envCov_TMD_M.csv"),row.names = F)
+write.csv(TNW_M,file.path(path_to_output_datasets,"envCov_TNW_M.csv"),row.names = F)
+write.csv(TMW_M,file.path(path_to_output_datasets,"envCov_TMW_M.csv"),row.names = F)
+```
+
+Structure of the resulting datasets (TND_M, TMD_M, TNW_M and TMW_M all have the same structure) :
+
+```{r temperatureMODIS_result, eval=T, echo=F, message=F, warning=F}
+TND_M<-read_csv(file.path(path_to_output_datasets,"envCov_TND_M.csv"))
+```
+```{r eval=T, echo=T}
+TND_M
+```
+
+#### VNP
+
+We do the same with VNP products
+
+```{r temperatureVNP_tidytransform, eval=F, echo=T}
+
+# Local function to extract VNP daily LST data 
+.extract_vnp_lst<-function(VNP_collection,band_name){
+
+  # For each date of interest, get the related time-series rasters names (i.e. the whole set of 40 days rasters)
+  rastsNames_vnp<-.getRastersNames_timeSeries(df_sampling_points,modisData_md,VNP_collection)
+
+  # Build the path to the LST datasets
+  path_to_vnp<-.getRastersPaths(modisData_md,VNP_collection)
+
+  # Pre-process
+  rasts_Lst<-path_to_vnp %>%
+    mutate(rast=map(destfile,~getRemoteData::importData_modis(.,band_name))) %>%  # open VNP products as raster
+    mutate(rast=map(rast,~.-273.15)) %>%  # convert into celcius degrees
+    pluck("rast") %>%
+    set_names(path_to_vnp$name)
+
+  lst<-.extractVar_ts(buffer_sizes,df_sampling_points,rastsNames_vnp,rasts_Lst,"mean")
+
+  return(lst)
+
+}
+
+## Extract VNP LST daily min temperature
+cat("extracting VNP LST 1 day minimum temperature...\n")
+lst1day_min<-.extract_vnp_lst("VNP21A1N.001","LST_1KM")
+
+## Extract VNP LST daily max temperature
+cat("extracting VNP LST 1 day maximum temperature...\n")
+lst1day_max<-.extract_vnp_lst("VNP21A1D.001","LST_1KM")
+
+# Extract VNP LST 8 days min temperature
+cat("extracting VNP LST 8 day minimum temperature...\n")
+lst8day_min<-.extract_vnp_lst("VNP21A2.001","LST_Night_1KM")
+
+# Extract VNP LST 8 days max temperature
+cat("extracting VNP LST 8 day minimum temperature...\n")
+lst8day_max<-.extract_vnp_lst("VNP21A2.001","LST_Day_1KM")
+
+lst1day<-list(lst1day_min,lst1day_max)
+lst8day<-list(lst8day_min,lst8day_max)
+
+lst1day[[1]]$var<-"TND_V"
+lst1day[[2]]$var<-"TMD_V"
+lst8day[[1]]$var<-"TNW_V"
+lst8day[[2]]$var<-"TMW_V"
+
+## Impute NAs
+lst8day<-lst8day %>%
+  map(.,~.modis_fillNA_l1(.,1))
+
+lst1day<-lst1day %>%
+  map(.,~.modis_fillNA_l1(.,1)) %>%
+  map(.,~.modis_fillNA_l2(.,2)) %>%
+  map(.,~.modis_fillNA_l3(.,3)) %>%
+  map2(.x=.,.y=lst8day,~.modis_fillNA_l4(.x,.y,4))
+
+lst8day<-lst8day %>%
+  map(.,~.modis_fillNA_l2(.,2)) %>%
+  map(.,~.modis_fillNA_l3(.,3))
+
+lst1day<-lst1day %>%
+    map2(.x=.,.y=lst8day,~.modis_fillNA_l4(.x,.y,5))
+
+
+TND_V<-lst1day[[1]]
+TMD_V<-lst1day[[2]]
+TNW_V<-lst8day[[1]]
+TMW_V<-lst8day[[2]]
+
+# Export
+write.csv(TND_V,file.path(path_to_output_datasets,"envCov_TND_V.csv"),row.names = F)
+write.csv(TMD_V,file.path(path_to_output_datasets,"envCov_TMD_V.csv"),row.names = F)
+write.csv(TNW_V,file.path(path_to_output_datasets,"envCov_TNW_V.csv"),row.names = F)
+write.csv(TMW_V,file.path(path_to_output_datasets,"envCov_TMW_V.csv"),row.names = F)
+```
+
+## Vegetation indices
+
+* **Covariates extracted**:
+```{r , eval=T, echo=F,results="asis"}
+env_cov_filt<-tab_env_cov %>% filter(type=="Vegetation")
+for (i in 1:nrow(env_cov_filt)){
+  cat("\n   + ",env_cov_filt$code[i],": ",env_cov_filt$long_name[i]," (",env_cov_filt$unit[i],") \n") 
+}
+```
+
+* **Data sources**:
+```{r , eval=T, echo=F,results="asis"}
+dataSources_filt<-dataSources %>% filter(collection %in% c("MOD13Q1.v006","MYD13Q1.v006"))
+for (i in 1:nrow(dataSources_filt)){
+  cat("\n   + [",dataSources_filt$collection[i],"](",dataSources_filt$url_metadata[i],") : ",dataSources_filt$long_name[i],"(provider : ",dataSources_filt$provider[i],") \n") 
+}
+```
+
+### Import
+
+MODIS Vegetation data are imported with the other MODIS data. See section [1.1/ Import](#import).
+
+### Tidy, transform
+
+* **Main processings**:
+  + Extract Terra and Aqua *250m_16_days_NDVI* band (resp. *250m_16_days_EVI*) for VNI (resp. VEI) ;
+  + Extract the average vegetation indice value within each buffer. 
+  
+* **Missing values imputation** :
+  + first degree : use the value of the wider buffer(s) for the same week (qval = 2 in the output table) ;
+  + second degree : use the average value between the previous and the next week (qval = 3).
+
+* **Details, notes, comments**:
+
+Bad quality pixels are already set to NA in the original MODIS Vegetation products.
+The MODIS Vegetation products are produced over a 16 days time frame, hence there are very few missing values in the raw products.
+In addition, Terra and Aqua Vegetation products are phased, enabling to have a 8-days temporal resolution.
+
+```{r vegetation_tidytransform, eval=F, echo=T}
+# For each date of interest, get the related time-series rasters names (i.e. the whole set of 40 days rasters)
+rastsNames_VI<-map2(.getRastersNames_timeSeries(df_sampling_points,modisData_md,"MOD13Q1.006"),.getRastersNames_timeSeries(df_sampling_points,modisData_md,"MYD13Q1.006"),c) %>%
+  map(as.numeric) %>%
+  map(~sort(.,decreasing=TRUE)) %>%
+  map(as.character)
+   
+# Build the path to the Terra (MOD) and Aqua (MYD) products
+path_to_mod<-.getRastersPaths(modisData_md,"MOD13Q1.006")
+path_to_myd<-.getRastersPaths(modisData_md,"MYD13Q1.006")
+path_to_mod_myd<-rbind(path_to_mod,path_to_myd) %>% arrange(name)
+   
+# Pre-process NDVI. Bad quality pixels are directly set to NA. We keep all the other pixels.
+rasts_ndvi<-path_to_mod_myd %>%
+     mutate(rast=map(destfile,~getRemoteData::importData_modis(.,"_250m_16_days_NDVI"))) %>%
+     pluck("rast") %>%
+     set_names(path_to_mod_myd$name) 
+ 
+# Pre-process EVI
+rasts_evi<-path_to_mod_myd %>%
+     mutate(rast=map(destfile,~getRemoteData::importData_modis(.,"_250m_16_days_EVI"))) %>%
+     pluck("rast") %>%
+     set_names(path_to_mod_myd$name) 
+     
+# Extract the variables 
+cat("Extracting ndvi...\n")
+VNI<-.extractVar_ts(buffer_sizes,df_sampling_points,rastsNames_VI,rasts_ndvi,"mean")
+VNI$var<-"VNI"
+cat("Extracting evi...\n")
+VEI<-.extractVar_ts(buffer_sizes,df_sampling_points,rastsNames_VI,rasts_evi,"mean")
+VEI$var<-"VEI" 
+rm(rasts_ndvi,rasts_evi)
+
+## Impute NAs
+VNI<-VNI %>%
+  .modis_fillNA_l1(.,1) %>%
+  .modis_fillNA_l2(.,2) %>%
+  .modis_fillNA_l3(.,3)
+
+VEI<-VEI %>%
+  .modis_fillNA_l1(.,1) %>%
+  .modis_fillNA_l2(.,2) %>%
+  .modis_fillNA_l3(.,3)
+
+# Export
+write.csv(VNI,file.path(path_to_output_datasets,"envCov_VNI.csv"),row.names = F)
+write.csv(VEI,file.path(path_to_output_datasets,"envCov_VEI.csv"),row.names = F)
+```
+
+Structure of the resulting datasets (VNI and VEI have the same structure) :
+
+```{r vegetation_result, eval=T, echo=F, message=F, warning=F}
+VNI<-read_csv(file.path(path_to_output_datasets,"envCov_VNI.csv"))
+```
+```{r eval=T, echo=T}
+VNI
+```
+
+## Evapotranspiration
+
+* **Covariates extracted**:
+```{r , eval=T, echo=F,results="asis"}
+env_cov_filt<-tab_env_cov %>% filter(type=="Evapotranspiration")
+for (i in 1:nrow(env_cov_filt)){
+  cat("\n   + ",env_cov_filt$code[i],": ",env_cov_filt$long_name[i]," (",env_cov_filt$unit[i],") \n") 
+}
+```
+
+* **Data sources**:
+```{r , eval=T, echo=F,results="asis"}
+dataSources_filt<-dataSources %>% filter(collection %in% c("MOD16A2.v006","MYD16A2.v006"))
+for (i in 1:nrow(dataSources_filt)){
+  cat("\n   + [",dataSources_filt$collection[i],"](",dataSources_filt$url_metadata[i],") : ",dataSources_filt$long_name[i],"(provider : ",dataSources_filt$provider[i],") \n") 
+}
+```
+
+### Import
+
+MODIS Evapotranspiration data are imported with the other MODIS data. See section [1.1/ Import](#import).
+
+### Tidy, transform
+
+* **Main processings**:
+  + Combine Terra and Aqua *ET_500m* band ;
+  + Set the bad quality pixel values to NA ; 
+  + Extract the average evapotranspiration value within each buffer. 
+  
+* **Missing values imputation** :
+  + first degree : use the value of the wider buffer(s) for the same week (qval = 2 in the output table);
+  + second degree : use the average value between the previous and the next week (qval = 3);
+
+```{r evapotransiration_tidytransform, eval=F, echo=T}
+# For each date of interest, get the related time-series rasters names (i.e. the whole set of 40 days rasters)
+rastsNames_Et<-.getRastersNames_timeSeries(df_sampling_points,modisData_md,"MOD16A2.006")
+   
+# Build paths to data
+path_to_mod<-.getRastersPaths(modisData_md,"MOD16A2.006")
+path_to_myd<-.getRastersPaths(modisData_md,"MYD16A2.006")
+path_to_mod_myd<-merge(path_to_mod,path_to_myd,by="name",suffixes = c("_mod","_myd"))
+   
+# Pre-process
+rasts_Et<-path_to_mod_myd %>%
+     mutate(rast_mod=map(destfile_mod,~getRemoteData::importData_modis(.,"ET_500m"))) %>%
+     mutate(rast_myd=map(destfile_myd,~getRemoteData::importData_modis(.,"ET_500m"))) %>%
+     mutate(rast_mod=map(rast_mod,~clamp(.x,upper=32760,useValues=FALSE))) %>% ## Set pixel values >= 32760 (quality pixel values) to NA 
+     mutate(rast_myd=map(rast_myd,~clamp(.x,upper=32760,useValues=FALSE))) %>% ## Set pixel values >= 32760 (quality pixel values) to NA 
+     mutate(rast=map2(rast_mod,rast_myd,~mean(.x,.y,na.rm = T))) %>%
+     pluck("rast") %>%
+     set_names(path_to_mod_myd$name)
+     
+# Extract
+cat("Extracting et...\n")
+EVT<-.extractVar_ts(buffer_sizes,df_sampling_points,rastsNames_Et,rasts_Et,"mean")
+EVT$var<-"EVT"
+rm(rasts_Et)
+
+## Impute NAs
+EVT<-EVT %>%
+  .modis_fillNA_l1(.,1) %>%
+  .modis_fillNA_l2(.,2) %>%
+  .modis_fillNA_l3(.,3)
+
+# Export
+write.csv(EVT,file.path(path_to_output_datasets,"envCov_EVT.csv"),row.names = F)
+```
+
+Structure of the resulting dataset :
+
+```{r evapotransiration_result, eval=T, echo=F, message=F, warning=F}
+EVT<-read_csv(file.path(path_to_output_datasets,"envCov_EVT.csv"))
+```
+```{r eval=T, echo=T}
+EVT
+```
+
+## Soil moisutre
+
+* **Covariates extracted**:
+```{r , eval=T, echo=F,results="asis"}
+env_cov_filt<-tab_env_cov %>% filter(code=="SMO")
+for (i in 1:nrow(env_cov_filt)){
+  cat("\n   + ",env_cov_filt$code[i],": ",env_cov_filt$long_name[i]," (",env_cov_filt$unit[i],") \n") 
+}
+```
+
+* **Data sources**:
+```{r , eval=T, echo=F,results="asis"}
+dataSources_filt<-dataSources %>% filter(collection=="SPL3SMP_E")
+for (i in 1:nrow(dataSources_filt)){
+  cat("\n   + [",dataSources_filt$collection[i],"](",dataSources_filt$url_metadata[i],") : ",dataSources_filt$long_name[i],"(provider : ",dataSources_filt$provider[i],") \n") 
+}
+```
+
+### Import
+
+SMAP data are imported with the [`getData_smap`](https://ptaconet.github.io/getRemoteData/reference/getData_smap.html) function of the [`getRemoteData`] package.
+
+```{r smap_import, eval=F, echo=T}
+
+# Set SMAP collections and dimensions of interest
+smap_collections_df <- data.frame(collection = c("SPL3SMP_E.003"),stringsAsFactors = F) %>%
+   mutate(dimensions=list(c("Soil_Moisture_Retrieval_Data_AM_soil_moisture",
+  "Soil_Moisture_Retrieval_Data_AM_retrieval_qual_flag",
+  "Soil_Moisture_Retrieval_Data_PM_soil_moisture_pm",
+  "Soil_Moisture_Retrieval_Data_PM_retrieval_qual_flag_pm")))
+
+# Get OpenDAP optional arguments
+smapOpenDAP_md <- smap_collections_df %>% 
+  mutate(optionals_opendap=map(collection,~getRemoteData::.getOpendapOptArguments_smap(roi = roi, collection = .)))
+
+# Retrieve the URLs of the SMAP datasets to download using the `getRemoteData::getUrl_smap` function. Output is a list
+smapData_md<-datesDday %>%
+  set_names(as.numeric(.)) %>%
+  map(.,~pmap(list(.,smapOpenDAP_md$collection,smapOpenDAP_md$dimensions,smapOpenDAP_md$optionals_opendap),
+            ~getRemoteData::getUrl_smap(
+                           timeRange = c(..1-lagTime_timeSeries,..1),
+                           roi = roi,
+                           collection = ..2,
+                           dimensions = ..3,
+                           optionals_opendap = ..4)) %>%
+        set_names(smapOpenDAP_md$collection))
+
+smapData_md<-modify_depth(smapData_md,2,~mutate(.,destfile=file.path(path_to_output_datasets,"SPL3SMP_E.003",.$name)))
+
+#########  Download the data
+DftoDl<-.getDftoDl(smapData_md)
+cat("Downloading SMAP data...\n")
+Dl_res<-getRemoteData::downloadData(DftoDl,parallelDL=TRUE,data_source = "earthdata")
+# Check if the datasets were downloaded
+head(file.exists(DftoDl$destfile))
+``` 
+
+### Tidy, transform
+
+* **Main processings**:
+  + Extract the *Soil_Moisture_Retrieval_Data_AM_soil_moisture* and *Soil_Moisture_Retrieval_Data_PM_soil_moisture_pm* bands ;
+  + Compute the mean daily soil moisture ;
+  + Extract the average soil moisture value within each buffer.
+  
+* **Missing values imputation** :
+  + second degree : use the average value between the previous and the next day (qval = 3).
+
+```{r smap_tidytransform, eval=F, echo=T}
+rastsNames_smap<-.getRastersNames_timeSeries(df_sampling_points,smapData_md,"SPL3SMP_E.003")
+   
+# Build paths to data
+path_to_smap<-.getRastersPaths(smapData_md,"SPL3SMP_E.003")
+   
+# Pre-process
+minLon<-smapOpenDAP_md[[3]][[1]][["roiSpatialBound"]][3]
+minLat<-smapOpenDAP_md[[3]][[1]][["roiSpatialBound"]][1]
+maxLon<-smapOpenDAP_md[[3]][[1]][["roiSpatialBound"]][4]
+maxLat<-smapOpenDAP_md[[3]][[1]][["roiSpatialBound"]][2]
+
+rasts_smap<-path_to_smap %>%
+     mutate(rast_am=map(destfile,~getRemoteData::importData_smap(.,"Soil_Moisture_Retrieval_Data_AM_soil_moisture",minLon,minLat,maxLon,maxLat))) %>%
+     mutate(rast_pm=map(destfile,~getRemoteData::importData_smap(.,"Soil_Moisture_Retrieval_Data_PM_soil_moisture_pm",minLon,minLat,maxLon,maxLat))) %>%
+     mutate(rast=map2(rast_am,rast_pm,~mean(.x,.y,na.rm = T))) %>%
+     pluck("rast") %>%
+     set_names(path_to_smap$name)
+
+rasts_smap[["SMAP_L3_SM_P_E_20160927_R16510_001.h5"]]<-raster(rasts_smap[[1]]) %>% setValues(NA)
+
+# Extract
+cat("Extracting soil moisture (smap)...\n")
+SMO<-.extractVar_ts(buffer_sizes,df_sampling_points,rastsNames_smap,rasts_smap,"mean")
+SMO$var<-"SMO"
+
+## Impute NAs
+SMO<-SMO %>%
+  .modis_fillNA_l1(.,1) %>%
+  .modis_fillNA_l2(.,2) %>%
+  .modis_fillNA_l3(.,3)
+
+rm(rasts_smap)
+
+# Export
+write.csv(SMO,file.path(path_to_output_datasets,"envCov_SMO.csv"),row.names = F)
+``` 
+
+Structure of the resulting dataset :
+
+```{r smap_result, eval=T, echo=F, message=F, warning=F}
+SMO<-read_csv(file.path(path_to_output_datasets,"envCov_SMO.csv"))
+```
+```{r eval=T, echo=T}
+SMO
+```
+
+## Precipitation (GPM)
+
+For the precipitation, we use two distinct sources of data (GPM and TAMSAT, cf. below). Both sources provide daily precipitations, GPM at global scale, TAMSAT at the african continent scale. In the modeling phase, we will keep the one that provides the best results.  
+
+* **Covariates extracted**:
+```{r , eval=T, echo=F,results="asis"}
+env_cov_filt<-tab_env_cov %>% filter(code %in% c("RFD_G","RFH"))
+for (i in 1:nrow(env_cov_filt)){
+  cat("\n   + ",env_cov_filt$code[i],": ",env_cov_filt$long_name[i]," (",env_cov_filt$unit[i],") \n") 
+}
+```
+
+* **Data sources**:
+```{r , eval=T, echo=F,results="asis"}
+dataSources_filt<-dataSources %>% filter(collection %in% c("GPM_3IMERGDF","GPM_3IMERGHH"))
+for (i in 1:nrow(dataSources_filt)){
+  cat("\n   + [",dataSources_filt$collection[i],"](",dataSources_filt$url_metadata[i],") : ",dataSources_filt$long_name[i],"(provider : ",dataSources_filt$provider[i],") \n") 
+}
+```
+
+### Import
+
+As for the MODIS products, we download GPM data strictly over our region of interest using the [`getData_gpm`](https://ptaconet.github.io/getRemoteData/reference/getData_gpm.html) function of the `getRemoteData` package.. The import process is similar to MODIS : 
+
+- We first extract a set of parameters that will be further parsed in the function ;
+- We retrieve the URL of the products to download with the `getData_gpm` function ;
+- We download the data with `getRemoteData::downloadData` function. 
+
+```{r precipitationGpm_import, eval=F, echo=T}
+
+#########  Extract set of information that will be parsed in the getData_gpm function
+cat("Retrieving information to download GPM data on the OpeNDAP servers...\n")
+
+# Set GPM collections and dimensions of interest
+gpm_collections_df <- data.frame(collection = c("GPM_3IMERGDF.06","GPM_3IMERGHH.06"),stringsAsFactors = F) %>%
+   mutate(dimensions=case_when(collection=="GPM_3IMERGDF.06" ~ list(c("precipitationCal")),
+                                        collection=="GPM_3IMERGHH.06" ~list(c("precipitationCal","precipitationQualityIndex"))
+   ))
+
+# Get OpenDAP optional arguments and set dimensions of interest
+gpmOpenDAP_md <- gpm_collections_df %>% 
+  mutate(optionals_opendap=map(collection,~getRemoteData::.getOpendapOptArguments_gpm(roi = roi,collection = .)))
+
+# Retrieve the URLs of the GPM Daily datasets to download using the `getRemoteData::getUrl_gpm` function. Output is a list
+gpmOpenDAP_md_daily<-gpmOpenDAP_md %>% 
+  filter(collection=="GPM_3IMERGDF.06")
+
+gpmData_md_daily<-datesDday %>%
+  set_names(as.numeric(.)) %>%
+  map(.,~pmap(list(.,gpmOpenDAP_md_daily$collection,gpmOpenDAP_md_daily$dimensions,gpmOpenDAP_md_daily$optionals_opendap),
+            ~getRemoteData::getUrl_gpm(
+                           timeRange = c(..1-lagTime_timeSeries,..1),
+                           roi = roi,
+                           collection = ..2,
+                           dimensions = ..3,
+                           optionals_opendap = ..4)) %>%
+        set_names(gpmOpenDAP_md_daily$collection))
+
+gpmData_md_daily<-modify_depth(gpmData_md_daily,2,~mutate(.,destfile=file.path(path_to_output_datasets,"GPM_3IMERGDF.06",.$name)))
+
+#########  Build list of datasets to download for GPM half-hourly and for all dates
+gpmOpenDAP_md_hhourly<-gpmOpenDAP_md %>% 
+  filter(collection=="GPM_3IMERGHH.06")
+
+gpmData_md_hhourly<-datesDday %>%
+  set_names(as.numeric(.)) %>%
+  map(.,~pmap(list(.,gpmOpenDAP_md_hhourly$collection,gpmOpenDAP_md_hhourly$dimensions,gpmOpenDAP_md_hhourly$optionals_opendap),
+            ~getRemoteData::getUrl_gpm(
+                           timeRange =  as.Date(c(paste0(as.Date(..1,origin="1970-01-01")," ",hourStart_Dday,":00:00"),paste0(as.Date(..1,origin="1970-01-01")+1," ",hourEnd_Dday,":00:00"))),
+                           roi = roi,
+                           collection = ..2,
+                           dimensions = ..3,
+                           optionals_opendap = ..4)) %>%
+        set_names(gpmOpenDAP_md_hhourly$collection)) %>%
+  modify_depth(2,~mutate(.,destfile=file.path(path_to_output_datasets,"GPM_3IMERGHH.06",.$name)))
+
+gpmData_md_hhourly<-modify_depth(gpmData_md_hhourly,2,~mutate(.,destfile=file.path(path_to_output_datasets,"GPM_3IMERGHH.06",.$name)))
+
+#########  Download the data
+DftoDl<-rbind(.getDftoDl(gpmData_md_daily),.getDftoDl(gpmData_md_hhourly))
+cat("Downloading GPM data...\n")
+Dl_res<-getRemoteData::downloadData(DftoDl,parallelDL=TRUE,data_source="earthdata")
+# Check if the datasets were downloaded
+head(file.exists(DftoDl$destfile))
+```
+  
+### Tidy, transform
+
+#### Daily precipitations
+
+* **Main processings**:
+  + Extract the *precipitationCal* band ;
+  + Resample to 250 m spatial resolution using a bilinear interpolation ;
+  + Extract the average precipitation value within each buffer. 
+  
+* **Missing values imputation** :
+No missing values in GPM Daily product.
+
+```{r precipitationGpmDaily_tidytransform, eval=F, echo=T}
+# For each date of interest, get the related time-series rasters names (i.e. the whole set of 40 days rasters)
+rastsNames_gpmDay<-.getRastersNames_timeSeries(df_sampling_points,gpmData_md_daily,"GPM_3IMERGDF.06")
+   
+# Build paths to data
+path_to_gpmDay<-.getRastersPaths(gpmData_md_daily,"GPM_3IMERGDF.06")
+   
+rasts_gpmDay<-path_to_gpmDay %>%
+     mutate(rast=future_map(destfile,~getRemoteData::importData_gpm(.,"precipitationCal"))) %>% 
+     pluck("rast") %>%
+     set_names(path_to_gpmDay$name)
+
+# resampling to 250 m
+if(gpm_resample){
+  rasts_gpmDay<-future_map(rasts_gpmDay,~.resampleProd(.,gpm_resample_output_res)) 
+}
+
+# Extract
+cat("Extracting daily precipitations (gpm)...\n")
+RFD_G<-.extractVar_ts(buffer_sizes,df_sampling_points,rastsNames_gpmDay,rasts_gpmDay,"mean")
+RFD_G$var<-"RFD_G"
+RFD_G$qval<-1
+rm(rasts_gpmDay)
+
+# Export
+write.csv(RFD_G,file.path(path_to_output_datasets,"envCov_RFD_G.csv"),row.names = F)
+```   
+
+Structure of the resulting dataset :
+
+```{r precipitationGpmDaily_result, eval=T, echo=F, message=F, warning=F}
+RFD_G<-read_csv(file.path(path_to_output_datasets,"envCov_RFD_G.csv"))
+```
+```{r eval=T, echo=T}
+RFD_G
+```
+
+  
+#### Half-hourly precipitations
+
+* **Main processings**:
+  + Extract the *precipitationCal* band ;
+  + Use the *precipitationQualityIndex* band to exclude bad quality pixels (see https://pmm.nasa.gov/sites/default/files/document_files/IMERGV06_QI.pdf for additional info) ;
+  + Resample to 250 m spatial resolution using a bilinear interpolation ;
+  + Extract the proportion of half-hours with positive precipitations between 18h and 08h at the sampling point location. 
+
+```{r precipitationGpmHhourly_tidytransform, eval=F, echo=T}
+rastsNames_gpmHhour<-.getRastersNames_timeSeries(df_sampling_points,gpmData_md_hhourly,"GPM_3IMERGHH.06")
+   
+# Build paths to data
+path_to_gpmHhour<-.getRastersPaths(gpmData_md_hhourly,"GPM_3IMERGHH.06")
+   
+# Pre-process
+rasts_gpmHhour<-path_to_gpmHhour %>%
+     mutate(rast=future_map(destfile,~getRemoteData::importData_gpm(.,"precipitationCal"))) %>% 
+     mutate(rast_qval=future_map(destfile,~getRemoteData::importData_gpm(.,"precipitationQualityIndex"))) %>% 
+     mutate(rast_qval=future_map(rast_qval,~clamp(.x,lower=0.4,useValues=FALSE))) %>% ## Set pixel values <= 0.4 (quality pixel values) to NA. See https://pmm.nasa.gov/sites/default/files/document_files/IMERGV06_QI.pdf for additional info (threshold of 0.4 is given in this doc)
+     mutate(rast=future_map2(rast,rast_qval,~raster::mask(.x,.y))) %>% 
+     pluck("rast") %>%
+     set_names(path_to_gpmHhour$name)
+
+# resampling to 250 m
+if(gpm_resample){
+  rasts_gpmHhour<-future_map(rasts_gpmHhour,~.resampleProd(.,gpm_resample_output_res)) 
+}
+
+# Set pixel to 1 if there was rain (precip. >=0.05mm), else 0 
+rasts_gpmHhour<-future_map(rasts_gpmHhour,~raster::reclassify(.,c(-Inf,0.05,0, 0.05,Inf,1)))
+
+# Extract
+cat("Extracting half hourly precipitations (gpm)...\n")
+RFH<-.extractVar_ts(buffer_sizes=10,df_sampling_points,rastsNames_gpmHhour,rasts_gpmHhour,"sum")  # With this we get if is has rain (1) or not (0) for each half hour of each night (ie the lag). This dataset will be useful to study the detailed rythms (cycles) of the mosquitoes. Note that ther is only 1 cell intersected (i.e. buffer_sizes=10) so the summurazing function is quite useless
+# Now we extract the variable that we want: the proportion of half-hours where it has rained for the total duration of each night. There are quite few NAs: we remove them (ie we do not take them into account for the calculation of the proportions)
+RFH<-RFH %>%
+  filter(!is.na(val)) %>%
+  group_by(id,buffer) %>% 
+  summarise(val=round(sum(val)/n()*100))
+RFH$var<-"RFH"
+RFH$qval<-1
+rm(rasts_gpmHhour)
+
+# Export
+write.csv(RFH,file.path(path_to_output_datasets,"envCov_RFH.csv"),row.names = F)
+```  
+
+Structure of the resulting dataset :
+
+```{r precipitationGpmHhourly_result, eval=T, echo=F, message=F, warning=F}
+RFH<-read_csv(file.path(path_to_output_datasets,"envCov_RFH.csv"))
+```
+```{r eval=T, echo=T}
+RFH
+```
+
+
+## Precipitation (TAMSAT)
+
+* **Covariates extracted**:
+```{r , eval=T, echo=F,results="asis"}
+env_cov_filt<-tab_env_cov %>% filter(code=="RFD_T")
+for (i in 1:nrow(env_cov_filt)){
+  cat("\n   + ",env_cov_filt$code[i],": ",env_cov_filt$long_name[i]," (",env_cov_filt$unit[i],") \n") 
+}
+```
+
+* **Data sources**:
+```{r , eval=T, echo=F,results="asis"}
+dataSources_filt<-dataSources %>% filter(collection=="TAMSAT")
+for (i in 1:nrow(dataSources_filt)){
+  cat("\n   + [",dataSources_filt$collection[i],"](",dataSources_filt$url_metadata[i],") : ",dataSources_filt$long_name[i],"(provider : ",dataSources_filt$provider[i],") \n") 
+}
+```
+
+### Import
+
+TAMSAT data are imported with the [`getData_tamsat`](https://ptaconet.github.io/getRemoteData/reference/getData_tamsat.html) function of the [`getRemoteData`] package.
+
+```{r precipitationTamsat_import, eval=F, echo=T}
+tamsat_md<-data.frame(output_time_step=c("daily"), #,"monthly","monthly"),
+                         output_product=c("rainfall_estimate"), #,"rainfall_estimate","anomaly"),
+                         output_output=c("individual"), #,"individual","individual"),
+                         stringsAsFactors = F) %>%
+     mutate(source=paste(output_time_step,output_product,output_output,sep="_"))  %>%
+     mutate(destFolder=file.path(path_to_output_datasets,"TAMSAT",source)) 
+   
+tamsatData_md<-datesDday %>%
+     set_names(as.numeric(.)) %>% # names will be numeric format of the dates (days since 1970-01-01)
+     map(~pmap(list(.,pluck(tamsat_md,"destFolder"),pluck(tamsat_md,"output_time_step"),pluck(tamsat_md,"output_product"),pluck(tamsat_md,"output_output")),
+               ~getRemoteData::getData_tamsat(timeRange = c(..1-lagTime_timeSeries,..1),
+                            destFolder=..2,
+                            output_time_step=..3,
+                            output_product=..4,
+                            output_output=..5)) %>%
+                        set_names(pluck(tamsat_md,"source")))
+   
+## Download datasets
+DftoDl<-.getDftoDl(tamsatData_md)
+cat("Downloading TAMSAT data...\n")
+Dl_res<-getRemoteData::downloadData(DftoDl,parallelDL=TRUE)
+# Check if the datasets were downloaded
+head(file.exists(DftoDl$destfile))
+``` 
+
+### Tidy, transform
+
+* **Main processings**:
+  + Extract the *daily_rainfall_estimate_individual* band ;
+  + Crop to the ROI ;
+  + Resample to 250 m spatial resolution using a bilinear interpolation ;
+  + Extract the average precipitation value within each buffer.
+  
+```{r precipitationTamsat_tidytransform, eval=F, echo=T}
+rastsNames_tamsat<-.getRastersNames_timeSeries(df_sampling_points,tamsatData_md,"daily_rainfall_estimate_individual")
+   
+# Build paths to data
+path_to_tamsat<-.getRastersPaths(tamsatData_md,"daily_rainfall_estimate_individual")
+   
+# Pre-process
+rasts_tamsat<-path_to_tamsat %>%
+     mutate(rast=future_map(destfile,~getRemoteData::importData_tamsat(.,roi))) %>%
+     pluck("rast") %>%
+     set_names(path_to_tamsat$name)
+
+# resampling to 250 m
+if(tamsat_resample){
+rasts_tamsat<-future_map(rasts_tamsat,~.resampleProd(.,tamsat_resample_output_res)) 
+}
+
+# Extract
+cat("Extracting daily precipitations (tamsat)...\n")
+RFD_T<-.extractVar_ts(buffer_sizes,df_sampling_points,rastsNames_tamsat,rasts_tamsat,"mean")
+RFD_T$var<-"RFD_T"
+RFD_T$qval<-1
+rm(rasts_tamsat)
+
+# Export
+write.csv(RFD_T,file.path(path_to_output_datasets,"envCov_RFD_T.csv"),row.names = F)
+``` 
+
+Structure of the resulting dataset :
+
+```{r precipitationTamsat_result, eval=T, echo=F, message=F, warning=F}
+RFD_T<-read_csv(file.path(path_to_output_datasets,"envCov_RFD_T.csv"))
+```
+```{r eval=T, echo=T}
+RFD_T
+```
+
+
+## Water indices
+
+* **Covariates extracted**
+
+* **Data sources**
+
+### Import 
+
+Too heavy to calculate for all the dates, so we select only 1 date/mission
+
+```{r , eval=T, echo=F,results="asis"}
+
+lagTime_timeSeries2=20 # 20 days
+
+first_dates_missions<-raw_sampling_points %>% 
+    mutate(date=as.Date(date)) %>%
+  mutate(nummission=substr(id,1,1))  %>%
+    group_by(nummission) %>%
+  summarise(date_date=min(date))
+
+df_sampling_points2<-raw_sampling_points %>% 
+    mutate(date=as.Date(date)) %>%
+  mutate(nummission=substr(id,1,1)) %>%
+    group_by(nummission) %>%
+    arrange(date) %>%
+  nest(latitude,longitude,id) %>%
+  left_join(first_dates_missions) %>%
+  select(date_date,data) %>%
+  set_names(c("date_date","coords")) %>%
+  mutate(sp_points=map(coords,~SpatialPointsDataFrame(coords=data.frame(.$longitude,.$latitude),data=.,proj4string=CRS("+init=epsg:4326")))) %>%
+  dplyr::select(-coords) %>%
+  mutate(date_numeric=as.integer(date_date))  %>%
+  mutate(lagTime_timeSeries=lagTime_timeSeries2)
+
+for (i in 1:nrow(df_sampling_points2)){
+
+#records<-s2_list(spatial_extent=roi,time_interval = c(df_sampling_points2$date_date[i]-df_sampling_points2$lagTime_timeSeries[i], df_sampling_points2$date_date[i]),output_type = "data.table")
+  
+  val<-sen2r::sen2r(gui=F,
+    apihub="/home/ptaconet/.sen2r/apihub.txt",
+      max_cloud_safe=60,
+      timewindow=c(df_sampling_points2$date_date[i]-df_sampling_points2$lagTime_timeSeries[i], df_sampling_points2$date_date[i]),
+      extent=roi,
+      extent_name="BF",
+      #list_indices=c("NDWI","NDWI2"),
+      list_rgb = c("RGB432T"),
+      max_mask=60,
+      path_l1c="/home/ptaconet/react/datasets/data_BF/HR_Sentinel2/l1c",
+      path_l2a="/home/ptaconet/react/datasets/data_BF/HR_Sentinel2/l2a",
+      path_tiles="/home/ptaconet/react/datasets/data_BF/HR_Sentinel2/tiles",
+      path_merged="/home/ptaconet/react/datasets/data_BF/HR_Sentinel2/merged",
+      path_out="/home/ptaconet/react/datasets/data_BF/HR_Sentinel2/out",
+      #path_indices="/home/ptaconet/react/datasets/data_BF/HR_Sentinel2/indices",
+  path_rgb="/home/ptaconet/react/datasets/data_BF/HR_Sentinel2/rgb"
+)
+
+
+rm_safe="l1c" # delete SAFE l1C products after pre processing
+#mask_type=  # see help("s2_mask"). CHeck out S2 SAFE doc to understand what the values of QA mean
+  
+  # Workflow : 
+  # - on telecharge toutes les images dispos sur la zone d'étude entre 20 jours avant le 1er jour de la mission et le 1er jour de la mission. on masque les pixels de nuage/de mauvaise qualité
+  # - on calcule la moyenne des pixels pour chaque bande. cela nous donne 1 image par bande
+  # - on calcule les indices spectraux
+  # - on extrait les stats zonales (bandes et/ou indices spectraux)
+}
+
+```
+
+### Tidy, transform
+
+
+
+
+
+## Light/Settlements
+
+* **Covariates extracted**:
+```{r , eval=T, echo=F,results="asis"}
+env_cov_filt<-tab_env_cov %>% filter(type=="Light/Settlements")
+for (i in 1:nrow(env_cov_filt)){
+  cat("\n   + ",env_cov_filt$code[i],": ",env_cov_filt$long_name[i]," (",env_cov_filt$unit[i],") \n") 
+}
+```
+
+* **Data sources**:
+```{r , eval=T, echo=F,results="asis"}
+dataSources_filt<-dataSources %>% filter(collection=="VIIRS DNB")
+for (i in 1:nrow(dataSources_filt)){
+  cat("\n   + [",dataSources_filt$collection[i],"](",dataSources_filt$url_metadata[i],") : ",dataSources_filt$long_name[i],"(provider : ",dataSources_filt$provider[i],") \n") 
+}
+```
+
+### Import 
+
+We import the data over our ROI and for the months of interest with the [`getData_viirsDnb`](https://ptaconet.github.io/getRemoteData/reference/getData_viirsDnb.html) function of the [`getRemoteData`] package.
+
+```{r lightSettlements_import, eval=F, echo=T}
+viirsDnbData_md<-datesDday %>%
+     set_names(as.numeric(.)) %>% # names will be numeric format of the dates (days since 1970-01-01)
+     map(~map(.,
+              ~getRemoteData::getData_viirsDnb(timeRange = .,
+                           roi=roi,
+                           dimensions=c("Monthly_AvgRadiance","Monthly_CloudFreeCoverage"),
+                           destFolder=file.path(path_to_output_datasets,"viirs_dnb"))) %>%
+     set_names("viirs_dnb"))
+   
+   
+## Download datasets
+DftoDl<-.getDftoDl(viirsDnbData_md)
+cat("Downloading VIIRS DNB data...\n")
+Dl_res<-getRemoteData::downloadData(DftoDl,parallelDL=TRUE)
+# Check if the datasets were downloaded
+head(file.exists(DftoDl$destfile))
+``` 
+
+### Tidy, transform
+
+* **Main processings**:
+  + Extract the *AvgRadiance* and the *CloudFreeCoverage* bands ;
+  + Set pixels of band *AvgRadiance* to NA where pixels of band *CloudFreeCoverage* are equal to 0 (i.e. if there are 0 cloud free observations) ;
+  + Extract the average radiance value within each buffer. 
+
+```{r lightSettlements_tidytransform, eval=F, echo=T}
+# Get the names of the rasters to use for each date
+rastsNames_viirsDnb<-.getRastersNames_timeSeries(df_sampling_points,viirsDnbData_md,"viirs_dnb") %>%
+     map(~keep(.,str_detect(.,"Monthly_AvgRadiance")))
+
+# Build paths to data
+path_to_viirsDnb_AvgRadiance<-.getRastersPaths(viirsDnbData_md,"viirs_dnb") %>%
+     mutate(date=substr(name,nchar(name)-4,nchar(name))) %>%
+     filter(str_detect(name,"AvgRadiance")) %>%
+     set_names(c("name_AvgRadiance","destfile_AvgRadiance","date"))
+
+path_to_viirsDnb_CloudFreeCoverage<-.getRastersPaths(viirsDnbData_md,"viirs_dnb") %>%
+     mutate(date=substr(name,nchar(name)-4,nchar(name))) %>%
+     filter(str_detect(name,"CloudFreeCoverage")) %>%
+     set_names(c("name_CloudFreeCoverage","destfile_CloudFreeCoverage","date"))
+   
+path_to_viirsDnb<-merge(path_to_viirsDnb_AvgRadiance,path_to_viirsDnb_CloudFreeCoverage,by="date")
+
+# Pre-process
+rasts_viirsDnb<-path_to_viirsDnb %>%
+     mutate(rast_AvgRadiance=map(destfile_AvgRadiance,~raster(.))) %>% 
+     mutate(rast_CloudFreeCoverage=map(destfile_CloudFreeCoverage,~raster(.))) %>% 
+     mutate(rast_CloudFreeCoverage=map(rast_CloudFreeCoverage,~clamp(.x,lower=1,useValues=FALSE))) %>% # Quality control : if there are 0 cloud free obs, we set the pixel to NA
+     mutate(rast=map2(rast_AvgRadiance,rast_CloudFreeCoverage,~mask(.x,.y))) %>%
+     pluck("rast") %>%
+     set_names(path_to_viirsDnb_AvgRadiance$name_AvgRadiance)
+
+# Extract
+cat("Extracting nighttime lights (VIIRS DNB...\n")
+LNL<-.extractVar_ts(buffer_sizes,df_sampling_points,rastsNames_viirsDnb,rasts_viirsDnb,"mean")
+LNL$time_lag<-NULL
+LNL$var<-"LNL"
+LNL$qval<-1
+rm(rasts_viirsDnb)
+
+# Export
+write.csv(LNL,file.path(path_to_output_datasets,"envCov_LNL.csv"),row.names = F)
+``` 
+
+Structure of the resulting dataset :
+
+```{r lightSettlements_result, eval=T, echo=F, message=F, warning=F}
+LNL<-read_csv(file.path(path_to_output_datasets,"envCov_LNL.csv"))
+```
+```{r eval=T, echo=T}
+LNL
+```
+
+## Light/Moon
+
+* **Covariates extracted**:
+```{r , eval=T, echo=F,results="asis"}
+env_cov_filt<-tab_env_cov %>% filter(type=="Light/Moon")
+for (i in 1:nrow(env_cov_filt)){
+  cat("\n   + ",env_cov_filt$code[i],": ",env_cov_filt$long_name[i]," (",env_cov_filt$unit[i],") \n") 
+}
+```
+
+* **Data sources**:
+```{r , eval=T, echo=F,results="asis"}
+dataSources_filt<-dataSources %>% filter(collection=="MIRIADE")
+for (i in 1:nrow(dataSources_filt)){
+  cat("\n   + [",dataSources_filt$collection[i],"](",dataSources_filt$url_metadata[i],") : ",dataSources_filt$long_name[i],"(provider : ",dataSources_filt$provider[i],") \n") 
+}
+```
+
+### Import 
+
+We import the data over our ROI and for the date of interest with the [`getData_imcce`](https://ptaconet.github.io/getRemoteData/reference/getData_imcce.html) function of the `getRemoteData` package.
+
+```{r lightMoon_import, eval=F, echo=T}
+moonData_md<-datesDday %>%
+   set_names(as.numeric(.)) %>% # names will be numeric format of the dates (days since 1970-01-01)
+   map(~map(.,
+            ~getRemoteData::getData_imcce(timeRange = .,
+                                roi=roi,
+                                destFolder=file.path(path_to_output_datasets,"moon_imcce"))) %>%
+         set_names("moon_imcce"))
+   
+## Download datasets
+df_DataToDL<-.getDftoDl(moonData_md)
+cat("Downloading IMCCE moon data...\n")
+Dl_res<-getRemoteData::downloadData(df_DataToDL,parallelDL=TRUE)
+``` 
+
+### Tidy, transform
+
+* **Main processings**:
+  + Extract the magnitude value (column *V.Mag*).
+
+```{r lightMoon_tidytransform, eval=F, echo=T}
+# Get the names of the files to use for each date
+DfNames_moon<-.getRastersNames_timeSeries(df_sampling_points,moonData_md,"moon_imcce") %>%
+     unlist() %>%
+     cbind(names(moonData_md)) %>%
+     data.frame(stringsAsFactors = F) %>%
+     set_names(c("name","date"))
+
+# Build paths to data
+path_to_moon<-.getRastersPaths(moonData_md,"moon_imcce")
+   
+# Pre-process
+moon_magnitude_dfs<-path_to_moon %>% 
+     mutate(df=map(destfile,~read.csv(.,skip=10))) %>% 
+     mutate(V.Mag=map_dbl(df,"V.Mag"))
+   
+# Extract 
+LMN<-raw_sampling_points %>%
+     dplyr::select(id,date) %>%
+     mutate(date=as.character(as.numeric(as.Date(date)))) %>%
+     left_join(DfNames_moon,by="date") %>%
+     left_join(moon_magnitude_dfs,by="name") %>%
+     dplyr::select(id,V.Mag) %>%
+     set_names("id","val") %>%
+     mutate(var="LMN") %>%
+     mutate(buffer=NA) %>%
+     mutate(qval=1) %>%
+     dplyr::select(id,buffer,val,var,qval)
+
+# Export
+write.csv(LMN,file.path(path_to_output_datasets,"envCov_LMN.csv"),row.names = F)
+``` 
+
+Structure of the resulting dataset :
+
+```{r lightMoon_result, eval=T, echo=F, message=F, warning=F}
+LMN<-read_csv(file.path(path_to_output_datasets,"envCov_LMN.csv"))
+```
+```{r eval=T, echo=T}
+LMN
+```
+
+## Wind
+
+* **Covariates extracted**:
+```{r , eval=T, echo=F,results="asis"}
+env_cov_filt<-tab_env_cov %>% filter(type=="Wind")
+for (i in 1:nrow(env_cov_filt)){
+  cat("\n   + ",env_cov_filt$code[i],": ",env_cov_filt$long_name[i]," (",env_cov_filt$unit[i],") \n") 
+}
+```
+
+* **Data sources**:
+```{r , eval=T, echo=F,results="asis"}
+dataSources_filt<-dataSources %>% filter(collection=="ERA5")
+for (i in 1:nrow(dataSources_filt)){
+  cat("\n   + [",dataSources_filt$collection[i],"](",dataSources_filt$url_metadata[i],") : ",dataSources_filt$long_name[i],"(provider : ",dataSources_filt$provider[i],") \n") 
+}
+```
+
+### Import 
+
+We import the data over our ROI and for the date of interest with the [`getData_era5`](https://ptaconet.github.io/getRemoteData/reference/getData_era5.html) function of the `getRemoteData` package.
+
+```{r wind_import, eval=F, echo=T}
+era5_md<-data.frame(dimensionsToRetrieve=c("10m_u_component_of_wind","10m_v_component_of_wind"),
+                       stringsAsFactors = F) %>%
+  mutate(source=dimensionsToRetrieve)
+     
+era5Data_md<-datesDday %>%
+     set_names(as.numeric(.)) %>% # names will be numeric format of the dates (days since 1970-01-01)
+     map(~pmap(list(.,pluck(era5_md,"source"),pluck(era5_md,"dimensionsToRetrieve")),
+               ~getRemoteData::getData_era5(timeRange = c(paste0(as.Date(..1,origin="1970-01-01")," ",hourStart_Dday,":00:00"),paste0(as.Date(..1,origin="1970-01-01")+1," ",hourEnd_Dday,":00:00")),
+                            roi=roi,
+                            destFolder=file.path(path_to_output_datasets,..2),
+                            dimensions=..3)) %>%
+           set_names(era5_md$source))
+
+# First create directories in the wd
+directories<-era5_md$source %>% 
+     file.path(path_to_output_datasets,.) %>%
+     as.list()  %>%
+     lapply(dir.create,recursive = TRUE)
+   
+cat("Downloading ERA-5 wind data...\n")
+# Then download
+#import python CDS-API
+cdsapi <- reticulate::import('cdsapi')
+#for this step there must exist the file .cdsapirc in the root directory of the computer (e.g. "/home/ptaconet")
+server = cdsapi$Client() #start the connection
+# for now we have not found a better solution that making a "for" loop (it does not work as expected with purrr)
+for (i in 1:length(era5Data_md)){
+  for (j in 1:length(era5Data_md[[i]])){
+     for (k in 1:length(era5Data_md[[i]][[j]]$destfile)){
+       if (!file.exists(era5Data_md[[i]][[j]]$destfile[k])){
+      server$retrieve("reanalysis-era5-single-levels",
+                     era5Data_md[[i]][[j]]$url[k][[1]],
+                     era5Data_md[[i]][[j]]$destfile[k])
+        }
+       }
+     }
+   }
+```    
+
+### Tidy, transform 
+
+* **Main processings**:
+  + Extract the bands *10m_u_component_of_wind* and *10m_v_component_of_wind* ;
+  + Compute wind speed and direction using the formulas found [here](https://stackoverflow.com/questions/21484558/how-to-calculate-wind-direction-from-u-and-v-wind-components-in-r) ;
+  + Resample to 1000 m spatial resolution using a bilinear interpolation (only for wind speed) ;
+  + Extract wind speed and direction at the sampling point locations.
+
+```{r wind_tidytransform, eval=F, echo=T}
+# Get the names of the rasters to use for each date
+rastsNames_era5<-.getRastersNames_timeSeries(df_sampling_points,era5Data_md,"10m_u_component_of_wind")
+   
+# Build paths to data
+path_to_u_wind<-.getRastersPaths(era5Data_md,"10m_u_component_of_wind")
+path_to_v_wind<-.getRastersPaths(era5Data_md,"10m_v_component_of_wind")
+path_to_u_v_wind<-merge(path_to_u_wind,path_to_v_wind,by="name",suffixes = c("_u","_v"))
+   
+# source : https://stackoverflow.com/questions/21484558/how-to-calculate-wind-direction-from-u-and-v-wind-components-in-r
+rasts_wind<-path_to_u_v_wind %>%
+       mutate(rast_u_wind=future_map(destfile_u,~getRemoteData::importData_era5(.)[[1]])) %>% 
+       mutate(rast_v_wind=future_map(destfile_v,~getRemoteData::importData_era5(.)[[1]])) %>%
+  mutate(rast_wind_speed=future_map2(rast_u_wind,rast_v_wind,~overlay(.x,.y,fun=function(.x,.y){return(sqrt(.x^2+.y^2))}))) %>%
+  mutate(rast_wind_dir_cardinal=future_map2(rast_u_wind,rast_v_wind,~overlay(.x,.y,fun=function(.x,.y){return(atan2(.x,.y))}))) %>%
+  mutate(rast_wind_dir_cardinal=future_map(rast_wind_dir_cardinal,~.*180/pi)) %>%
+  mutate(rast_wind_dir_cardinal=future_map(rast_wind_dir_cardinal,~.+180)) %>%
+  dplyr::select(name,rast_wind_speed,rast_wind_dir_cardinal)
+  
+## resample wind speed but not wind direction 
+if(era5_resample){
+  rasts_wind <- rasts_wind %>%
+    mutate(rast_wind_speed=future_map(rast_wind_speed,~.resampleProd(.,era5_resample_output_res)))
+}
+
+rasts_wind_speed <- rasts_wind %>%
+    pluck("rast_wind_speed") %>%
+    set_names(path_to_u_wind$name)
+
+rasts_wind_dir_cardinal <- rasts_wind %>%
+    pluck("rast_wind_dir_cardinal") %>%
+    set_names(path_to_u_wind$name)
+
+rm(rasts_wind)
+
+# Extract
+cat("Extracting wind speed...\n")
+WSP<-.extractVar_ts(buffer_sizes=10,df_sampling_points,rastsNames_era5,rasts_wind_speed,"sum") # There is only 1 cell intersected (i.e. buffer_sizes=10) so the summurazing function is quite useless
+WSP <- WSP %>%
+  group_by(id,buffer) %>% 
+  summarise(val=mean(val))
+WSP$var<-"WSP"
+WSP$qval<-1
+rm(rasts_wind_speed)
+
+
+cat("Extracting wind direction...\n")
+# formula :  https://en.wikipedia.org/wiki/Mean_of_circular_quantities (see section "Example")
+WDR<-.extractVar_ts(buffer_sizes=10,df_sampling_points,rastsNames_era5,rasts_wind_dir_cardinal,"sum") # Same as above
+WDR <- WDR %>%
+  mutate(sin_angle=sin(val*(pi/180))) %>%
+  mutate(cos_angle=cos(val*(pi/180))) %>%
+  group_by(id,buffer) %>% 
+  summarise(mean_sin=mean(sin_angle),mean_cos=mean(cos_angle)) %>% 
+  mutate(val=atan(mean_sin/mean_cos)/(pi/180)) %>%
+  mutate(val=case_when(mean_sin>0 & mean_cos>0 ~ val,
+                       mean_cos<0 ~ val+180,                           
+                       mean_sin<0 & mean_cos>0 ~ val+360)) %>%
+  dplyr::select(id,buffer,val)
+WDR$var<-"WDR"
+WDR$qval<-1
+rm(rasts_wind_dir_cardinal)
+
+# Export
+write.csv(WSP,file.path(path_to_output_datasets,"envCov_WSP.csv"),row.names = F)
+write.csv(WDR,file.path(path_to_output_datasets,"envCov_WDR.csv"),row.names = F)
+```
+
+Structure of the resulting dataset (WSP, WDR):
+
+```{r wind_result, eval=T, echo=F, message=F, warning=F}
+WSP<-read_csv(file.path(path_to_output_datasets,"envCov_WSP.csv"))
+WDR<-read_csv(file.path(path_to_output_datasets,"envCov_WDR.csv"))
+```
+```{r eval=T, echo=T}
+WSP
+WDR
+```
+
+## Topography and hydrographic network
+
+* **Covariates extracted**:
+```{r , eval=T, echo=F,results="asis"}
+env_cov_filt<-tab_env_cov %>% filter(type %in% c("Topography","Water"))
+for (i in 1:nrow(env_cov_filt)){
+  cat("\n   + ",env_cov_filt$code[i],": ",env_cov_filt$long_name[i]," (",env_cov_filt$unit[i],") \n") 
+}
+```
+
+* **Data sources**:
+```{r , eval=T, echo=F,results="asis"}
+dataSources_filt<-dataSources %>% filter(collection=="SRTMGL1_v003")
+for (i in 1:nrow(dataSources_filt)){
+  cat("\n   + [",dataSources_filt$collection[i],"](",dataSources_filt$url_metadata[i],") : ",dataSources_filt$long_name[i],"(provider : ",dataSources_filt$provider[i],") \n") 
+}
+```
+
+### Import
+
+We fist set the path to the output datasets that will be generated by the script.
+
+```{r topography_setup, eval=F, echo=T}
+destFolder_dem<-file.path(path_to_output_datasets,"DEM_SRTM")
+dem_output_path<-file.path(destFolder_dem,"DEM.tif")
+dem_depressionless_output_path<-file.path(destFolder_dem,"DEM_depressionless.tif")
+slope_output_path<-file.path(destFolder_dem,"slope.tif")
+aspect_output_path<-file.path(destFolder_dem,"aspect.tif")
+accumulation_output_path<-file.path(destFolder_dem,"accumulation.tif")
+accumulation_threshold_output_path<-gsub(".tif","_treshold.tif",accumulation_output_path)
+tci_output_path<-file.path(destFolder_dem,"tci.tif") 
+twi_output_path<-file.path(destFolder_dem,"twi.tif") 
+streams_network_path<-file.path(destFolder_dem,"streams_network.gpkg")
+```
+
+Then we download the SRTM Digital elevation model tiles over our areas of interest with the [`getData_srtm`](https://ptaconet.github.io/getRemoteData/reference/getData_srtm.html) function of the `getRemoteData` package. 
+
+```{r topography_import, eval=F, echo=T}
+DftoDl<-getRemoteData::getData_srtm(roi,destFolder=destFolder_dem)
+cat("Downloading SRTM data...\n")
+Dl_res<-getRemoteData::getRemoteData::downloadData(DftoDl,username_EarthData,password_EarthData,parallelDL=TRUE)
+# Check if the datasets were downloaded
+head(file.exists(DftoDl$destfile))
+```
+
+### Tidy, transform
+
+* **Main processings**:
+  + Unzip the SRTM DEM files, merge the different tiles (if relevant), crop to the ROI and reproject to UTM projection ;
+  + Create the topography datasets from the DEM with the `rgrass7` package : slope, aspect, accumulation, tci, twi ;
+  + Create the stream network from the accumulation raster file ;
+  + Extract the average indice value within each buffer.
+
+Prepare the DEM: unzip the files, merge the different tiles (if relevant), crop to the ROI and reproject to UTM projection
+
+```{r topography_tidytransform1, eval=F, echo=T}
+# Unzip and get path
+strm_tiles<-map(DftoDl$destfile,~unzip(.,exdir=destFolder_dem))
+# Create DEM in UTM projection and save to disk
+DEM <- strm_tiles %>%
+  map(~raster::raster(.)) %>%
+  do.call(raster::merge, .) %>%
+  raster::crop(roi) %>%
+  raster::projectRaster(crs=sf::st_crs(roi_utm)$proj4string) %>%
+  raster::writeRaster(dem_output_path,NAflag=0,overwrite=TRUE)
+```
+
+Create the topography datasets from the DEM with the `rgrass7` package : slope, aspect, accumulation, tci, twi
+
+```{r topography_tidytransform2, eval=F, echo=T}
+# Import DEM to GRASS and set region
+rgrass7::execGRASS("r.external", flags="o", parameters=list(input=dem_output_path, output="tmprast",band=1))
+rgrass7::execGRASS("g.region", parameters=list(raster="tmprast")) 
+
+# Filters and generates a depressionless elevation map
+rgrass7::execGRASS("r.fill.dir", flags="overwrite", parameters=list(input="tmprast", output="DEM",direction="dir"))
+rgrass7::execGRASS("r.out.gdal", flags=c("t","m","overwrite"), parameters=list(input="DEM", output=dem_depressionless_output_path, format="GTiff",  createopt="TFW=YES,COMPRESS=LZW" ))
+  
+# Compute slope and aspect and save to disk
+rgrass7::execGRASS("r.slope.aspect", flags="overwrite", parameters=list(elevation="DEM", slope="slope",aspect="aspect",format="percent", precision="FCELL",zscale=1,min_slope=0))
+rgrass7::execGRASS("r.out.gdal", flags=c("t","m","overwrite"), parameters=list(input="slope", output=slope_output_path, format="GTiff",  createopt="TFW=YES,COMPRESS=LZW" ))
+rgrass7::execGRASS("r.out.gdal", flags=c("t","m","overwrite"), parameters=list(input="aspect", output=aspect_output_path, format="GTiff",  createopt="TFW=YES,COMPRESS=LZW" ))
+
+# Compute hydrograpy indices and save to disk
+rgrass7::execGRASS("r.terraflow", flags="overwrite", parameters=list(elevation="DEM", accumulation="accumulation", tci="tci"))
+rgrass7::execGRASS("r.out.gdal", flags=c("t","m","overwrite"), parameters=list(input="accumulation", output=accumulation_output_path, format="GTiff",  createopt="TFW=YES,COMPRESS=LZW" ))
+rgrass7::execGRASS("r.out.gdal", flags=c("t","m","overwrite"), parameters=list(input="tci", output=tci_output_path, format="GTiff",  createopt="TFW=YES,COMPRESS=LZW" ))
+
+# Compute TWI indice
+rgrass7::execGRASS("r.topidx", flags="overwrite", parameters=list(input="DEM", output="twi"))
+rgrass7::execGRASS("r.out.gdal", flags=c("t","m","overwrite"), parameters=list(input="twi", output=twi_output_path, format="GTiff",  createopt="TFW=YES,COMPRESS=LZW" ))
+```
+
+Create the hydrographic network from the accumulation raster file. We threshold the accumulation raster file : consider that all cells with a value superior to a given threshold (provided as input parameter `threshold_accumulation_raster`) are the hydrographic network and all the cells with a value inferior to this threshold are not part of it. The threshold was determined visually by overlaying the accumulation raster file with a very high resolution satellite image.  
+For additional information see the section 'example' of the article provided here: <https://grass.osgeo.org/grass76/manuals/r.thin.html>
+
+```{r topography_tidytransform3, eval=F, echo=T}
+# Create accumulation threshold raster
+# NB : Grass has a algorithm 'r.stream.extract' that can do the job (see https://grass.osgeo.org/grass76/manuals/addons/r.accumulate.htmlsœ)
+acc_raster<-raster(accumulation_output_path) %>%
+  raster::reclassify(c(-Inf,threshold_accumulation_raster,NA, threshold_accumulation_raster,Inf,1)) %>%
+  raster::writeRaster(accumulation_threshold_output_path,datatype='INT2S',overwrite=TRUE)
+
+# skeletonization (thinning extraction) and vectorization of stream network from flow accumulation map. See https://grass.osgeo.org/grass76/manuals/r.thin.html 
+rgrass7::execGRASS("r.external", flags="overwrite", parameters=list(input=accumulation_threshold_output_path, output="acc_threshold",band=1))
+rgrass7::execGRASS("g.region", parameters=list(raster="acc_threshold")) 
+rgrass7::execGRASS("r.thin", flags="overwrite", parameters=list(input="acc_threshold",output="acc_thin"))
+rgrass7::execGRASS("r.out.gdal", flags=c("t","m","overwrite"), parameters=list(input="acc_thin", output=file.path(path_to_dem_folder,"accumulation_thin.tif"), format="GTiff",  createopt="TFW=YES,COMPRESS=LZW" ))
+rgrass7::execGRASS("r.to.vect", flags="overwrite", parameters=list(input="acc_thin", output="acc_thin_vect", type="line"))
+# Next we need to execute the v.split algo. With v.split we split the stream network into pieces of 20 meters. This will be used then to measure the mean length between the HLC point and the streams within the buffer
+# the step v.split does not give the appropriate results when executed in R, although it does not send back any error... It is weird because it works in QGIS (through GRASS plugin). For now we need to do it by hand in QGIS. To do it by hand execute: 
+rgrass7::execGRASS("v.out.ogr", flags=c("m","overwrite"), parameters=list(input="acc_thin_vect", type="line", output=file.path(destFolder_dem,"acc_thin_vect.gpkg")))
+# and than manually execute the algo v.split in the GRASS plugin of QGIS. Save the output file under streams_network_path
+# To do it via R it should be : 
+#rgrass7::execGRASS("v.split", flags=c("overwrite","verbose"), parameters=list(input="acc_thin_vect", output="acc_thin_vect_split", length=20, units="map"))
+#rgrass7::execGRASS("v.out.ogr", flags=c("m","overwrite"), parameters=list(input="acc_thin_vect_split", type="line", output=streams_network_path))
+```
+
+Extract indices related to topography : TEL (mean elevation), TSL (mean slope), TAS (mean aspect), WAC (mean accumulation), TCI (Mean Terrain Classification Index), TWI (mean Topographic Wetness Index)
+
+```{r topography_tidytransform4, eval=F, echo=T}
+dem_and_derivatives_rast <- brick(list(dem_depressionless_output_path,slope_output_path,aspect_output_path,accumulation_output_path,tci_output_path,twi_output_path))
+names(dem_and_derivatives_rast)<-c("TEL","TSL","TAS","WAC","TCI","TWI")
+
+TEL_TSL_TAS_WAC_TCI_TWI<-buffer_sizes %>% # for each buffer, calculate stats
+    set_names %>%
+    map_dfr(~.extractVar_rast_singleBuff(dem_and_derivatives_rast,spPoints,.,"mean")) %>%
+  mutate(val=if_else(var=="WAC",val*res(dem_and_derivatives_rast)[1]*res(dem_and_derivatives_rast)[2]/10000,val)) # convert accumulation from number of pixels to surface in ha
+
+# Export
+TEL_TSL_TAS_WAC_TCI_TWI<-TEL_TSL_TAS_WAC_TCI_TWI %>%
+  mutate(qval=1)
+
+write.csv(TEL_TSL_TAS_WAC_TCI_TWI,file.path(path_to_output_datasets,"envCov_TEL_TSL_TAS_WAC_TCI_TWI.csv"),row.names = F)
+```
+
+Structure of the resulting dataset (TEL, TSL, TAS, WAC ,TCI ,TWI):
+
+```{r topography_result, eval=T, echo=F, message=F, warning=F}
+TEL_TSL_TAS_WAC_TCI_TWI<-read_csv(file.path(path_to_output_datasets,"envCov_TEL_TSL_TAS_WAC_TCI_TWI.csv"))
+```
+```{r eval=T, echo=T}
+TEL_TSL_TAS_WAC_TCI_TWI
+```
+
+Extract indices related to the hydrographic network : WAD (Average distance to stream), WMD (Distance to closest stream), WLS (Total length of stream), WAL (Accumulation / distance to sampling point - that is, distance from the hydrographic network to the HLC point weighted by the acculumation value at the stream's location)
+
+```{r topography_tidytransform5, eval=F, echo=T}
+# open stream network
+streams_network_sf<-sf::read_sf(streams_network_path) %>%
+  st_zm() %>%
+  mutate(length_stream=st_length(.)) %>%
+  mutate(DN=seq(1,nrow(.),1))  %>%
+  dplyr::select(DN,length_stream,geom)
+
+# Get the accumulation value on each piece of the network. For this, take the centroid of each piece of network and calculate the accumulation on this piece.
+accumulation<-raster(accumulation_output_path)
+accumulation<-accumulation*res(accumulation)[1]*res(accumulation)[2]/10000 # convert accumulation from number of pixels to surface in ha
+
+sp_cent <- rgeos::gCentroid(as(streams_network_sf, "Spatial"), byid=TRUE)
+streams_network_sf<-raster::extract(accumulation,sp_cent,df=TRUE) %>%
+  dplyr::select(-ID) %>%
+  mutate(DN=streams_network_sf$DN) %>%
+  full_join(streams_network_sf,.)
+
+# Convert the points to UTM projection
+sfPoints_utm<-st_transform(sfPoints,utm_zone)  
+  
+# Calculate the stats for all buffers
+WAD_WMD_WLS_WAL<-buffer_sizes %>%
+  set_names() %>%
+  future_map_dfr(~.extractVar_line_singleBuff(streams_network_sf,sfPoints_utm,.))
+
+# Export
+WAD_WMD_WLS_WAL<-WAD_WMD_WLS_WAL %>%
+  mutate(var=str_replace_all(var,c("mean_dist_to_stream"="WAD","min_dist_to_stream"="WMD","length_stream"="WLS","mean_acc_by_dist"="WAL"))) %>%
+  mutate(qval=1)
+
+write.csv(WAD_WMD_WLS_WAL,file.path(path_to_output_datasets,"envCov_WAD_WMD_WLS_WAL.csv"),row.names = F)
+```
+
+Structure of the resulting dataset (WAD, WMD, WLS, WAL):
+
+```{r topography_result2, eval=T, echo=F, message=F, warning=F}
+WAD_WMD_WLS_WAL<-read_csv(file.path(path_to_output_datasets,"envCov_WAD_WMD_WLS_WAL.csv"))
+```
+```{r eval=T, echo=T}
+WAD_WMD_WLS_WAL
+```
+
+
+## Settlements and population (REACT)
+
+* **Covariates extracted**:
+```{r , eval=T, echo=F,results="asis"}
+env_cov_filt<-tab_env_cov %>% filter(type=="Population" & short_name=="Population (source : REACT)")
+for (i in 1:nrow(env_cov_filt)){
+  cat("\n   + ",env_cov_filt$code[i],": ",env_cov_filt$long_name[i]," (",env_cov_filt$unit[i],") \n") 
+}
+```
+
+* **Data sources**:
+  + Exhaustive census of the settlements and population realized in the frame of the REACT project (location and population of each settlement in village).
+
+### 10.1/ Import
+
+The data is stored on the local database. The structure of the table is provided below, so that one can reproduce the *Tidy, transform* section with own data.
+
+```{r settlementsPop_import, eval=T, echo=T, warning=F}
+con <- DBI::dbConnect(RSQLite::SQLite(),dbname = path_to_db)
+sf_households_by_village <- st_read(con,db_table_loc_households_by_village) %>%
+  st_set_crs(4326) %>%
+  st_intersection(roi) %>%  # keep only the points in our ROI
+  st_transform(utm_zone)
+```
+
+```{r }
+sf_households_by_village
+```
+
+### Tidy, transform
+
+* **Main processings**:
+  + Extract the population in buffers of 100 m (close proximity) and 500 m (geographical size of a village).
+
+```{r settlementsPop_tidytransform, eval=F, echo=T}
+
+.extract_pop_buffer<-function(sf_households_by_village,sfPoints,buffer_size){
+  POP <- buffer_size %>%
+    st_buffer(st_transform(sfPoints,utm_zone),dist=.) %>%
+    st_join(sf_households_by_village, join = st_intersects,left = TRUE) %>%
+    st_drop_geometry() %>%
+    group_by(id) %>%
+    summarise(val=sum(population)) %>%
+    mutate(buffer=buffer_size)
+  return(POP)
+}
+
+## Get stats: population in the buffers
+POP <- c(100,500) %>%  # buffers of 100m and 500m
+  map_dfr(~.extract_pop_buffer(sf_households_by_village,sfPoints,.)) %>%
+  mutate(var="POP") %>%
+  mutate(qval=1)
+
+# Export
+write.csv(POP,file.path(path_to_output_datasets,"envCov_POP.csv"),row.names = F)
+```
+
+Structure of the resulting dataset (POP, POD):
+
+```{r settlementsPop_result, eval=T, echo=F, message=F, warning=F}
+POP<-read_csv(file.path(path_to_output_datasets,"envCov_POP.csv"))
+```
+```{r eval=T, echo=T}
+POP
+```
+
+## Population (HRSL)
+
+* **Covariates extracted**:
+```{r , eval=T, echo=F,results="asis"}
+env_cov_filt<-tab_env_cov %>% filter(type=="Population" & short_name=="Population (source : HRSL)")
+for (i in 1:nrow(env_cov_filt)){
+  cat("\n   + ",env_cov_filt$code[i],": ",env_cov_filt$long_name[i]," (",env_cov_filt$unit[i],") \n") 
+}
+```
+
+* **Data sources**:
+```{r , eval=T, echo=F,results="asis"}
+dataSources_filt<-dataSources %>% filter(collection=="HRSL")
+for (i in 1:nrow(dataSources_filt)){
+  cat("\n   + [",dataSources_filt$collection[i],"](",dataSources_filt$url_metadata[i],") : ",dataSources_filt$long_name[i],"(provider : ",dataSources_filt$provider[i],") \n") 
+}
+```
+
+### Import
+
+```{r settlementsPopHRSL_import , eval=F, echo=T}
+rast_hrsl<-raster(path_to_hrls_raster)
+```
+
+### Tidy, transform
+
+* **Main processings**:
+  + Extract the population the buffers
+
+```{r settlementsPopHRSL_tidytransform, eval=F, echo=T}
+## Get stats: population in the buffers
+POH<-buffer_sizes %>% # for each buffer, calculate stats
+    set_names %>%
+    future_map_dfr(~.extractVar_rast_singleBuff(rast_hrsl,spPoints,.,"sum")) %>%
+    mutate(var="POH") %>%
+    mutate(qval=1)
+   
+# Export
+write.csv(POH,file.path(path_to_output_datasets,"envCov_POH.csv"),row.names = F)
+```
+
+Structure of the resulting dataset (POH):
+
+```{r settlementsPopHRSL_result, eval=T, echo=F, message=F, warning=F}
+POH<-read_csv(file.path(path_to_output_datasets,"envCov_POH.csv"))
+```
+```{r eval=T, echo=T}
+POH
+```
+
+## Built-up
+
+* **Covariates extracted**:
+```{r , eval=T, echo=F,results="asis"}
+env_cov_filt<-tab_env_cov %>% filter(type=="Built-up")
+for (i in 1:nrow(env_cov_filt)){
+  cat("\n   + ",env_cov_filt$code[i],": ",env_cov_filt$long_name[i]," (",env_cov_filt$unit[i],") \n") 
+}
+```
+
+* **Data sources**:
+  + Exhaustive census of the settlements and population realized in the frame of the REACT project (location and population of each settlement in village).
+
+### 12.1/ Import
+
+We use the table *sf_households_by_village*, imported in the previous section?
+
+### 12.2/ Tidy, transform
+
+Extract indices related to the built-up areas : BDE (distance to the edge of the village), BCH (degree of clustering or ordering of the households within 100m and 500m buffers)
+
+```{r buitup_tidytransform, eval=F, echo=T}
+
+# Get the villages convex hull (considered as the boundaries of the villages)
+villages_convexhull <- sf_households_by_village %>%
+  group_by(codevillage) %>%  # group by village
+  summarize(geom_convHull=st_convex_hull(st_union(geom))) %>% #get convex hull polygon. We consider the convex hull as the edges of the village. The convex hull is the minimum polygon that encompasses all the locations of the households.
+  st_transform(utm_zone)
+
+## Get the distance from each catch point to the edge of the village
+BDE <- sfPoints %>%
+  st_transform(utm_zone) %>%
+  mutate(codevillage=substr(id,2,4)) %>%  # create codevillage before joining with edges of the village
+  left_join(as.data.frame(villages_convexhull),by="codevillage") %>%  # join convex hull geometry
+  mutate(geom_convHull=st_cast(geom_convHull, "LINESTRING")) %>%  # convert convex hull geometry from polygon to linestring
+  mutate(val=st_distance(geometry,geom_convHull,by_element=TRUE)) %>% # compute distance between catch point and edges of the village
+  st_drop_geometry() %>%
+  dplyr::select(id,val) %>% 
+  mutate(var="BDE") %>% 
+  mutate(buffer=NA) %>%
+  mutate(qval=1)
+
+## Get an indice of the clustering or ordering of the households in each village. For this we use the locations of the households with the function spatstat::clarkevans
+
+.extract_clarkevans_buffer<-function(sf_households_by_village,sfPoints,buffer_size){
+  BCH <- buffer_size %>%
+    st_buffer(st_transform(sfPoints,utm_zone),dist=.) %>%
+    st_join(sf_households_by_village, join = st_intersects,left = TRUE) %>%
+    st_drop_geometry() %>%
+    filter(!is.na(X)) %>%
+    group_by(id) %>%
+    nest() %>%
+    mutate(sp_points=map(data,~SpatialPoints(coords=data.frame(.$X,.$Y),proj4string=CRS("+init=epsg:4326")))) %>% 
+    mutate(ppp=map(sp_points,~as(., "ppp"))) %>%   # uses the maptools package
+    mutate(ppp_n=as.numeric(map(ppp,~as.numeric(.$n)))) %>%
+    filter(ppp_n>=5) %>% # if there are less than 5 settlements, the clarkenv indicator cannot be computed
+    mutate(clark_index=map(ppp,~spatstat::clarkevans(.))) %>%
+    mutate(clark_index=map_dbl(clark_index,~as.numeric(.[1]))) %>%
+    dplyr::select(id,clark_index) %>%
+    set_names("id","val") %>%
+    mutate(buffer=buffer_size)
+    
+    return(BCH)
+}
+
+BCH <- c(100,500) %>%  # buffers of 100m and 500m
+  map_dfr(~.extract_clarkevans_buffer(sf_households_by_village,sfPoints,.)) %>%
+  mutate(var="BCH") %>%
+  mutate(qval=1)
+
+# Export
+write.csv(BDE,file.path(path_to_output_datasets,"envCov_BDE.csv"),row.names = F)
+write.csv(BCH,file.path(path_to_output_datasets,"envCov_BCH.csv"),row.names = F)
+```
+
+Structure of the resulting dataset (BDE, BCH):
+
+```{r buitup_result, eval=T, echo=F, message=F, warning=F}
+BDE<-read_csv(file.path(path_to_output_datasets,"envCov_BDE.csv"))
+BCH<-read_csv(file.path(path_to_output_datasets,"envCov_BCH.csv"))
+```
+```{r eval=T, echo=T}
+BDE
+BCH
+```
+
+## Hydromorphic soils
+
+* **Covariates extracted**:
+```{r , eval=T, echo=F,results="asis"}
+env_cov_filt<-tab_env_cov %>% filter(type=="Pedology")
+for (i in 1:nrow(env_cov_filt)){
+  cat("\n   + ",env_cov_filt$code[i],": ",env_cov_filt$long_name[i]," (",env_cov_filt$unit[i],") \n") 
+}
+```
+
+* **Data sources**:
+  + [Carte pédologique de reconnaissance de la Haute-Volta : Ouest - Sud](http://sphaera.cartographie.ird.fr/carte.php?num=998&pays=BURKINA+FASO&iso=BFA) (provider : IRD)
+  + [Korhogo : carte des segments pédologiques](http://sphaera.cartographie.ird.fr/carte.php?num=942&pays=COTE+D%2527IVOIRE&iso=CIV) (provider : IRD)
+
+We generated raster datasets from these soils maps ("paper" format). The R script to generate the raster datasets from the base maps is available here : <https://github.com/ptaconet/r_react/blob/master/database/pedology.R> .
+
+### Import
+
+Here we import the raster dataset that was generated by that script and stored in the local database.
+
+```{r pedology_import , eval=F, echo=T}
+# we have not found the solution to import the rasters directly from the gpkg database. So we read them in the db and write them as tif : 
+path_to_pedology_rast<-file.path(path_to_output_datasets,"pedology","pedology.tif")
+#gdalUtils::gdal_translate(path_to_db,path_to_pedology_rast,ot="Int16",of="GTiff",oo=paste0("TABLE=",db_table_pedology_rast))
+```
+
+### Tidy, transform
+
+* **Main processings**:
+  + Set the hydromorphic soils classes pixels as 1, the others (non-hydromorphic) as 0
+  + Extract the proportion of hydromorphic soils in each buffer 
+
+```{r pedology_tidytransform, eval=F, echo=T}
+pedology_rast<-raster::raster(path_to_pedology_rast)
+names(pedology_rast)="HYS"
+# Set to 0 classes that are not hydromorphic and to 1 the classes that are hydromorphic
+pedology_rast[!(pedology_rast %in% hydromorphic_classes_pixels)]<-0
+pedology_rast[pedology_rast!=0]<-1
+
+HYS<-buffer_sizes %>% # for each buffer, calculate stats
+    set_names %>%
+    map_dfr(~.extractVar_rast_singleBuff(pedology_rast,spPoints,.,"sum"))
+
+# convert surface from count of pixels to proportion (%) of hydromorphic soil in the buffer
+HYS <- HYS %>%
+  mutate(val=val*res(pedology_rast)[1]*res(pedology_rast)[2]) %>%
+  mutate(val=val/(pi*buffer^2)*100) %>%
+  mutate(qval=1)
+
+# Export
+write.csv(HYS,file.path(path_to_output_datasets,"envCov_HYS.csv"),row.names = F)
+```
+
+Structure of the resulting dataset (HYS):
+
+```{r pedology_result, eval=T, echo=F, message=F, warning=F}
+HYS<-read_csv(file.path(path_to_output_datasets,"envCov_HYS.csv"))
+```
+```{r eval=T, echo=T}
+HYS
+```
+
+## Land use / cover
+
+* **Covariates extracted**:
+```{r , eval=T, echo=F,results="asis"}
+tab_lsm_to_extract<-landscapemetrics::list_lsm()
+for (i in 1:length(lsm_to_extract)){
+  lsm<-tab_lsm_to_extract %>% filter(function_name==lsm_to_extract[i])
+  cat("\n   + ",lsm$metric,": ",lsm$name," (",lsm$level," level) \n") 
+}
+```
+
+* **Data sources**:
+  + High resolution land cover layers generated in the frame of the REACT project at four nomenclature levels
+```{r , eval=T, echo=F,results="asis"}
+dataSources_filt<-dataSources %>% filter(collection %in% c("CCI-LS","CGLS-LC100"))
+for (i in 1:nrow(dataSources_filt)){
+  cat("\n   + [",dataSources_filt$collection[i],"](",dataSources_filt$url_metadata[i],") : ",dataSources_filt$long_name[i],"(provider : ",dataSources_filt$provider[i],") \n") 
+}
+```
+
+### Import
+
+We import all the land cover data at once. The high resolution land cover layers were generated in the frame of the REACT project, while the other layers were downloaded manually (see section *Data sources* above) and stored locally.
+
+```{r lulc_import, eval=F, echo=T}
+metadata_landcovers <- tbl(con,db_table_metadata_lulc) %>%
+  as.data.frame() %>%
+  distinct(layer_label,layer_path,layer_id) %>%
+  filter(layer_label %in% layers_lulc) %>%
+  mutate(layer=seq(1,nrow(.),1))
+
+lulc_rasts_list<-metadata_landcovers$layer_path %>%
+  map(~raster(.)) %>%
+  map(~crop(.,st_transform(roi,proj4string(.))))
+
+# If the raster is not projected, project it to utm zone
+for (i in 1:length(lulc_rasts_list)){
+  if(proj4string(lulc_rasts_list[[i]])=="+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"){
+    lulc_rasts_list[[i]]<-projectRaster(lulc_rasts_list[[i]],crs=sf::st_crs(roi_utm)$proj4string,method = "ngb")
+  } 
+}
+
+# Check if LU/LC rasters are ok prior to calculating LSM
+for (i in 1:length(lulc_rasts_list)){
+  print(landscapemetrics::check_landscape(lulc_rasts_list[[i]]))
+}
+
+```
+
+### Tidy, transform
+
+We finally extract the landscape metrics out of each land cover layer.
+
+```{r lulc_tidytransform, eval=F, echo=T}
+
+# We have tried to run the process with all at once using furrr but it fails (probably because it is too long). 
+# So we split the points into mutliple parts and run the process with a "for" loop.
+
+.extractLSM_singlePoint<-function(lulc_rasts_list,buffer_sizes,sfPoint,lsm_to_extract,metadata_landcovers){
+
+ res_th_pt <- buffer_sizes %>% 
+    set_names(buffer_sizes) %>% 
+    future_map_dfr(~landscapemetrics::sample_lsm(lulc_rasts_list, 
+                                                 sfPoint, 
+                                                 what = lsm_to_extract,
+                                                 shape = "circle",
+                                                 size = .),
+                   .id = "buffer")
+
+ res_th_pt <- res_th_pt %>%
+   dplyr::select(-c(id,percentage_inside)) %>%
+   rename(val=value,class_pixel=class) %>%
+   mutate(id=sfPoint$id) %>%
+   mutate(buffer=as.numeric(buffer)) %>%
+   left_join(metadata_landcovers) %>%
+   dplyr::select(id,buffer,layer_id,class_pixel,level,metric,val)
+
+ return(res_th_pt)
+ 
+}
+
+sfPoints_list <- raw_sampling_points %>%
+    filter(!(grepl("NAM",id))) %>% # only for CIV, because village NAM does not overlap the own LU/LC maps
+    transpose() %>%
+    map(~as.data.frame(.,stringsAsFactors=F))  %>%
+    map(~st_as_sf(.,coords = c("longitude", "latitude"), crs = 4326)) %>%
+    map(~st_transform(.,utm_zone))
+
+div_pts<-c(seq(0,length(sfPoints_list),50),length(sfPoints_list))
+
+LSM<-NULL
+
+for (i in 1:(length(div_pts)-1)){
+  
+  cat(paste0(Sys.time()," : Processing points ",div_pts[i]+1," to ",div_pts[i+1]," over ",length(sfPoints_list)," in total \n"))
+  
+  plan(multiprocess)
+  options(future.globals.maxSize= 20000*1024^2)
+        
+  LSM_th_pts <- sfPoints_list[seq(div_pts[i]+1,div_pts[i+1],1)] %>%
+    future_map_dfr(~.extractLSM_singlePoint(lulc_rasts_list,buffer_sizes,.,lsm_to_extract,metadata_landcovers),.progress = T)
+
+  LSM<-rbind(LSM,LSM_th_pts)
+
+  # Export, overwriting the previous export at each iteration
+    write.csv(LSM,file.path(path_to_output_datasets,"envCov_LSM.csv"),row.names = F)
+
+}
+```
+
+Structure of the resulting dataset (LSM):
+
+```{r lulc_result, eval=T, echo=F, message=F, warning=F}
+LSM<-read_csv(file.path(path_to_output_datasets,"envCov_LSM.csv"))
+```
+```{r eval=T, echo=T}
+LSM
+```
+
+## Close workflow
+
+We remove the temporary files and disconnect from the local DB.
+
+```{r setup_close, eval=F, echo=T}
+# Remove grass temporary folder
+system(paste0("rm -r ", fTile.path(path_to_output_datasets,"GRASS_TEMP")))  
+file.remove(file.path(path_to_output_datasets,".grassrc7"))
+# Disconnect from the local database
+dbDisconnect(con)
+```

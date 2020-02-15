@@ -1,0 +1,146 @@
+---
+title: "A classification scheme/workflow for fine-scale LU/LC mapping at different nomenclature levels built on a combined random forest and OBIA approach using multisource data (HRS, VHRS and DEM) and implemented with open-source softwares (FLOSS)"
+author: "Paul Taconet"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_document 
+vignette: >
+  %\VignetteIndexEntry{obia_rf_workflow}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+require(knitr)
+```
+
+An open and reusable R workflow for fine-scale land cover mapping at different nomenclature levels built on a combined random forest and OBIA approach using multisource data (HRS, VHRS and DEM)
+  
+  ## Key points / highlights
+  
+  -> Fine-scale land cover maps are useful yet complex products to generate
+  -> Many Free and open source softwares (FOSS) include image processing and classification algorithms for land cover mapping, each with its own strengths. Sometimes the best solution for an end-to-end land cover mapping work involves to use several softwares.
+  -> We have implemented an open data analysis workflow for fine-scale land cover mapping at different nomenclature levels. Is combines an geographic object based image analysis (GEOBIA) with a hierarchical random forest classification. The workflow uses several open-source RS/GIS softwares. It was implemented in the R environment and language for statistical computing, a fast evolving and widely used programming langage, that has been gaining more popularity across all scientific disciplines including the Remote Sensing (RS)/EO and GIS communities.
+  -> The workflow takes as input a Very High Spatial Resolution (VHRS) image, a High resolution image, a Digital Elevation Model and a ground-truth dataset enventually with a hierarchical, tree‐like structure classification scheme. Outputs are GIS land cover layers at each classification nomenclature level along with sets of broadly-used indicators of classification performance and variable importance. A hierarchical classification model, that takes into account the tree‐like structure classification scheme, is proposed. 
+  -> Expected benefits of such open workflow for scientists are, among other, time and effort saving, easier access to and understand of image processing techniques for fine-scale land cover mapping, as well as co-construction and improvement of efficient end-to-end land cover mapping workflows.
+
+## Abstract
+
+Image processing and classification for fine-scale land cover mapping is challenging because i) it involves many steps, ii) even though many Free and open source software (FOSS) for image processing do exist, it still often relies on proprietary and expensive softwares
+
+In addition to the benefits of transparent and reproducible data analysis, 
+
+Producing open, described and as-much-as-possible reusable workflows for complex data analyses can have impacts on research : link scientists across disciplines, save time and effort (https://hal.archives-ouvertes.fr/hal-01544818/document partie 3.2.1 et https://doi.org/10.1016/j.future.2017.01.001 )
+ shared, reused and adapted
+
+Even though probably not the most performing language for image processing, R is an interesting langage because it is a widely used langage in data science, and  : (langage qui est utilisé par bcp de monde, qui évolue rapidement, etc. ) (https://esajournals.onlinelibrary.wiley.com/doi/full/10.1002/ecs2.2567)
+Nomenclature levels are intrisic to land cover (https://www.sciencedirect.com/science/article/pii/S0924271617303696?via%3Dihub)
+
+We have implemented a workflow in the open-source R programming language for fine-scale land cover mapping at different nomenclature levels, built on a combined object based image analysis and random forest classification approach using multisource data (HRS, VHRS and DEM). Along with a set of R packages for GIS, image processing and machine learning, the workflow uses external free and open source softwares (FOSS) for tasks where we either found that R not / poorly performing or that other software were very well performing. 
+
+Inputs to be brougth by the user are a Very High Spatial Resolution (VHRS) image and a ground-truth dataset eventually with a hierarchical, tree‐like structure classification scheme. The workflow also enables the integration of additional free data : High Spatial Resolution (HRS) images and a Digital Elevation Model (DEM). Outputs are raster and vector land cover datasets at each nomenclature level along with sets of broadly-used classification performance and variable importance indicators.
+
+
+
+Our work also shows that several FOSS can be used - taking the best of each - and combined to create a single transparent, reproducible and re-usable workflow that uses modern techniques for fine-scale land cover mapping and image processing and classification in general. 
+//
+Our work also shows that several FOSS can be used - taking the best of each - and combined within a single workflow, enabling the methods used for fine-scale land cover mapping - and by extension image processing and classification - to be transparent, reproducible and re-usable.
+
+
+https://www.tandfonline.com/doi/full/10.1080/01431161.2018.1452075
+
+https://www.tandfonline.com/doi/full/10.1080/01431161.2018.1433343?src=recsys ->  An added benefit of R, scikit-learn, and Weka is that they are all currently free.
+## Introduction
+
+The usefulness of land cover products is not to be demonstrated anymore : knowledge of the physical material at the surface of the earth is crucial for many research studies, in a wide variety of fields. When facing the need to use a land cover product, two options are usually offered : 
+
+- **use one or more of the many already and freely available products** [mettre des exemples ie corine land cover, etc.] . Each product has its own combination of spatial coverage, spatial resolution and land cover classes, and these characteristics usually drive the choice of whether to use one product or another ; 
+- if for any reason none of the already available products is satisfying, **generate own dataset** by processing and classifying images of the Earth taken by remote sensing platforms such as Earth observation satellites. 
+
+Image processing and classification is a whole science and has been long used and improved over time, as techniques have evolved
+
+involves many steps and 
+
+
+The script takes as input a Very high resolution image of the area of interesed (Spot 6/7) + the Copernicus scihub identifiers of a High resolution image (Sentinel 2) + a learning/validation ground truth dataset, enventually with a class hierarchical structure.
+It performs all the pre-processing, data preparation, classification and post-processing steps. Details are provided below.
+The script uses various R packages (see section "prepare workflow" for a list of packages used) and open-source libraries that are called through R : the Orfeo Toolbox v6.6.1 (https://www.orfeo-toolbox.org/), the GRASS library v7.4 (https://grass.osgeo.org), the GDAL library v2.2.1 (https://www.gdal.org/) and SAGA GIS v2.3.1 (http://www.saga-gis.org/en/index.html). In addition, the workflow uses a personal release of the Orfeo Toolbox for the segmentation process (since no relevant application was found in the official OTB release for the segmentation of very large images using the Baatz and Shape Generic Region Merging algorithm). The release was generated and kindly provided by Rafaelle Gaetano. It is available here: http://napoli.teledetection.fr/logiciels/otb_moringa_build_win_x64.zip
+The methodology used in this workflow was inspired from these two articles and uses an R package developed in the frame of the Gavish et al. article (unfortunataly neither available on a git repository nor on the CRAN) (with minor adaptations for this workflow):
+- Gavish et al., Comparing the performance of flat and hierarchical Habitat/Land-Cover classification models in a NATURA 2000 site, ISPRS Journal of Photogrammetry and Remote Sensing. Volume 136, February 2018, Pages 1-12 <https://doi.org/10.1016/j.isprsjprs.2017.12.002>
+- Lebourgeois et al., A Combined Random Forest and OBIA Classification Scheme for Mapping Smallholder Agriculture at Different Nomenclature Levels Using Multisource Data (Simulated Sentinel-2 Time Series, VHRS and DEM). Remote Sens. 2017, 9, 259. <https://doi.org/10.3390/rs9030259>
+
+#### Workflow steps :
+### Step 1 - Download the Digital Elevation Model (SRTM tiles) for the ROI
+### Step 2 - Download the ancillary data :
+## 2.1 - Download the HRS Sentinel 2 image(s) from the Copernicus scihub
+### Step 3 - Pre-process the VHRS Spot6/7 image(s) :
+## 3.1 - fusion the tiles of the panchromatic image
+## 3.2 - convert the multispectral and panchromatic images from digital numbers to TOA reflectance
+## 3.3 - orthorectify the multispectral and panchromatic images
+## 3.4 - extract the ROI
+## 3.5 - pansharpen the MS image using the PAN image
+## 3.6 - mosaic the various tiles covering the ROI (if relevant)
+### Step 4 - Preprocess the ancillary data :
+## 4.1 - preprocess the DEM : mosaic the various tiles covering the ROI (if relevant), and then extract the ROI
+## 4.2 - preprocess the Sentinel 2 image(s) : mosaic the various images covering the ROI (if relevant), and then extract the ROI
+### Step 5 - Prepare the data for the classification :
+## 5.1 - extract ancillary indices from the DEM : slope, aspect, flow accumulation, flow direction, topographic convergence index
+## 5.2 - extract textural indices from the Spot6/7 panchromatic image at various moving windows sizes
+## 5.3 - extract radiometric indices from the Spot6/7 pansharpened image
+## 5.4 - extract radiometric indices from the S2 image
+## 5.5 - Split the bands of the Spot6/7 image
+### Step 6 - Segment the Spot6/7 image using the Baatz and Shape Generic Region Merging algorithm
+### Step 7 - Extract the zonal statistics (reflectance, spectral indices, textural indices, ancillary, shape, contextual)
+## 7.1 - Extract zonal statistics for the ground truth dataset
+## 7.2 - Extract zonal statistics for the segmented objects dataset
+### Step 8 - Prepare classification : generate a set of random forest classifiers using the training dataset with two approaches: i) a flat classification approach, ii) a class hierarchical structure approach. Classify the objects output of the segmentation process using the approach that gives the best results
+## 8.1 - Generate the RF classifiers at each class hierarchical level using i) a flat approach, ii) a hierarchical approach, and compare the results
+## 8.2 - Get useful information on the classification (discriminant variables, etc.) considering the class hierarchical structure
+### Step 9 - Classify
+## 9.1 - Classify the objects output of the segmentation using the approach that gives the best results
+## 9.2 - Save the classification as GIS data in various formats (vector and raster)
+## 9.3 - Add user criterions to enhance the classification
+
+
+#### Outputs: In the path_to_processing_folder, the following folders and files will be available :
+### folder "DEM_SRTM" : data regarding the SRTM Digital Elevation Model [GENERATED BY THE WF AS WELL AS ALL SUB-FOLDER AND FILES]
+## DEM_SRTM/raw_data : SRTM tile(s) covering the ROI (step 1)
+## DEM_SRTM/processed_data : a set of files derived from the DEM, output of the workflow :
+# - DEM.tif : SRTM DEM cut following the ROI and re-projected in the proj_srs (step 4) ;
+# - slope.tif : slope dataset derived from the DEM (step 5.1) ;
+# - aspect.tif : aspect dataset derived from the DEM (step 5.1);
+# - accumulation.tif : flow accumulation dataset derived from the DEM (step 5.1);
+# - direction.tif : flow direction dataset derived from the DEM (step 5.1);
+# - tci.tif : topographic convergence index derived from the DEM (note : not used in further analysis) (step 5.1);
+# - accumulation_treshold.tif : raster with two values : 0 if the flow accumulation is above the threshold_accumulation_raster , 1 if it is under. This information is used for the calculation of the distance from the objects to the flow accumulation network (used as primitive in the classification). (step 5.1) ;
+# - accumulation_treshold_vector.gpkg : vector version of accumulation_treshold.tif (step 5.1) ;
+### folder "VHR_SPOT6" : data regarding the VHRS Spot 6/7 satellite images
+## VHR_SPOT6/raw_data : the input Spot 6/7 data (as provided by the CNES). Must be provided by the user before execution of the workflow. There must be 1 sub-folder by image covering the ROI. Each sub-folder contains the two .tar.gz files as provided by the CNES : one for the panchromatic image and one for the multispectral image [PROVIDED BY THE USER]
+## VHR_SPOT6/processed_data : a set of files derived from the Spot 6/7 datasets, output of the workflow:  [GENERATED BY THE WF AS WELL AS ALL SUB-FOLDER AND FILES]
+# - PAN.TIF : the panchromatic image, mosaiced, orthorectified and cut following the ROI (step 3.x) ;
+# - PANSHARPEN.TIF : the multispectral image pansharpened using the panshromatic image, orthorectified and cut following the ROI (step 3.x) ;
+# - PANSHARPEN_0.TIF, PANSHARPEN_1.TIF, PANSHARPEN_2.TIF, PANSHARPEN_3.TIF : respectively the blue, green, red and nir bands of the VHRS (step 3.x) ;
+# - HaralickTextures_xxxx.TIF : the set of textures generated using from the panchromatic image, at various moving windows sizes (step 5.2) ;
+# - NDVI.TIF, NDWI.TIF, BI.TIF : the radiometric indices derived from the VHRS (step 5.3).
+### folder "HR_Sentinel2" : data regarding the HRS Sentinel 2 satellite images  [GENERATED BY THE WF AS WELL AS ALL SUB-FOLDER AND FILES]
+## HR_Sentinel2/raw_data : the input Sentinel 2 data (as downloaded by the WF in the Copernicus Scihub) (step 2.1).
+## HR_Sentinel2/processed_data : a set of files derived from the Sentinel 2 dataset(s), output of the workflow
+# B01.TIF, BO2.TIF, etc... B12.TIF : bands of the Sentinel 2 images cut following the ROI. If multiple images are provided as input (i.e. if the ROI is covered by multiple tiles), the images will be mosaiced first (step 4.2 and 5.5) ;
+# BRI.TIF, MNDVI.TIF, MNDWI.TIF, NDVI.TIF, NDWI.TIF, RNDVI.TIF : the radiometric indices derived from the HRS. Formulas are provided in the workflow, section 5.4 (step 5.4) ;
+### folder "Segmentation" : [GENERATED BY THE WF AS WELL AS ALL SUB-FOLDER AND FILES]
+# segmentation_vector.gpkg : vector output of the segmentation process (i.e. objects that will further be classified) (step 6) ;
+# segmentation_dataset_stats.gpkg : segmented datasets with the zonal statistics for each object (step 7.2).
+### folder "Ground_truth" : data regarding the ground truth (i.e. training/validation) dataset
+# path_to_ground_truth_data : ground truth dataset provided by the user, including the class hierarchical structure ;
+# ground_truth_stats.gpkg : ground truth dataset with the zonal statistics for each object (step 7.1)
+### folder "Classification" : data regarding the classification [GENERATED BY THE WF AS WELL AS ALL SUB-FOLDER AND FILES]  ########## A FINIR
+# classes_hierarchy.png : a figure of the class hierarchical structure (step 8.2) ;
+# flat_classif_stats_xxx.png : a figure with the confusion matrix + plot of variable importance at the class hierarchical level xxx, using a flat classification approach  (step 8.1)
+# hierar_classif_stats_xx.png : a figure with the confusion matrix + plot of variable importance at the class level xxx (step 8.1)
+# var_importance_yyyy.png : a figure showing the variables importance at each classification level, sorted by yyy {variable source, variable stat type, variable type}
+# classification.gpkg : Vector with the objects classified + the zonal stats (step 9.2)
+# classification.tif : Raster version of the classification (step 9.2)
+# classification_group.gpkg : Vector with adjacent objects having the same class grouped (step 9.2)

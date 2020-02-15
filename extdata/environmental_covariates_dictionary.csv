@@ -1,0 +1,51 @@
+code,type,short_name,long_name,unit,temporality,data_sources
+TND_M,Temperature,Daily minimum temperature (source : MODIS),Average daily minimum land surface temperature (source : MODIS),celcius degrees,40 days before the HLC night,"MOD11A1.v006
+MYD11A1.v006
+MOD11A2.v006
+MYD11A2.v006"
+TMD_M,Temperature,Daily maximum temperature (source : MODIS),Average daily maximum land surface temperature (source : MODIS),celcius degrees,40 days before the HLC night,"MOD11A1.v006
+MYD11A1.v006
+MOD11A2.v006
+MYD11A2.v006"
+TNW_M,Temperature,Weekly minimum temperature (source : MODIS),Average 8-days minimum land surface temperature (source : MODIS),celcius degrees,40 days before the HLC night,"MOD11A2.v006
+MYD11A2.v006"
+TMW_M,Temperature,Weekly maximum temperature (source : MODIS),Average 8-days maximum land surface temperature (source : MODIS),celcius degrees,40 days before the HLC night,"MOD11A2.v006
+MYD11A2.v006"
+TND_V,Temperature,Daily minimum temperature (source : VNP),Average daily minimum land surface temperature (source : VNP),celcius degrees,40 days before the HLC night,"VNP21A1D.v001
+VNP21A2.v001"
+TMD_V,Temperature,Daily maximum temperature (source : VNP),Average daily maximum land surface temperature (source : VNP),celcius degrees,40 days before the HLC night,"VNP21A1N.v001
+VNP21A2.v001"
+TNW_V,Temperature,Weekly minimum temperature (source : VNP),Average 8-days minimum land surface temperature (source : VNP),celcius degrees,40 days before the HLC night,VNP21A2.v001
+TMW_V,Temperature,Weekly maximum temperature (source : VNP),Average 8-days maximum land surface temperature (source : VNP),celcius degrees,40 days before the HLC night,VNP21A2.v001
+RFD_T,Precipitation,Daily rainfall (source: TAMSAT),Average daily total precipitation (source : TAMSAT),mm,40 days before the HLC night,TAMSAT
+RFD_G,Precipitation,Daily rainfall (source: GPM),Average daily total precipitation (source : GPM),mm,40 days before the HLC night,GPM_3IMERGDF
+SMO,Soil moisture,3-days soil moisture,Average 3-days soil moisture,mm3/mm3,40 days before the HLC night,SPL3SMP_E
+EVT,Evapotranspiration,Evapotranspiration,Average 8-days evapotranspiration,kg/m�/8day,40 days before the HLC night,"MOD16A2.v006
+MYD16A2.v006"
+VNI,Vegetation,Normalized Difference Vegetation Index,Average 8-days Normalized Difference Vegetation Index,unitless,40 days before the HLC night,"MOD13Q1.v006
+MYD13Q1.v006"
+VEI,Vegetation,Enhanced Vegetation Index,Average 8-days Enhanced Vegetation Index,unitless,40 days before the HLC night,"MOD13Q1.v006
+MYD13Q1.v006"
+RFH,Precipitation,Half-houly rainfall,Proportion of half-hours with positive precipitation for the whole duration of the HLC,%,HLC night,GPM_3IMERGHH
+WDR,Wind,Wind direction,Mean of wind direction during the HLC night,degrees (0 to 360),HLC night,ERA5
+WSP,Wind,Wind speed,Mean of wind speed during the HLC night,m/s,HLC night,ERA5
+LMN,Light/Moon,Apparent magnitude of the Moon,Apparent magnitude of the Moon on the HLC night,unitless,HLC night,MIRIADE
+LNL,Light/Settlements,Nightly radiance,Monthly average radiance on the HLC night,NanoWatt/cm2/sr,HLC night,VIIRS DNB
+TEL,Topography,Elevation,Mean elevation,meters above the see,No temporality,SRTMGL1_v003
+TSL,Topography,Slope,Mean slope,%,No temporality,SRTMGL1_v003
+TAS,Topography,Aspect,Mean aspect,,No temporality,SRTMGL1_v003
+TCI,Topography,Terrain Classification Index,Mean Terrain Classification Index,unitless,No temporality,SRTMGL1_v003
+TWI,Topography,Topographic Wetness Index,Mean Topographic Wetness Index,unitless,No temporality,SRTMGL1_v003
+WAC,Water,Accumulation,Mean accumulation,ha,No temporality,SRTMGL1_v003
+WAD,Water,Average distance to hydrographic network,Average distance to hydrographic network,m,No temporality,SRTMGL1_v003
+WMD,Water,Distance to closest hydrographic network,Distance to closest hydrographic network,m,No temporality,SRTMGL1_v003
+WLS,Water,Total length of the hydrographic network,Total length of the hydrographic network,m,No temporality,SRTMGL1_v003
+WAL,Water,Accumulation / distance to sampling point, Accumulation / distance to sampling point,,No temporality,SRTMGL1_v003
+POP,Population,Population (source : REACT),Population (census/ground data),person,No temporality,Own surveys
+POH,Population,Population (source : HRSL),Population (modelled data),person,No temporality,HRSL
+BDE,Built-up,Distance to the edge of the village,Distance to the nearest edge of the village,m,No temporality,Own surveys
+BCH,Built-up,Degree of clustering of the households in the village,Degree of clustering or ordering of the households,NA,No temporality,Own surveys
+HYS,Pedology,Proportion of hydromorphic soils,Proportion of hydromorphic soils,%,No temporality,IRD
+LSM,Land cover,Landscape metrics,Set of landscape metrics calculated over 6 different land cover layers,various units depending on the metric,No temporality,"Own very high resolution land cover maps
+Moderate dynamic land cover 100m
+S2 prototype Land Cover 20m map of Africa 2016"
