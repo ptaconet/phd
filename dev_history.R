@@ -1,2 +1,2 @@
 usethis::use_git()
-use_git_ignore(dev_history.R)
+usethis::use_git_ignore("dev_history.R")
