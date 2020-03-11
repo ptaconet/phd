@@ -6,8 +6,8 @@ library(stringdist)
 library(stringi)
 
 # load household data
-household_BF <- read_excel("miscellaneous_data/DonnéesREACT/BF/recensement/Menagebf_niv1.xlsx", na=c("","NA"), col_types = "text") %>% as.data.frame()
-household_CI <- read_excel("miscellaneous_data/DonnéesREACT/CI/recensement/MénageCI_niv1.xlsx", na=c("","NA"), col_types = "text") %>% as.data.frame()
+household_BF <- read_excel("data/react_db/miscellaneous_data/DonnéesREACT/BF/recensement/Menagebf_niv1.xlsx", na=c("","NA"), col_types = "text") %>% as.data.frame()
+household_CI <- read_excel("data/react_db/miscellaneous_data/DonnéesREACT/CI/recensement/MénageCI_niv1.xlsx", na=c("","NA"), col_types = "text") %>% as.data.frame()
 
 ## update codevillage in CI
 # le code de KOU est modifié en KON pour éviter les homonymies avec le BF

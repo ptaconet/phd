@@ -4,7 +4,7 @@ library(lubridate)
 library(sf)
 
 ## BF
-path_to_humanbehavior_excel<-"miscellaneous_data/DonnéesREACT/BF/entomo/comportement-humain/All_Data_HumanBehavior_BF.xlsx"
+path_to_humanbehavior_excel<-"data/react_db/miscellaneous_data/DonnéesREACT/BF/entomo/comportement-humain/All_Data_HumanBehavior_BF.xlsx"
 
 hbm_sheets<-c("HBm1","HBm2","HBm3")
 hbmbehavior_sheets<-c("HBm1Behavior","HBm2Behavior","HBm3Behavior")
@@ -68,7 +68,7 @@ df_humanbehavior_bf <- df_humanbehavior_bf %>%
 
 
 ### CIV
-path_to_humanbehavior_excel<-"/home/ptaconet/react/datasets/miscellaneous_data/DonnéesREACT/CI/entomo/comportement-humain/new/All_Data_HumanBehavior_orig.xlsx"
+path_to_humanbehavior_excel<-"data/react_db/miscellaneous_data/DonnéesREACT/CI/entomo/comportement-humain/new/All_Data_HumanBehavior_orig.xlsx"
 
 hbm_sheets<-c("HBm1","HBm2")
 hbmbehavior_sheets<-c("HBm1Behavior","HBm2Behavior")

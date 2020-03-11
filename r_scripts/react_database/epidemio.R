@@ -7,24 +7,24 @@ library(stringi)
 
 ### load data -----
 # detection active
-BF_act_df <- read_delim("miscellaneous_data/Data_epidemio/BF_enquete_active.csv", delim=",") %>% as.data.frame()
-CI_act_df <- read_excel("miscellaneous_data/Data_epidemio/CI_enquete_active.xlsx", na=c("","NA"), col_types = "text") %>% as.data.frame()
-date_act_CI_df <- read_delim("miscellaneous_data/Data_epidemio/date_enq_act_CI.csv", delim="\t") %>% as.data.frame()
-load("miscellaneous_data/Data_epidemio/col_to_remove_BF.RData")
-load("miscellaneous_data/Data_epidemio/col_to_remove_CI.RData")
+BF_act_df <- read_delim("data/react_db/miscellaneous_data/Data_epidemio/BF_enquete_active.csv", delim=",") %>% as.data.frame()
+CI_act_df <- read_excel("data/react_db/miscellaneous_data/Data_epidemio/CI_enquete_active.xlsx", na=c("","NA"), col_types = "text") %>% as.data.frame()
+date_act_CI_df <- read_delim("data/react_db/miscellaneous_data/Data_epidemio/date_enq_act_CI.csv", delim="\t") %>% as.data.frame()
+load("data/react_db/miscellaneous_data/Data_epidemio/col_to_remove_BF.RData")
+load("data/react_db/miscellaneous_data/Data_epidemio/col_to_remove_CI.RData")
 #detection passive
-BF_pas_df <- read_excel("miscellaneous_data/Data_epidemio/BF_suivi_passif.xlsx", col_types = "text")
-CI_pas_df <- read_excel("miscellaneous_data/Data_epidemio/CI_suivi_passif.xlsx", col_types = "text")
+BF_pas_df <- read_excel("data/react_db/miscellaneous_data/Data_epidemio/BF_suivi_passif.xlsx", col_types = "text")
+CI_pas_df <- read_excel("data/react_db/miscellaneous_data/Data_epidemio/CI_suivi_passif.xlsx", col_types = "text")
 
 # goutte épaisse
-BF_GE_df <-  read_tsv("miscellaneous_data/Data_epidemio/GE_BF_post.csv") %>% as.data.frame()
-CI_GE_df <-  read_tsv("miscellaneous_data/Data_epidemio/GE_CI_post.csv") %>% as.data.frame()
+BF_GE_df <-  read_tsv("data/react_db/miscellaneous_data/Data_epidemio/GE_BF_post.csv") %>% as.data.frame()
+CI_GE_df <-  read_tsv("data/react_db/miscellaneous_data/Data_epidemio/GE_CI_post.csv") %>% as.data.frame()
 
 #interventions
-Intervention_df <- read.delim("miscellaneous_data/Data_epidemio/Intervention.txt")
+Intervention_df <- read.delim("data/react_db/miscellaneous_data/Data_epidemio/Intervention.txt")
 
 # household data
-household <-  read_tsv("miscellaneous_data/Data_epidemio/household.csv") %>% as.data.frame()
+household <-  read_tsv("data/react_db/miscellaneous_data/Data_epidemio/household.csv") %>% as.data.frame()
 household <- household %>% mutate_at(c(4,5,18:30,78), as.factor)
 
 # calculate population size
@@ -351,6 +351,18 @@ GE_stats$datelecture<-as.character(GE_stats$datelecture)
 
 act$date <- BF_act$date <- CI_act$date <- NULL
 
+act <- act %>%
+  mutate(idenquete = paste0(codenquete,codevillage)) %>%
+  dplyr::select(idenquete,setdiff(names(act),"idenquete")) %>%
+  filter(!(is.na(datenquete))) %>%
+  arrange(idenquete) %>%
+  rename(codepays=country)
+
+# spatialize table act (with coordinates of the center of the villages)
+act_columns <- colnames(act)
+act <- act %>%
+  left_join(st_read(path_to_gpkg_database,"recensement_villages_l1", stringsAsFactors=F), by=c("codevillage","codepays")) %>%
+  dplyr::select(act_columns,X,Y)
 ### Save output files ----
 #write.csv(act, file="act_tight.csv", row.names = FALSE)
 #write.csv(BF_act, file="BF_act.csv", row.names = FALSE)

@@ -1,5 +1,6 @@
 usethis::use_git()
 usethis::use_git_ignore("data/")
+usethis::use_git_ignore("GRASS_TEMP/")
 
 usethis::use_github()
 usethis::use_readme_rmd()
@@ -7,6 +8,7 @@ usethis::use_build_ignore("r_scripts/")
 usethis::use_build_ignore("data/")
 usethis::use_build_ignore("figures/")
 usethis::use_build_ignore("docs/")
+usethis::use_build_ignore("GRASS_TEMP/")
 
 
 ## Run to render the website
@@ -23,6 +25,10 @@ rmarkdown::render("r_scripts/link_to_r_script_2.R",output_dir="/home/ptaconet/ph
 # to be verified...
 
 # the other way around (rmd to R) : https://bookdown.org/yihui/rmarkdown-cookbook/purl.html
+knitr::purl("r_scripts/data_preparation/workflow_extract_expl_var.Rmd","r_scripts/data_preparation/workflow_extract_expl_var.R") # convert from Rmd to R
+#knitr::spin("r_scripts/data_preparation/workflow_extract_expl_var.R", knit = F) # CAREFUL it erases the Rmd that is already there ! 
+#rmarkdown::render("r_scripts/data_preparation/workflow_extract_expl_var.R",output_dir="/home/ptaconet/phd/rmds") # directly in html
+
 
 # render the website using the rmds located in 
 rmarkdown::render_site(input = "rmds")

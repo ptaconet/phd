@@ -3,8 +3,8 @@
 #require(lubridate)
 #react_gpkg <- dbConnect(RSQLite::SQLite(),path_to_gpkg_database)
 
-raw_bf_dates_hlc<-read_excel("miscellaneous_data/Heure de captures REACT-BF_M1_M7.xls")
-raw_civ_dates_hlc<-read_excel("miscellaneous_data/Dates_capture entomo cote  d'Ivoire.xlsx")
+raw_bf_dates_hlc<-read_excel("data/react_db/miscellaneous_data/Heure de captures REACT-BF_M1_M7.xls")
+raw_civ_dates_hlc<-read_excel("data/react_db/miscellaneous_data/Dates_capture entomo cote  d'Ivoire.xlsx")
 
 colnames(raw_bf_dates_hlc)<-c("n_mission","nomvillage","codevillage","CSPS","date_de_captures","heure_de_debut","heure_de_fin","n_sac","observations")
 raw_bf_dates_hlc$date_de_captures<-as.character(as.Date(raw_bf_dates_hlc$date_de_captures, format="%d/%m/%Y"))

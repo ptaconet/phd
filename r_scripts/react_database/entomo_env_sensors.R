@@ -6,13 +6,13 @@
   require(lubridate)
   require(data.table)
 
-  path_to_gpkg_database<-"react_db.gpkg"
+  #path_to_gpkg_database<-"react_db.gpkg"
 
   ####################################################################
   ############################## BF   ################################
   ####################################################################
 
-  path_to_folder<-"miscellaneous_data/Donnees_Environn_BF_ok/donnees_traitees"
+  path_to_folder<-"data/react_db/miscellaneous_data/Donnees_Environn_BF_ok/donnees_traitees"
 
   path_to_missions_folders<-file.path(path_to_folder,c("enqte1_donnees_brutes","enqte2_baro_hobo_hygro","enqte3barohobohygro","enqte4barohobohygro","enqte5barohobohygro","enqte6barohobohygro","enqte7barohobohygro"))
 

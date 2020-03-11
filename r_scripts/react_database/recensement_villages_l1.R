@@ -14,7 +14,7 @@ villages$nomvillage[which(villages$codevillage_pk=="BLA")]<-"Blawara"
 villages$nomvillage[which(villages$codevillage_pk=="NAM")]<-"Namasselikaha"
 colnames(villages)<-gsub("_fk","",colnames(villages))
 colnames(villages)<-gsub("_pk","",colnames(villages))
-village_interv<-read.csv("/home/ptaconet/react/datasets/miscellaneous_data/villages.csv",sep=";")
+village_interv<-read.csv("data/react_db/miscellaneous_data/villages.csv",sep=";")
 village_interv<-village_interv[,c("country","codevillage","Interv")]
 colnames(village_interv)<-c("country","codevillage","intervention")
 village_interv$codevillage<-as.character(village_interv$codevillage)

@@ -6,7 +6,7 @@
 ##############################################################################################
 # CIV  (BF en dessous)
 ##############################################################################################
-path_to_xls_civ<-"miscellaneous_data/DataSupervCaptureCI_jointes_orig_all.xlsx"
+path_to_xls_civ<-"data/react_db/miscellaneous_data/DataSupervCaptureCI_jointes_orig_all.xlsx"
 
 lot1<-read_excel(path_to_xls_civ, sheet = "Lot1")
 lot2<-read_excel(path_to_xls_civ, sheet = "Lot2")
@@ -336,9 +336,9 @@ hist(number_lines_by_postecapture$n)
 # BF
 ##############################################################################################
 
-path_to_xls_bf<-"miscellaneous_data/All_DAta_SupervCaptureBF.xlsx"
-path_to_data_mission1<-"miscellaneous_data/SupervCapture1BF.csv"
-path_to_data_data_h_capt<-"miscellaneous_data/Heure de captures REACT-BF_M1_M7.xls"
+path_to_xls_bf<-"data/react_db/miscellaneous_data/All_DAta_SupervCaptureBF.xlsx"
+path_to_data_mission1<-"data/react_db/miscellaneous_data/SupervCapture1BF.csv"
+path_to_data_data_h_capt<-"data/react_db/miscellaneous_data/Heure de captures REACT-BF_M1_M7.xls"
 
 Lot1part1 <- read_excel(path_to_xls_bf, sheet = "Lot1part1")
 Lot1part2 <- read_excel(path_to_xls_bf, sheet = "Lot1part2")

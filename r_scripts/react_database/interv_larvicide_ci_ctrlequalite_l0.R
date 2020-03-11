@@ -1,4 +1,4 @@
-larvicide_ci_ctrlequalite <- read_excel("miscellaneous_data/Controle qualité Bti.xlsx", col_types = "text")
+larvicide_ci_ctrlequalite <- read_excel("data/react_db/miscellaneous_data/Controle qualité Bti.xlsx", col_types = "text")
 colnames(larvicide_ci_ctrlequalite) <- c("date_ttmt","date_prlvt","codevillage","numero_echantillon","n_total","n_morts_24h","mortalite_24h","n_morts_48h","mortalite_48h")
 larvicide_ci_ctrlequalite$mortalite_24h <- larvicide_ci_ctrlequalite$mortalite_48h <- NULL
 
