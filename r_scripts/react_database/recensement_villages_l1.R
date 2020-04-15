@@ -22,7 +22,7 @@ village_interv$codevillage[which(village_interv$codevillage=="KOU" & village_int
 village_interv$codevillage[which(village_interv$codevillage=="NAV" & village_interv$country=="CIV")]="NAA"
 village_interv$country<-NULL
 villages<-left_join(villages,village_interv)
-villages$intervention[which(villages$codevillage %in% c("NAA","KOL","NON","NOK"))]<-NA
+villages$intervention[which(villages$codevillage %in% c("NAA","KOL","NON","NOK"))]<-"Ctrle"
 villages <- villages %>% dplyr::select(nomvillage,codevillage,csps_csu,intervention) %>% filter(nomvillage!="nouveau_village") %>% filter(codevillage!="NAN")
 
 
@@ -32,6 +32,16 @@ villages <- villages_from_menage %>%
   dplyr::select(codevillage,codepays,nomvillage,population,intervention,csps_csu,X,Y) %>%
   st_drop_geometry()
 
+
+villages_pooda <- read_excel("data/react_db/miscellaneous_data/villages_REACT.xlsx") %>%
+  mutate(Code_village=gsub("KOL","KLK",Code_village)) %>%
+  rename(nomvillage = Nom, codevillage = Code_village)
+
+villages <- villages %>%
+  left_join(villages_pooda, by = "codevillage") %>%
+  mutate(nomvillage.x = ifelse(is.na(nomvillage.x),nomvillage.y,nomvillage.x)) %>%
+  rename(nomvillage = nomvillage.x) %>%
+  dplyr::select(-c(nomvillage.y,Departement,Coord_X,Coord_Y,Latitude,longitude,Population))
 
 ## dates des interventions
 #CIV :

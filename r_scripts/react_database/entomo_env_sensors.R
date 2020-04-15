@@ -17,7 +17,7 @@
   path_to_missions_folders<-file.path(path_to_folder,c("enqte1_donnees_brutes","enqte2_baro_hobo_hygro","enqte3barohobohygro","enqte4barohobohygro","enqte5barohobohygro","enqte6barohobohygro","enqte7barohobohygro"))
 
   df_villages<-read_sf(path_to_gpkg_database,"recensement_villages_l1") %>% as_tibble() %>% dplyr::select(nomvillage,codevillage) %>% rename("Village"="nomvillage","village"="codevillage")
-  hlc_dates<-read_sf(path_to_gpkg_database,"entomo_csh_metadata_l1") %>% as_tibble %>% filter(codepays=="BF") %>% dplyr::select(codevillage,date_capture,nummission) %>% mutate(nummission=as.numeric(nummission)) %>% unique()
+  hlc_dates<-read_sf(path_to_gpkg_database,"entomo_csh_metadata_l1") %>% as_tibble %>% mutate(nummission=as.numeric(nummission)) %>% filter(codepays=="BF",nummission<=8) %>% dplyr::select(codevillage,date_capture,nummission)  %>% unique()
 
   ### Baro
   # on traite la mission 1
@@ -300,7 +300,7 @@
   }
 
   # add Kouloh mission 3
-  df_hygro_koulohmission3_files<-list.files("miscellaneous_data/Donnees_Environn_BF_ok/donnees_traitees/enqte3barohobohygro/doc_hobohygro/Kouloh",pattern = "hygro",full.names = T)
+  df_hygro_koulohmission3_files<-list.files("data/react_db/miscellaneous_data/Donnees_Environn_BF_ok/donnees_traitees/enqte3barohobohygro/doc_hobohygro/Kouloh",pattern = "hygro",full.names = T)
 
   for (i in 1:length(df_hygro_koulohmission3_files)){
 
@@ -317,7 +317,7 @@
 
   }
 
-  df_hobo_koulohmission3_files<-list.files("miscellaneous_data/Donnees_Environn_BF_ok/donnees_traitees/enqte3barohobohygro/doc_hobohygro/Kouloh",pattern = "hobo",full.names = T)
+  df_hobo_koulohmission3_files<-list.files("data/react_db/miscellaneous_data/Donnees_Environn_BF_ok/donnees_traitees/enqte3barohobohygro/doc_hobohygro/Kouloh",pattern = "hobo",full.names = T)
 
   for (i in 1:length(df_hobo_koulohmission3_files)){
 
@@ -340,8 +340,8 @@
   df_hobo$idappdemes<-NA
   df_hygro$idappdemes<-NA
 
-  df_hygro_mission1_files<-list.files("miscellaneous_data/Donnees_Environn_BF_ok/donnees_traitees/enqte1_donnees_brutes/M1_Data environementaux",pattern = "_courbe.csv",full.names = T,recursive = T)
-  df_hobo_mission1_files<-list.files("miscellaneous_data/Donnees_Environn_BF_ok/donnees_traitees/enqte1_donnees_brutes/M1_Data environementaux",pattern = "Hobo_",full.names = T,recursive = T)
+  df_hygro_mission1_files<-list.files("data/react_db/miscellaneous_data/Donnees_Environn_BF_ok/donnees_traitees/enqte1_donnees_brutes/M1_Data environementaux",pattern = "_courbe.csv",full.names = T,recursive = T)
+  df_hobo_mission1_files<-list.files("data/react_db/miscellaneous_data/Donnees_Environn_BF_ok/donnees_traitees/enqte1_donnees_brutes/M1_Data environementaux",pattern = "Hobo_",full.names = T,recursive = T)
 
   ent_supervcaptureraw<-read_sf(path_to_gpkg_database,"entomo_csh_ctrlequalite_l0") %>% as_tibble() %>% filter(codepays=="BF" & nummission==1) %>%
     group_by(idpostedecapture,idappdemes) %>%
@@ -393,7 +393,7 @@
 
   # On doit maintenant relier le nom des villages
 
-  ent_hlcmetadataraw<-read_sf(path_to_gpkg_database,"entomo_csh_metadata_l0") %>% filter(codepays=="BF") %>% dplyr::select(codevillage,n_mission,date_de_captures,n_sac,date_heure_debut,date_heure_fin)
+  ent_hlcmetadataraw<-read_sf(path_to_gpkg_database,"entomo_csh_metadata_l0") %>% filter(codepays=="BF",n_mission<=8) %>% dplyr::select(codevillage,n_mission,date_de_captures,n_sac,date_heure_debut,date_heure_fin)
   colnames(ent_hlcmetadataraw)=c("codevillage","nummission","date","sac","date_heure_debut","date_heure_fin")
   ent_hlcmetadataraw$date_heure_debut<-ymd_hms(ent_hlcmetadataraw$date_heure_debut)
   ent_hlcmetadataraw$date_heure_fin<-ymd_hms(ent_hlcmetadataraw$date_heure_fin)

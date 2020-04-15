@@ -1,0 +1,1013 @@
+#' ---
+#' title: "Automatic import of spatial-temporal environmental data and extraction within buffers around sampling points"
+#' author: "Paul Taconet"
+#' date: "`r Sys.Date()`"
+#' output: rmarkdown::html_document
+#' ---
+#' 
+## ----setup, include = FALSE----------------------------------------------
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.path = "man/figures/README-",
+  out.width = "100%",
+  eval = T
+)
+
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file()) #set t
+
+
+#' 
+#' 
+#' ## Setup packages
+#' 
+## ----setup_packages------------------------------------------------------
+require(shub4r)
+require(opendapr)
+require(getremotedata)
+require(eodataflow)
+require(sf)
+require(purrr)
+require(dplyr)
+require(tidyr)
+require(stringr)
+require(raster)
+require(furrr)
+require(lubridate)
+require(geosphere)
+require(sp)
+require(maptools)
+require(spatstat)
+
+#' 
+#' ## Setup input parameters
+#' 
+## ----  echo = T----------------------------------------------------------
+# arguments to change between CI and BF
+country <- "BF"  # for CI : "CI" , for BF : "BF"
+roi_name <- "diebougou"   # for CI : "korhogo" , for BF : "diebougou"
+hydromorphic_classes_pixels <-c (11,14,5,2,13) # pixels values whose classes are considered hydromorphic.   for CI: c(11,14,5,2,13)  for BF: c(2,3,8,9,10)
+threshold_accumulation_raster <- 800 # threshold for the accumulaton raster dataset (all values above this threshold are considered as the hydrographic network). # For CI: 800 ; For BF: 1000
+## end arguments to change
+
+
+path_to_db <- "data/react_db/react_db.gpkg"
+buffer_sizes <- c(500,1000,2000)
+lag_time <- 120
+parallel <- TRUE
+verbose <- TRUE
+
+## tables extracted from the REACT database :
+# dates and locations of the entomological missions (human landing catch)
+df_points_metadata_entomo <- st_read(path_to_db,"entomo_csh_metadata_l1", stringsAsFactors=F)
+# dates and locations of the epidemiological missions
+df_points_metadata_epidemio <- st_read(path_to_db,"epidemio_active_l1", stringsAsFactors=F)
+# locations of the households
+sf_households_by_village <- st_read(path_to_db,"recensement_menages_l0", stringsAsFactors=F)
+# villages and related information
+sf_villages <-  st_read(path_to_db,"recensement_villages_l1", stringsAsFactors=F)
+
+## pedology raster
+path_to_pedology_rast <- file.path("data",roi_name,"pedology","pedology.tif")
+
+## population raster (HRSL)
+path_to_hrls_rast <- file.path("data",roi_name,"HRSL","hrsl_pop.tif")
+
+## land cover rasters (for calculation of landscape metrics):
+df_lulc_metadata <-  st_read(path_to_db,"lco_metadata", stringsAsFactors=F) # Name of land use / cover metadata table in the DB. This table contains the information to use to compute land use / land cover landscape metrics : the various LU/LC rasters, the path to the rasters, etc.
+layers_lulc <- c(paste0("lco_l2_",tolower(country)),paste0("lco_l3_",tolower(country)),paste0("lco_l4_",tolower(country)),paste0("lco_l5_",tolower(country)),"ESACCI-LC-L4-LC10-Map-20m-P1Y-2016-v1.0","W020N20_ProbaV_LC100_epoch2015_global_v2.0.1") # Names of the LU/LC layers in the table "db_table_metadata_lulc" to use for the computation of landscape metrics
+
+
+#' 
+#' ## Logins
+#' 
+## ----logins--------------------------------------------------------------
+# logins
+# earthdata
+username_earthdata <- Sys.getenv("earthdata_un")
+password_earthdata <- Sys.getenv("earthdata_pw")
+opendapr::odr_login(credentials = c(username_earthdata,password_earthdata),source = "earthdata")
+
+# sentinel
+instance_id_s1 <- Sys.getenv("instance_id_shub_s1")
+instance_id_s2 <- Sys.getenv("instance_id_shub_s2")
+shub4r::shr_login(instance_id_s1,source = "sentinel1")
+shub4r::shr_login(instance_id_s2,source = "sentinel2")
+
+#' 
+#' ## Preparation
+#' 
+## ----preparation---------------------------------------------------------
+# put the sampling points dataset in a format suitable for the next steps and generate the roi in sf format
+# entomo
+df_points_metadata_entomo <- df_points_metadata_entomo %>%
+  st_drop_geometry() %>%
+  dplyr::filter(codepays==country) %>%
+  dplyr::select("idpointdecapture","date_capture","X","Y") %>%
+  dplyr::rename(id=idpointdecapture,date=date_capture,longitude=X,latitude=Y)
+
+sf_points_metadata_entomo <- sf::st_as_sf(df_points_metadata_entomo,coords = c("longitude", "latitude"), crs = 4326)
+df_sampling_points_entomo <- eodataflow::prepare_df_points(df_points_metadata_entomo)
+
+# epidemio
+df_points_metadata_epidemio <- df_points_metadata_epidemio %>%
+  st_drop_geometry() %>%
+  dplyr::filter(codepays==country) %>%
+  dplyr::select("idenquete","datenquete","X","Y") %>%
+  dplyr::rename(id=idenquete,date=datenquete,longitude=X,latitude=Y) %>%
+  distinct()
+sf_points_metadata_epidemio <- sf::st_as_sf(df_points_metadata_epidemio,coords = c("longitude", "latitude"), crs = 4326)
+df_sampling_points_epidemio <- eodataflow::prepare_df_points(df_points_metadata_epidemio)
+
+# entomo + epidemio
+df_points_metadata <- rbind(df_points_metadata_entomo,df_points_metadata_epidemio)
+sf_points_metadata <- sf::st_as_sf(df_points_metadata,coords = c("longitude", "latitude"), crs = 4326)
+df_sampling_points <- eodataflow::prepare_df_points(df_points_metadata)
+
+roi <- eodataflow::prepare_roi(df_points_metadata,buffer_sizes)
+utm_zone <- eodataflow:::.getUTMepsg(roi)
+
+#' 
+#' Whenever possible, we will parallelize the script with the `furrr` package. We extend the maximum size to be exported for the `furrr` future expression to 20 GB.
+#' 
+## ----prepare_parralel, eval=F, echo=T------------------------------------
+plan(multiprocess)
+options(future.globals.maxSize= 20000*1024^2) # 20 GB for the max size to be exported for the furrr future expression (https://stackoverflow.com/questions/40536067/how-to-adjust-future-global-maxsize-in-r)
+
+#' 
+#' ## Workflow
+#' 
+#' ### Indicators covering the x weeks preceding the sampling dates
+#' 
+#' #### Daily LST (MODIS) (daily + weekly)
+## ------------------------------------------------------------------------
+# Download MOD11A1.006 and MYD11A1.006 data - bands LST_Night_1km and LST_Day_1km - for the region and time frames of interest ;
+variables <- c("LST_Day_1km","LST_Night_1km")
+mod11a1 <- eodataflow::eodf_geturl_dl(times_start = df_sampling_points$date - lag_time,times_end = df_sampling_points$date, roi = roi, roi_name = roi_name, collection = "MOD11A1.006", variables = variables, parallel = parallel, verbose = verbose)
+myd11a1 <- eodataflow::eodf_geturl_dl(times_start = df_sampling_points$date - lag_time,times_end = df_sampling_points$date, roi = roi, roi_name = roi_name, collection = "MYD11A1.006", variables = variables, parallel = parallel, verbose = verbose)
+
+# Import the bands in R ;
+rasts_lst_day_terra <- map(mod11a1$list_of_urls, ~opendapr::odr_import_data(.$destfile, "MOD11A1.006", "LST_Day_1km"))
+rasts_lst_day_aqua <- map(myd11a1$list_of_urls, ~opendapr::odr_import_data(.$destfile, "MYD11A1.006", "LST_Day_1km"))
+rasts_lst_night_terra <- map(mod11a1$list_of_urls, ~opendapr::odr_import_data(.$destfile, "MOD11A1.006", "LST_Night_1km"))
+rasts_lst_night_aqua <- map(myd11a1$list_of_urls, ~opendapr::odr_import_data(.$destfile, "MYD11A1.006", "LST_Night_1km"))
+
+# Combine MOD11A1.006 and MYD11A1.006 LST_Night_1km (resp. LST_Day_1km) bands by keeping only the lowest (resp. highest) available value for each pixel. Bad quality pixels are already set to NA in MOD11A1.006 and MYD11A1.006 products. In case of NA in one of the products, keep the value from the other product. In case of NA in both products, set to NA ;
+rasts_lst_max <- eodataflow::prepare_mixed_products(rasts_lst_day_terra,rasts_lst_day_aqua,"max")
+rasts_lst_min <- eodataflow::prepare_mixed_products(rasts_lst_night_terra,rasts_lst_night_aqua,"min")
+
+# Extract the averaged value from the resulting band within each buffer around the sampling points ;
+TMAX1_wNA <- eodataflow::extract_var_on_buffers(rasts_lst_max, df_sampling_points$sf_points, buffer_sizes, "mean", TRUE, df_sampling_points$date, code_indice = "TMAX1")
+TMAX1_wNA$val <- TMAX1_wNA$val - 273.15
+TMIN1_wNA <- eodataflow::extract_var_on_buffers(rasts_lst_min, df_sampling_points$sf_points, buffer_sizes, "mean", TRUE, df_sampling_points$date, code_indice = "TMIN1")
+TMIN1_wNA$val <- TMIN1_wNA$val - 273.15
+
+#' 
+#' To fill the NAs, we need the MODIS weekly data
+#' 
+#' The workflow to import MODIS weekly data is the same as for Daily temperatures (above), only the collections are changing
+#' 
+## ------------------------------------------------------------------------
+## Download :
+# - MOD11A2.006 - variables LST_Day_1km and LST_Night_1km
+# - MYD11A2.006 - variables LST_Day_1km and LST_Night_1km
+variables <- c("LST_Day_1km","LST_Night_1km")
+mod11a2 <- eodataflow::eodf_geturl_dl(times_start = df_sampling_points$date - lag_time,times_end = df_sampling_points$date, roi = roi, roi_name = roi_name, collection = "MOD11A2.006", variables = variables, parallel = parallel, verbose = verbose)
+myd11a2 <- eodataflow::eodf_geturl_dl(times_start = df_sampling_points$date - lag_time,times_end = df_sampling_points$date, roi = roi, roi_name = roi_name, collection = "MYD11A2.006", variables = variables, parallel = parallel, verbose = verbose)
+## Import :
+# - MOD11A2.006 - LST day band
+# - MYD11A2.006 - LST day band
+# - MOD11A2.006 - LST nigth band
+# - MYD11A2.006 - LST nigth band
+rasts_lst_day_terra <- map(mod11a2$list_of_urls, ~opendapr::odr_import_data(.$destfile, "MOD11A2.006", "LST_Day_1km"))
+rasts_lst_day_aqua <- map(myd11a2$list_of_urls, ~opendapr::odr_import_data(.$destfile, "MYD11A2.006", "LST_Day_1km"))
+rasts_lst_night_terra <- map(mod11a2$list_of_urls, ~opendapr::odr_import_data(.$destfile, "MOD11A2.006", "LST_Night_1km"))
+rasts_lst_night_aqua <- map(myd11a2$list_of_urls, ~opendapr::odr_import_data(.$destfile, "MYD11A2.006", "LST_Night_1km"))
+
+## Create :
+# - LST day combined MOD11A2.006 and MYD11A2.006 band
+# - LST night combined MOD11A2.006 and MYD11A2.006 band
+rasts_lst_max <- eodataflow::prepare_mixed_products(rasts_lst_day_terra,rasts_lst_day_aqua,"max")
+rasts_lst_min <- eodataflow::prepare_mixed_products(rasts_lst_night_terra,rasts_lst_night_aqua,"min")
+
+## Extract :
+# - LST day Weekly (aka. LST max)
+# - LST nigth Weekly (aka. LST min)
+TMAX7_A2 <- eodataflow::extract_var_on_buffers(rasts_lst_max, df_sampling_points$sf_points, buffer_sizes, "mean", TRUE, df_sampling_points$date, code_indice = "TMAX7_A2")
+TMAX7_A2$val <- TMAX7_A2$val - 273.15
+TMIN7_A2 <- eodataflow::extract_var_on_buffers(rasts_lst_min, df_sampling_points$sf_points, buffer_sizes, "mean", TRUE, df_sampling_points$date, code_indice = "TMIN7_A2")
+TMIN7_A2$val <- TMIN7_A2$val - 273.15
+
+#' 
+#' Fill the NAs in daily and weekly products and compute temperature amplitude :
+#' 
+## ------------------------------------------------------------------------
+# Fill NAs for Daily and Weekly maximum temperature
+TMx_M_nafill <- eodataflow::ts_fillna_l1tol5(TMAX1_wNA,TMAX7_A2)
+TMAX1 <- TMx_M_nafill[[1]]
+TMAX7_A2 <- TMx_M_nafill[[2]]
+
+# Fill NAs for Daily and Weekly minimum temperature
+TNx_M_nafill <- eodataflow::ts_fillna_l1tol5(TMIN1_wNA,TMIN7_A2)
+TMIN1 <- TNx_M_nafill[[1]]
+TMIN7_A2 <- TNx_M_nafill[[2]]
+
+TAMP1 <- merge(TMAX1,TMIN1,by=c("id","buffer","date","lag_n","lag_time")) %>%
+  mutate(val = val.x-val.y) %>%
+  dplyr::select(-c(val.x,val.y,var.x,var.y,qval.x,qval.y)) %>%
+  mutate(var = "TAMP1")
+
+TAMP7_A2 <- merge(TMAX7_A2,TMIN7_A2,by=c("id","buffer","date","lag_n","lag_time")) %>%
+  mutate(val = val.x-val.y) %>%
+  dplyr::select(-c(val.x,val.y,var.x,var.y,qval.x,qval.y)) %>%
+  mutate(var = "TAMP7_A2")
+
+TMAX1$qval <- NULL
+TMIN1$qval <- NULL
+TMAX7_A2$qval <- NULL
+TMIN7_A2$qval <- NULL
+
+#' 
+#' Save to disk :
+#' 
+## ------------------------------------------------------------------------
+write.csv(TMAX1, file.path("data",roi_name,"envCov_TMAX1.csv"), row.names = F)
+write.csv(TMIN1, file.path("data",roi_name,"envCov_TMIN1.csv"), row.names = F)
+write.csv(TAMP1, file.path("data",roi_name,"envCov_TAMP1.csv"), row.names = F)
+write.csv(TMAX7_A2, file.path("data",roi_name,"envCov_TMAX7_A2.csv"), row.names = F)
+write.csv(TMIN7_A2, file.path("data",roi_name,"envCov_TMIN7_A2.csv"), row.names = F)
+write.csv(TAMP7_A2, file.path("data",roi_name,"envCov_TAMP7_A2.csv"), row.names = F)
+
+#' 
+#' 
+#' #### Weekly LST (MODIS) (weekly)
+#' 
+## ------------------------------------------------------------------------
+# Missing values 1st degree imputation : use the value of the wider buffer(s) for the same day ;
+# Missing values 2nd degree imputation : use the averaged value between the previous and the next day ;
+TMAX7_A1 <- eodataflow::ts_fillna_l1tol3(TMAX1_wNA)
+TMIN7_A1 <- eodataflow::ts_fillna_l1tol3(TMIN1_wNA)
+
+# Aggregate the dailies values to weekly (as the average of the available daily temperatures) ;
+function_daystoweek <- function(TxD, fun_summarize){
+
+# compute mean weekly temperature
+TxD <- TxD %>%
+  group_by(id,buffer,lag_n = lubridate::week(date)) %>%
+  summarise(val=eval(parse(text=fun_summarize))(val, na.rm = T),date = min(date)) %>%
+  group_by(id,buffer) %>%
+  mutate(lag_n=seq(n()-1,0,-1))
+
+# Missing values 3d degree imputation : use the averaged value between the previous and the next week.
+TxD <- TxD %>%
+  mutate(qval=ifelse(!is.nan(val),1,0)) %>%
+  eodataflow:::.ts_fillNA_l3(.,-1) %>%
+  dplyr::select(-qval)
+
+# get the column lag_time
+TxD <- TxD %>%
+  left_join(df_points_metadata, by = "id") %>%
+  mutate(lag_time = as.numeric(as.Date(date.y) - date.x)) %>%
+  dplyr::select(-c(date.y,longitude,latitude)) %>%
+  rename(date = date.x)
+
+ return(TxD)
+}
+
+TMAX7_A1 <- function_daystoweek(TMAX7_A1, fun_summarize = "mean")
+TMIN7_A1 <- function_daystoweek(TMIN7_A1, fun_summarize = "mean")
+
+# Get temperature amplitude : Compute the difference between final TMW and TNW datasets
+TAMP7_A1 <- merge(TMAX7_A1,TMIN7_A1,by=c("id","buffer","date","lag_n","lag_time")) %>%
+  mutate(val = val.x-val.y) %>%
+  dplyr::select(-c(val.x,val.y)) %>%
+  mutate(var = "TAMP7_A1")
+
+rm(rasts_lst_max,rasts_lst_min)
+
+# Save to disk
+write.csv(TMAX7_A1, file.path("data",roi_name,"envCov_TMAX7_A1.csv"), row.names = F)
+write.csv(TMIN7_A1, file.path("data",roi_name,"envCov_TMIN7_A1.csv"), row.names = F)
+write.csv(TAMP7_A1, file.path("data",roi_name,"envCov_TAMP7_A1.csv"), row.names = F)
+
+#' 
+#' #### Vegetation indices (MODIS) (weekly)
+## ------------------------------------------------------------------------
+# Download MOD13Q1.006 and MYD13Q1.006 data - bands _250m_16_days_NDVI and 250m_16_days_EVI - for the region and time frames of interest ;
+variables <- c("_250m_16_days_NDVI","_250m_16_days_EVI")
+mod13q1 <- eodataflow::eodf_geturl_dl(times_start = df_sampling_points$date - lag_time,times_end = df_sampling_points$date, roi = roi, roi_name = roi_name, collection = "MOD13Q1.006", variables = variables, parallel = parallel, verbose = verbose)
+myd13q1 <- eodataflow::eodf_geturl_dl(times_start = df_sampling_points$date - lag_time,times_end = df_sampling_points$date, roi = roi, roi_name = roi_name, collection = "MYD13Q1.006", variables = variables, parallel = parallel, verbose = verbose)
+
+# Import the bands in R
+rasts_veget_ndvi_terra <- map(mod13q1$list_of_urls, ~opendapr::odr_import_data(.$destfile, "MOD13Q1.006", "_250m_16_days_NDVI"))
+rasts_veget_ndvi_aqua <- map(myd13q1$list_of_urls, ~opendapr::odr_import_data(.$destfile, "MYD13Q1.006", "_250m_16_days_NDVI"))
+rasts_veget_evi_terra <- map(mod13q1$list_of_urls, ~opendapr::odr_import_data(.$destfile, "MOD13Q1.006", "_250m_16_days_EVI"))
+rasts_veget_evi_aqua <- map(myd13q1$list_of_urls, ~opendapr::odr_import_data(.$destfile, "MYD13Q1.006", "_250m_16_days_EVI"))
+
+# Extract the averaged value from the _250m_16_days_NDVI and 250m_16_days_EVI bands within each buffer around the sampling points ;
+VNV8_terra <- eodataflow::extract_var_on_buffers(rasts_veget_ndvi_terra, df_sampling_points$sf_points, buffer_sizes, "mean", TRUE, df_sampling_points$date, code_indice = "VNV8")
+VNV8_aqua <- eodataflow::extract_var_on_buffers(rasts_veget_ndvi_aqua, df_sampling_points$sf_points, buffer_sizes, "mean", TRUE, df_sampling_points$date, code_indice = "VNV8")
+VNV8 <- rbind(VNV8_terra,VNV8_aqua) %>% arrange(id,buffer,date)
+
+VEV8_terra <- eodataflow::extract_var_on_buffers(rasts_veget_evi_terra, df_sampling_points$sf_points, buffer_sizes, "mean", TRUE, df_sampling_points$date, code_indice = "VEV8")
+VEV8_aqua <- eodataflow::extract_var_on_buffers(rasts_veget_evi_aqua, df_sampling_points$sf_points, buffer_sizes, "mean", TRUE, df_sampling_points$date, code_indice = "VEV8")
+VEV8 <- rbind(VEV8_terra,VEV8_aqua) %>% arrange(id,buffer,date)
+
+# Missing values 1st degree imputation : use the value of the wider buffer(s) for the same week ;
+# Missing values 2nd degree imputation : use the averaged value between the previous and the next week.
+VNV8 <- eodataflow::ts_fillna_l1tol3(VNV8)
+VEV8 <- eodataflow::ts_fillna_l1tol3(VEV8)
+
+rm(rasts_veget_ndvi_terra,rasts_veget_ndvi_aqua,rasts_veget_evi_terra,rasts_veget_evi_aqua)
+
+VNV8$qval <- NULL
+VEV8$qval <- NULL
+
+# Save to disk
+write.csv(VNV8, file.path("data",roi_name,"envCov_VNV8.csv"), row.names = F)
+write.csv(VEV8, file.path("data",roi_name,"envCov_VEV8.csv"), row.names = F)
+
+
+#' 
+#' #### Evapotransipation (MODIS) (weekly)
+## ------------------------------------------------------------------------
+# Download MOD16A1.006 and MYD16A2.006 data - band ET_500m - for the region and time frames of interest ;
+variables <- c("ET_500m")
+mod16a2 <- eodataflow::eodf_geturl_dl(times_start = df_sampling_points$date - lag_time,times_end = df_sampling_points$date, roi = roi, roi_name = roi_name, collection = "MOD16A2.006", variables = variables, parallel = parallel, verbose = verbose)
+myd16a2 <- eodataflow::eodf_geturl_dl(times_start = df_sampling_points$date - lag_time,times_end = df_sampling_points$date, roi = roi, roi_name = roi_name, collection = "MYD16A2.006", variables = variables, parallel = parallel, verbose = verbose)
+
+# Import the bands in R
+rasts_et_terra <- map(mod16a2$list_of_urls, ~opendapr::odr_import_data(.$destfile, "MOD16A2.006", "ET_500m"))
+rasts_et_aqua <- map(myd16a2$list_of_urls, ~opendapr::odr_import_data(.$destfile, "MYD16A2.006", "ET_500m"))
+
+# Mask bad quality pixels in the ET_500m band by setting pixels above the value 32760 to NA (32760 and upper values are for bad quality pixels) ;
+rasts_et_terra2 <- rasts_et_terra %>%
+  map(., ~clamp(.x, upper=32760, useValues=FALSE)) %>% ## Set pixel values >= 32760 (quality pixel values) to NA
+  map2(.x = ., .y = rasts_et_terra, ~magrittr::set_names(.x,names(.y)))
+rasts_et_aqua2 <- rasts_et_aqua %>%
+  map(., ~clamp(.x, upper=32760, useValues=FALSE)) %>% ## Set pixel values >= 32760 (quality pixel values) to NA
+  map2(.x = ., .y = rasts_et_aqua, ~magrittr::set_names(.x,names(.y)))
+
+# Combine MOD16A1.006 and MYD16A2.006 ET_500m bands by keeping averaged value for each pixel. Bad quality pixels are already set to NA in MOD16A1.006 and MYD16A2.006 products. In case of NA in one of the products, keep the value from the other product. In case of NA in both products, set to NA ;
+rasts_et <- eodataflow::prepare_mixed_products(rasts_et_terra2,rasts_et_aqua2,"mean")
+
+# Extract the averaged value from the resulting band within each buffer around the sampling points ;
+EVT8 <- eodataflow::extract_var_on_buffers(rasts_et, df_sampling_points$sf_points, buffer_sizes, "mean", TRUE, df_sampling_points$date, code_indice = "EVT8")
+
+# Missing values 1st degree imputation : use the value of the wider buffer(s) for the same week ;
+# Missing values 2nd degree imputation : use the averaged value between the previous and the next week.
+EVT8 <- eodataflow::ts_fillna_l1tol3(EVT8)
+
+EVT8$qval <- NULL
+
+# Save to disk
+write.csv(EVT8, file.path("data",roi_name,"envCov_EVT8.csv"), row.names = F)
+
+
+#' 
+#' #### Soil moisture (SMAP) (daily + weekly)
+## ----warning=F-----------------------------------------------------------
+# Download SPL3SMP_E.003.006 data - bands Soil_Moisture_Retrieval_Data_AM_soil_moisture and Soil_Moisture_Retrieval_Data_PM_soil_moisture_pm - for the region and time frames of interest ;
+variables <- c("Soil_Moisture_Retrieval_Data_AM_soil_moisture","Soil_Moisture_Retrieval_Data_PM_soil_moisture_pm")
+smap <- eodataflow::eodf_geturl_dl(times_start = df_sampling_points$date - lag_time,times_end = df_sampling_points$date, roi = roi, roi_name = roi_name, collection = "SPL3SMP_E.003", variables = variables, parallel = parallel, verbose = verbose)
+
+# Import the bands in R
+opt_param <- opendapr::odr_get_opt_param("SPL3SMP_E.003",roi)
+rasts_smap_am <- map(smap$list_of_urls, ~opendapr::odr_import_data(.$destfile, "SPL3SMP_E.003", "Soil_Moisture_Retrieval_Data_AM_soil_moisture", opt_param = opt_param))
+rasts_smap_pm <- map(smap$list_of_urls, ~opendapr::odr_import_data(.$destfile, "SPL3SMP_E.003", "Soil_Moisture_Retrieval_Data_PM_soil_moisture_pm", opt_param = opt_param))
+
+# Combine Soil_Moisture_Retrieval_Data_AM_soil_moisture and Soil_Moisture_Retrieval_Data_PM_soil_moisture_pm bands by keeping the averaged value for each pixel ;
+rasts_smap <- eodataflow::prepare_mixed_products(rasts_smap_am,rasts_smap_pm,"mean")
+
+# Extract the averaged value from the resulting band within each buffer around the sampling points ;
+SMO1 <- eodataflow::extract_var_on_buffers(rasts_smap, df_sampling_points$sf_points, buffer_sizes, "mean", TRUE, df_sampling_points$date, code_indice = "SMO1")
+
+# Missing values 1st degree imputation : use the averaged value between the previous and the next day.
+SMO1 <- eodataflow::ts_fillna_l1tol3(SMO1)
+
+# SMO7 (Soil moisture aggregated to 7 days) :
+SMO7 <- function_daystoweek(SMO1, fun_summarize = "mean") %>%
+  mutate(var = "SMO7")
+
+SMO1$qval <- NULL
+SMO7$qval <- NULL
+
+# Save to disk
+write.csv(SMO1, file.path("data",roi_name,"envCov_SMO1.csv"), row.names = F)
+write.csv(SMO7, file.path("data",roi_name,"envCov_SMO7.csv"), row.names = F)
+
+
+#' 
+#' #### Daily Precipitation (GPM) (daily)
+## ------------------------------------------------------------------------
+# Download GPM_3IMERGDF.06 data - band precipitationCal - for the region and time frames of interest ;
+variables <- c("precipitationCal")
+gpm <- eodataflow::eodf_geturl_dl(times_start = df_sampling_points$date - lag_time,times_end = df_sampling_points$date, roi = roi, roi_name = roi_name, collection = "GPM_3IMERGDF.06", variables = variables, parallel = parallel, verbose = verbose)
+
+# Import the bands in R ;
+rasts_gpm <- map(gpm$list_of_urls, ~opendapr::odr_import_data(.$destfile, "GPM_3IMERGDF.06", "precipitationCal"))
+
+# Resample to 250 m spatial resolution using a bilinear interpolation ;
+rasts_gpm <- map(rasts_gpm, ~eodataflow:::.resample_rast(.,250))
+
+# Extract the averaged value from the precipitationCal band within each buffer around the sampling points.
+RFD1 <- eodataflow::extract_var_on_buffers(rasts_gpm, df_sampling_points$sf_points, buffer_sizes, "mean", TRUE, df_sampling_points$date, code_indice = "RFD1")
+RFD1$val[which(RFD1$val<0)] <- 0
+rm(rasts_gpm)
+
+# Save to disk
+write.csv(RFD1, file.path("data",roi_name,"envCov_RFD1.csv"), row.names = F)
+
+#' 
+#' #### Weekly Precipitation (GPM) (weekly)
+## ------------------------------------------------------------------------
+# Download GPM_3IMERGDL.06 data - band precipitationCal - for the region and time frames of interest ;
+variables <- c("precipitationCal")
+gpm <- eodataflow::eodf_geturl_dl(times_start = df_sampling_points$date - lag_time,times_end = df_sampling_points$date, roi = roi, roi_name = roi_name, collection = "GPM_3IMERGDL.06", variables = variables, parallel = parallel, verbose = verbose)
+
+# Import the bands in R ;
+rasts_gpm <- map(gpm$list_of_urls, ~opendapr::odr_import_data(.$destfile, "GPM_3IMERGDL.06", "precipitationCal"))
+
+# Resample to 250 m spatial resolution using a bilinear interpolation ;
+rasts_gpm <- map(rasts_gpm, ~eodataflow:::.resample_rast(.,250))
+
+# Extract the averaged value from the precipitationCal band within each buffer around the sampling points.
+RFD8 <- eodataflow::extract_var_on_buffers(rasts_gpm, df_sampling_points$sf_points, buffer_sizes, "mean", TRUE, df_sampling_points$date, code_indice = "RFD8")
+RFD8$val[which(RFD8$val<0)] <- 0
+rm(rasts_gpm)
+
+# Aggregate the dailies values to weekly (as the sum of the daily precipitation) ;
+RFD8 <- function_daystoweek(RFD8, fun_summarize = "sum")
+
+# Save to disk
+write.csv(RFD8, file.path("data",roi_name,"envCov_RFD8.csv"), row.names = F)
+
+
+#' 
+#' ### RS indices - NDWI, NDVI, BRI, MNDWI, MNDVI (Sentinel 2) (monthly)
+#' 
+## ------------------------------------------------------------------------
+# Download Sentinel-2 L2A data - bands B03, B04, B08, B11, SCENE_CLASSIFICATION - for the region and time frames of interest ;
+variables <- c("B03","B04","B08","B11","9_SCENE_CLASSIFICATION")
+spectral_indices=c("ndvi","mndvi","ndwi","mndwi","bri")
+#s2l2a <- eodataflow::eodf_geturl_dl(times_start = df_sampling_points$date - 120, times_end = df_sampling_points$date, roi = roi, roi_name = roi_name, collection = "S2L2A", variables = variables, parallel = parallel, verbose = verbose)
+
+# temporary, to remove when it is working
+s2l2a <- readRDS("data/korhogo/s2l2a_list_of_urls_120d.RData")
+s2l2a$list_of_urls <- s2l2a
+
+# Import the bands in R ;
+#  + Mask bad quality pixels (e.g. clouds or shadows) in the B03, B04, B08, B11 bands using the SCENE_CLASSIFICATION band (ouput of the ESA Sen2cor processing). Rule : mask if SCENE_CLASSIFICATION is one of : DARK_AREA_PIXELS, CLOUD_MEDIUM_PROBABILITY, CLOUD_HIGH_PROBABILITY, THIN_CIRRUS, CLOUD_SHADOWS, UNCLASSIFIED ;
+#  + Compute the spectral indices for each date ;
+#  + Aggregate the 5-days products to monthly products by averaging the available pixels ;
+#  + Extract the averaged value from the resulting products within each buffer around the sampling points ;
+#  + Set the final values to NA when more than 50 % of the pixels within the buffers are missing.
+
+SPI_s2 <- NULL
+for(i in 1:length(s2l2a$list_of_urls)){
+  cat("Calculating spectral indices n° ",i," over",length(s2l2a$list_of_urls),"\n")
+  if(!(nrow(s2l2a$list_of_urls[[i]])==1 && is.na(s2l2a$list_of_urls[[i]]$time_start))){   # case there are no image available
+
+    th_list_of_url <- s2l2a$list_of_urls[[i]]
+
+    th_list_of_url <- th_list_of_url %>%
+      mutate(date =  df_sampling_points$date[i]) %>%
+      mutate(lag_n = as.numeric(date - as.Date(time_start))) %>%
+      mutate(lag_n = case_when(lag_n <= 30 ~ 0,
+                               lag_n > 30 & lag_n <= 60 ~ 1,
+                               lag_n > 60 & lag_n <= 90 ~ 2,
+                               lag_n > 90 & lag_n <= 120 ~ 3,
+                               lag_n > 120 & lag_n <= 150 ~ 4)) # divide by month
+
+     th_list_of_url <- dplyr::group_split(th_list_of_url,lag_n)
+
+     for (j in 1:length(th_list_of_url)){
+       cat("   * for month ",j," over ",length(th_list_of_url),"\n")
+        rasts_spec_ind <- eodataflow::prepare_s2_indices(th_list_of_url[[j]],variables,spectral_indices)
+        th_SPI <- eodataflow::extract_var_on_buffers(rasts_spec_ind, df_sampling_points$sf_points[[i]], buffer_sizes, na_max_perc = 50, verbose = TRUE)  # buffers with more than na_max_perc % of cells containing NA values will be set to NA
+        th_SPI <- th_SPI %>%
+          mutate(var = case_when(var=="ndvi" ~ "VNV30",
+                                 var=="mndvi" ~ "VMV30",
+                                 var=="ndwi" ~ "WNW30",
+                                 var=="mndwi" ~ "WMW30",
+                                 var=="bri" ~ "BRI30")
+                 )
+        th_SPI$lag_n <- unique(th_list_of_url[[j]]$lag_n)
+        th_SPI$date <- as.character(mean.Date(as.Date(th_list_of_url[[j]]$time_start)))
+        th_SPI$lag_time <- as.numeric(df_sampling_points$date[i] - as.Date(th_SPI$date))
+        SPI_s2 <- rbind(SPI_s2,th_SPI)
+     }
+    write.csv(SPI_s2,file.path("data",roi_name,"envCov_SPIs2.csv"),row.names = F)
+  }
+}
+
+# fill NAs
+#TODO
+
+#' 
+#' #### RS indices - VV and VH (Sentinel 1) (weekly)
+#' 
+## ------------------------------------------------------------------------
+variables <- c("VV","VH")
+spectral_indices=c("VV","VH","VV/VH")
+#s1 <- eodataflow::eodf_geturl_dl(times_start = df_sampling_points$date - 120, times_end = df_sampling_points$date, roi = roi, roi_name = roi_name, collection = "S1-AWS-IW-VVVH", variables = variables, parallel = parallel, verbose = verbose)
+
+# temporary, to remove when it is working
+s1 <- readRDS("data/diebougou/s1_list_of_urls_120d.RData")
+
+SPI_s1 <- NULL
+for(i in 1:length(s1$list_of_urls)){
+  cat("Calculating spectral indices n° ",i," over",length(s1$list_of_urls),"\n")
+  if(!(nrow(s1$list_of_urls[[i]])==1 && is.na(s1$list_of_urls[[i]]$time_start))){   # case there are no image available
+
+    th_list_of_url <- s1$list_of_urls[[i]]
+    th_list_of_url <- dplyr::group_split(th_list_of_url,time_start)
+    th_list_of_url <- rev(th_list_of_url)
+
+       for (j in 1:length(th_list_of_url)){
+         cat("   * for lag time ",j," over ",length(th_list_of_url),"\n")
+         raw_rasts <- c("VV__","VH__") %>%
+           map(.,~grep(.,th_list_of_url[[j]]$destfile,value = T)) %>%
+           set_names(gsub("__","",variables)) %>%
+           map(.,~map(.,~raster(.))) %>%
+           map(.,~raster::merge(x=.[[1]],y=.[[2]],tolerance=0.2))
+
+         raw_rasts <- brick(raw_rasts)
+         #ratio_vv_vh <- raw_rasts$VV/raw_rasts$VH
+         #raw_rasts <- brick(c(raw_rasts,ratio_vv_vh))
+         names(raw_rasts) <- c("WVV10","WVH10")
+
+        th_SPI <- eodataflow::extract_var_on_buffers(raw_rasts, df_sampling_points$sf_points[[i]], buffer_sizes,"mean", verbose = TRUE)
+        th_SPI$lag_n <- j-1
+        th_SPI$date <- unique(th_list_of_url[[j]]$time_start)
+        th_SPI$lag_time <- as.numeric(df_sampling_points$date[i] - as.Date(th_SPI$date))
+        SPI_s1 <- rbind(SPI_s1,th_SPI)
+     }
+    write.csv(SPI_s1,file.path("data",roi_name,"envCov_SPIs1.csv"),row.names = F)
+  }
+}
+
+# fill NAs
+#TODO
+
+
+
+#' 
+#' #### Nighttime lights (VIIRS) (monthly)
+#' 
+## ------------------------------------------------------------------------
+# Download VIIRS_DNB_MONTH - bands Monthly_AvgRadiance and Monthly_CloudFreeCoverage - for the region and time frames of interest ;
+variables <- c("Monthly_AvgRadiance","Monthly_CloudFreeCoverage")
+viirsdnb <- eodataflow::eodf_geturl_dl(times_start = df_sampling_points$date - lag_time,times_end = df_sampling_points$date, roi = roi, roi_name = roi_name, collection = "VIIRS_DNB_MONTH", variables = variables, parallel = parallel, verbose = verbose)
+
+# Import the bands in R ;
+rasts_AvgRadiance <- map(viirsdnb$list_of_urls, ~getremotedata::grd_import_data(., "VIIRS_DNB_MONTH", "Monthly_AvgRadiance"))
+rasts_CloudFreeCoverage <- map(viirsdnb$list_of_urls, ~getremotedata::grd_import_data(., "VIIRS_DNB_MONTH", "Monthly_CloudFreeCoverage"))
+
+# Mask bad quality pixels in the Monthly_AvgRadiance band using the CloudFreeCoverage band. Rule : mask if CloudFreeCoverage == 0 (i.e. 0 cloud free observations)
+rasts_CloudFreeCoverage <- map(rasts_CloudFreeCoverage,~clamp(.x,lower=1,useValues=FALSE))
+rasts_AvgRadiance <- map2(rasts_AvgRadiance,rasts_CloudFreeCoverage,~mask(.x,.y)) # Quality control : if there are 0 cloud free obs, we set the pixel to NA
+
+# Extract the averaged value from the resulting products within each buffer around the sampling points.
+LIG30 <- eodataflow::extract_var_on_buffers(rasts_AvgRadiance, df_sampling_points$sf_points, buffer_sizes, "mean", TRUE, df_sampling_points$date, code_indice = "LIG30")
+rm(rasts_CloudFreeCoverage,rasts_AvgRadiance)
+
+# Save to disk
+write.csv(LIG30, file.path("data",roi_name,"envCov_LIG30.csv"), row.names = F)
+
+
+#' 
+#' #### Daytime length (weekly)
+#' 
+## ------------------------------------------------------------------------
+# Get the daylength at the sampling point location using the R package 'geosphere'
+dl <- daylength(mean(df_points_metadata$latitude), 1:365)
+
+fun_geosphere <- function(sf_points,dates,lag_time){
+  dates <- seq(dates, dates - lag_time, by="-7 days")
+  res <- map_dbl(dates, ~geosphere::daylength(mean(st_coordinates(sf_points[,2])),.))
+  return(res)
+}
+
+day_length <- map2(.x = df_sampling_points$sf_points, .y = df_sampling_points$date, ~fun_geosphere(.x,.y,lag_time))
+
+
+DTL7 <- map2(df_sampling_points$sf_points, day_length, ~tidyr::crossing(id = .x$id, val = .y )) %>%
+  do.call(rbind,.) %>%
+  group_by(id) %>%
+  mutate(lag_n=seq(0,n()-1,1)) %>%
+  mutate(var = "DTL7", buffer = NA) %>%
+  left_join(df_points_metadata, by = "id") %>%
+  dplyr::select(-c(latitude,longitude)) %>%
+  mutate(date = as.Date(date) - 7*lag_n) %>%
+  mutate(date = as.character(date)) %>%
+  mutate(lag_time = 7*lag_n)
+
+
+# Save to disk
+write.csv(DTL7, file.path("data",roi_name,"envCov_DTL.csv"), row.names = F)
+
+
+#' 
+#' 
+#' ### Indicators covering the sampling night
+#' 
+#' #### Half-hourly precipitation (GPM) (night average)
+## ------------------------------------------------------------------------
+# Download GPM_3IMERGDHH.06 - bands precipitationCal and precipitationQualityIndex - for the region and time frames of interest ;
+variables <- c("precipitationCal","precipitationQualityIndex")
+gpm <- eodataflow::eodf_geturl_dl(times_start = as.POSIXlt(paste0(df_sampling_points_entomo$date, "18:00:00")),times_end = as.POSIXlt(paste0(df_sampling_points_entomo$date+1, "08:00:00")), roi = roi, roi_name = roi_name, collection = "GPM_3IMERGHH.06", variables = variables, parallel = parallel, verbose = verbose)
+
+# Import the bands in R ;
+rasts_gpm_precip <- map(gpm$list_of_urls, ~opendapr::odr_import_data(.$destfile, "GPM_3IMERGHH.06", "precipitationCal"))
+#rasts_gpm_qa <- map(gpm$list_of_urls, ~opendapr::odr_import_data(.$destfile, "GPM_3IMERGHH.06", "precipitationQualityIndex"))
+
+# Mask bad quality pixels in the precipitationCal band using the precipitationQualityIndex band. Rule : mask if precipitationQualityIndex <= 0.4 (see https://pmm.nasa.gov/sites/default/files/document_files/IMERGV06_QI.pdf for additional information)
+
+# Resample to 250 m spatial resolution using a bilinear interpolation ;
+rasts_gpm_precip <- future_map(rasts_gpm_precip, ~eodataflow:::.resample_rast(.,250))
+# Set pixel to 1 if there was rain (precip. >=0.05mm), else 0
+rasts_gpm_precip <- map(rasts_gpm_precip,~raster::reclassify(.,c(-Inf,0.05,0, 0.05,Inf,1)))
+
+# reset names for the raster
+rasts_gpm_precip <- map2(rasts_gpm_precip, gpm$list_of_urls, ~magrittr::set_names(.x, .y$time_start))
+
+# Extract the half-hourly precipitations between 18 p.m. the day of sampling and 8 a.m. the next day at the sampling point location ;
+RFH <- eodataflow::extract_var_on_buffers(rasts_gpm_precip, df_sampling_points_entomo$sf_points, buffer_sizes = 10, "mean", TRUE, df_sampling_points_entomo$date, code_indice = "RFH")
+# Compute the proportion of half-hours with positive precipitations for the whole duration of the nights.
+# With this we get if is has rain (1) or not (0) for each half hour of each night (ie the lag). Note that there is only 1 cell intersected (i.e. buffer_sizes=10) so the summurazing function is quite useless
+# Now we extract the variable that we want: the proportion of half-hours where it has rained for the total duration of each night.
+RFH <- RFH %>%
+  group_by(id,buffer,var) %>%
+  summarise(val=round(sum(val)/n()*100)) %>%
+  left_join(df_points_metadata,by="id") %>%
+  dplyr::select(-c(longitude,latitude)) %>%
+  mutate(lag_time = 0,lag_n = 0)
+
+rm(rasts_gpm_precip)
+
+# Save to disk
+write.csv(RFH, file.path("data",roi_name,"envCov_RFH.csv"), row.names = F)
+
+
+#' 
+#' #### Wind (ERA5)
+## ------------------------------------------------------------------------
+# Download ERA5 - bands 10m_u_component_of_wind and 10m_v_component_of_wind - for the region and time frames of interest ;
+# we take an area wider than the ROI, because if we take just the roi we have only 4 cells, which is too less to resample
+variables <- c("10m_u_component_of_wind","10m_v_component_of_wind")
+wind <- eodataflow::eodf_geturl_dl(times_start = as.POSIXlt(paste0(df_sampling_points_entomo$date, "18:00:00")),times_end = as.POSIXlt(paste0(df_sampling_points_entomo$date+1, "08:00:00")), roi = st_buffer(roi,1), roi_name = roi_name, collection = "ERA5", variables = variables, parallel = parallel, min_filesize = 70, verbose = verbose )
+
+# Import the bands in R ;
+rasts_wind_u10 <- map(wind$list_of_urls, ~getremotedata::grd_import_data(., "ERA5", variable = "u10"))
+rasts_wind_v10 <- map(wind$list_of_urls, ~getremotedata::grd_import_data(., "ERA5", variable = "v10"))
+
+# Compute the hourly wind speed and direction in each pixel using both bands and the formulas provided here : https://stackoverflow.com/questions/21484558/how-to-calculate-wind-direction-from-u-and-v-wind-components-in-r ;
+rasts_wind_speed <- prepare_mixed_products(rasts_wind_u10,rasts_wind_v10,"sqrt_squared")
+rast_wind_dir_cardinal <- prepare_mixed_products(rasts_wind_u10,rasts_wind_v10,"atan2") %>%
+  map(~.*180/pi) %>%
+  map(~.+180)
+
+# Resample wind speed to 250 m ;
+rasts_wind_speed<- future_map(rasts_wind_speed, ~eodataflow:::.resample_rast(.,250))
+
+# Extract the hourly wind speed and direction between 18 p.m. the day of sampling and 8 a.m. the next day at the sampling point location ;
+WSP <- eodataflow::extract_var_on_buffers(rasts_wind_speed, df_sampling_points_entomo$sf_points, buffer_sizes = 10, "mean", TRUE, df_sampling_points_entomo$date, code_indice = "WSP")
+WDR <- eodataflow::extract_var_on_buffers(rast_wind_dir_cardinal, df_sampling_points_entomo$sf_points, buffer_sizes = 10, "mean", TRUE, df_sampling_points_entomo$date, code_indice = "WDR")
+
+# Compute the mean wind speed for the whole duration of the night
+WSP <- WSP %>%
+  group_by(id,buffer,var) %>%
+  summarise(val=mean(val, na.rm = T)) %>%
+  left_join(df_points_metadata,by="id") %>%
+  dplyr::select(-c(longitude,latitude)) %>%
+  mutate(qval=1,lag_time = 0,lag_n = 0)
+
+# Compute the mean wind direction for the whole duration of the night using the formulas provided here : https://en.wikipedia.org/wiki/Mean_of_circular_quantities
+WDR <- WDR %>%
+  mutate(sin_angle=sin(val*(pi/180))) %>%
+  mutate(cos_angle=cos(val*(pi/180))) %>%
+  group_by(id,buffer,var) %>%
+  summarise(mean_sin=mean(sin_angle,na.rm=T),mean_cos=mean(cos_angle,na.rm=T)) %>%
+  mutate(val=atan(mean_sin/mean_cos)/(pi/180)) %>%
+  mutate(val=case_when(mean_sin>0 & mean_cos>0 ~ val,
+                       mean_cos<0 ~ val+180,
+                       mean_sin<0 & mean_cos>0 ~ val+360)) %>%
+  dplyr::select(id,buffer,val) %>%
+  left_join(df_points_metadata,by="id") %>%
+  dplyr::select(-c(longitude,latitude)) %>%
+  mutate(qval=1,lag_time = 0,lag_n = 0)
+
+rm(rast_wind_dir_cardinal,rasts_wind_speed)
+
+# Save to disk
+write.csv(WDR, file.path("data",roi_name,"envCov_WDR.csv"), row.names = F)
+write.csv(WSP, file.path("data",roi_name,"envCov_WSP.csv"), row.names = F)
+
+
+#' 
+#' #### Moon illumination
+## ------------------------------------------------------------------------
+# Download data for the dates of interest ;
+moon <- eodataflow::eodf_geturl_dl(times_start = df_sampling_points_entomo$date,times_end = df_sampling_points_entomo$date, roi = roi, roi_name = roi_name, collection = "MIRIADE", variables = variables, parallel = parallel, verbose = verbose,min_filesize=300)
+
+# Import the data in R ;
+moon <- map(moon$list_of_urls, ~getremotedata::grd_import_data(., "MIRIADE"))
+
+# Extract the moon visual magnitude (column V.Mag) at the sampling points locations.
+LMN <- map2_dfr(df_sampling_points_entomo$sf_points,moon,~data.frame(.x$id,.y[[1]]$V.Mag))
+
+LMN <- LMN %>%
+  magrittr::set_colnames(c("id","val")) %>%
+  mutate(var = "LMN", buffer = NA, qval = 1, lag_time = 0, lag_n = 0) %>%
+  left_join(df_points_metadata, by = "id") %>%
+  dplyr::select(-c(latitude,longitude))
+
+# Save to disk
+write.csv(LMN, file.path("data",roi_name,"envCov_LMN.csv"), row.names = F)
+
+
+#' 
+#' ### Indicators related to topography
+#' 
+## ------------------------------------------------------------------------
+# Download SRTMGL1.003 for the region of interest ;
+srtm <- getremotedata::grd_get_url(collection = "SRTMGL1.003", roi = roi)
+srtm$destfile <- file.path("data",roi_name,srtm$destfile)
+srtm <- opendapr::odr_download_data(srtm, source = "earthdata")
+
+# Merge, crop and reproject the DEM in UTM projection ;
+# Generate the topography-related rasters from the DEM (altitude, slope, aspect, accumulation, Terrain classification index, Topographic Wetness Index)
+dem_and_derivatives <- eodataflow::prepare_topography_indices(srtm, roi, "/usr/lib/grass74")
+
+# Import the rasters in R
+dem_and_derivatives_rast <- brick(dem_and_derivatives)
+names(dem_and_derivatives_rast)<-c("TEL","TSL","TAS","WAC","TCI","TWI")
+
+# Extract the averaged value from the resulting products within each buffer around the sampling points.
+TEL_TSL_TAS_WAC_TCI_TWI <- eodataflow::extract_var_on_buffers(dem_and_derivatives_rast, sf_points_metadata, buffer_sizes, verbose = TRUE )
+
+# Convert accumulation from number of pixels to surface in ha
+TEL_TSL_TAS_WAC_TCI_TWI <- mutate(TEL_TSL_TAS_WAC_TCI_TWI,val=if_else(var=="WAC",val*res(dem_and_derivatives_rast)[1]*res(dem_and_derivatives_rast)[2]/10000,val))
+
+# Save to disk
+write.csv(TEL_TSL_TAS_WAC_TCI_TWI, file.path("data",roi_name,"envCov_TEL_TSL_TAS_WAC_TCI_TWI.csv"), row.names = F)
+
+
+#' 
+#' ### Indicators related to hydrological network
+## ------------------------------------------------------------------------
+# Generate the streams network
+path_to_accumulation_raster <- file.path("data",roi_name,"SRTMGL1.003","accumulation.tif")
+# CAUTION : currently the function below must be executed manually because it needs a manuel step in QGIS (see the code of the function for additional details)
+# path_to_stream_network <- eodataflow::prepare_streams_network(path_to_accumulation, "/usr/lib/grass74", threshold_accumulation_raster)
+path_to_stream_network <- file.path("data",roi_name,"SRTMGL1.003","streams_network.gpkg")
+
+# Extract the averaged value from the resulting products within each buffer around the sampling points.
+WAD_WMD_WLS_WAL <- eodataflow::extract_stream_network_indicators(path_to_stream_network, path_to_accumulation_raster, sf_points_metadata, buffer_sizes)
+
+# Save to disk
+write.csv(WAD_WMD_WLS_WAL, file.path("data",roi_name,"envCov_WAD_WMD_WLS_WAL.csv"), row.names = F)
+
+
+#' 
+#' ### Population from the REACT database
+#' 
+## ------------------------------------------------------------------------
+# Import the geographical positions and the number of inhabitants of each households from the table "recensement_menages_l0" in the REACT database
+sf_households_by_village <- sf_households_by_village %>%
+  st_intersection(roi) %>%  # keep only the points in our ROI
+  st_transform(utm_zone)
+
+# Extract the population in buffers of 100 m (close proximity) and 500 m (geographical size of a village).
+.extract_pop_buffer<-function(sf_households_by_village,sf_points_metadata,buffer_size){
+  POP <- buffer_size %>%
+    st_buffer(st_transform(sf_points_metadata,utm_zone),dist=.) %>%
+    st_join(sf_households_by_village, join = st_intersects,left = TRUE) %>%
+    st_drop_geometry() %>%
+    group_by(id) %>%
+    summarise(val=sum(nbrehabitant)) %>%
+    mutate(buffer=buffer_size)
+  return(POP)
+}
+
+POP_entomo <- c(100,500) %>%  # buffers of 100m and 500m
+  map_dfr(~.extract_pop_buffer(sf_households_by_village,sf_points_metadata_entomo,.)) %>%
+  mutate(var="POP")
+
+# get the population for epidemio (the whole village pop)
+POP_epidemio <- df_points_metadata_epidemio %>%
+   mutate(codevillage = substr(id,2,4)) %>%
+   left_join(sf_villages, by = "codevillage") %>%
+   dplyr::select(id,population) %>%
+   mutate(buffer=NA, var="POP") %>%
+  rename(val=population)
+
+POP <- rbind(POP_entomo,POP_epidemio)
+
+# Export
+write.csv(POP,file.path(path_to_output_datasets,"envCov_POP.csv"),row.names = F)
+
+#' 
+#' ### Population from HRSL
+#' 
+## ------------------------------------------------------------------------
+# Import HRSL population raster
+rast_hrsl <- raster(path_to_hrls_rast) %>%
+  crop(roi) %>%
+  magrittr::set_names("POH")
+
+# Extract the population in buffers of 100 m (close proximity) and 500 m (geographical size of a village).
+POH <- eodataflow::extract_var_on_buffers(rast_hrsl, sf_points_metadata, c(100,500), fun_summarize = "sum", verbose = TRUE )
+
+# Export
+write.csv(POH,file.path(path_to_output_datasets,"envCov_POH.csv"),row.names = F)
+
+#' 
+#' ### Indicators related to the built-up
+#' 
+## ------------------------------------------------------------------------
+# Get the villages convex hull (considered as the boundaries of the villages)
+villages_convexhull <- sf_households_by_village %>%
+  group_by(codevillage) %>%  # group by village
+  summarize(geom_convHull=sf::st_convex_hull(sf::st_union(geom))) %>% #get convex hull polygon. We consider the convex hull as the edges of the village. The convex hull is the minimum polygon that encompasses all the locations of the households.
+  st_transform(utm_zone)
+
+## Get the distance from each catch point to the edge of the village
+BDE <- sf_points_metadata_entomo %>%
+  st_transform(utm_zone) %>%
+  mutate(codevillage=substr(id,2,4)) %>%  # create codevillage before joining with edges of the village
+  left_join(as.data.frame(villages_convexhull),by="codevillage") %>%  # join convex hull geometry
+  mutate(geom_convHull=st_cast(geom_convHull, "LINESTRING")) %>%  # convert convex hull geometry from polygon to linestring
+  mutate(val=st_distance(geometry,geom_convHull,by_element=TRUE)) %>% # compute distance between catch point and edges of the village
+  st_drop_geometry() %>%
+  dplyr::select(id,val) %>%
+  mutate(var="BDE")
+
+## Get an indice of the clustering or ordering of the households in each village. For this we use the locations of the households with the function spatstat::clarkevans
+.extract_clarkevans_buffer<-function(sf_households_by_village,sf_points_metadata,buffer_size){
+  BCH <- buffer_size %>%
+    st_buffer(st_transform(sf_points_metadata,utm_zone),dist=.) %>%
+    st_join(sf_households_by_village, join = st_intersects,left = TRUE) %>%
+    st_drop_geometry() %>%
+    filter(!is.na(X)) %>%
+    group_by(id) %>%
+    nest() %>%
+    mutate(sp_points=map(data,~sp::SpatialPoints(coords=data.frame(.$X,.$Y),proj4string=CRS("+init=epsg:4326")))) %>%
+    mutate(ppp=map(sp_points,~as(., "ppp"))) %>%   # uses the maptools package
+    mutate(ppp_n=as.numeric(map(ppp,~as.numeric(.$n)))) %>%
+    filter(ppp_n>=5) %>% # if there are less than 5 settlements, the clarkenv indicator cannot be computed
+    mutate(clark_index=map(ppp,~spatstat::clarkevans(.))) %>%
+    mutate(clark_index=map_dbl(clark_index,~as.numeric(.[1]))) %>%
+    dplyr::select(id,clark_index) %>%
+    set_names("id","val") %>%
+    mutate(buffer=buffer_size)
+
+    return(BCH)
+}
+
+BCH <- c(100,500) %>%  # buffers of 100m and 500m
+  map_dfr(~.extract_clarkevans_buffer(sf_households_by_village,sf_points_metadata_entomo,.)) %>%
+  mutate(var="BCH")
+
+# Export
+write.csv(BDE,file.path(path_to_output_datasets,"envCov_BDE.csv"),row.names = F)
+write.csv(BCH,file.path(path_to_output_datasets,"envCov_BCH.csv"),row.names = F)
+
+#' 
+#' ### Hydromorphic soils
+## ------------------------------------------------------------------------
+# Import
+pedology_rast <- raster::raster(path_to_pedology_rast) %>%
+  magrittr::set_names("HYS")
+
+# Set to 0 classes that are not hydromorphic and to 1 the classes that are hydromorphic
+pedology_rast[!(pedology_rast %in% hydromorphic_classes_pixels)]<-0
+pedology_rast[pedology_rast!=0]<-1
+
+# Extract the values within the buffers
+HYS <- eodataflow::extract_var_on_buffers(pedology_rast, sf_points_metadata, buffer_sizes , fun_summarize = "sum", verbose = TRUE )
+
+# convert surface from count of pixels to proportion (%) of hydromorphic soil in the buffer
+HYS <- HYS %>%
+  mutate(val=val*res(pedology_rast)[1]*res(pedology_rast)[2]) %>%
+  mutate(val=val/(pi*buffer^2)*100)
+
+# Export
+write.csv(HYS,file.path(path_to_output_datasets,"envCov_HYS.csv"),row.names = F)
+
+
+#' 
+#' ### Vector control measures
+## ------------------------------------------------------------------------
+# Import
+vars_vect_control <- df_points_metadata %>%
+  mutate(codevillage=substr(id,2,4)) %>%
+  left_join(sf_villages,by="codevillage") %>%
+  dplyr::select(id,date,intervention,date_debut_interv) %>%
+  mutate(intervention=ifelse(is.na(intervention),"Ctrle",intervention))
+
+VCP <- vars_vect_control %>%
+  mutate(val=ifelse(intervention=="Ctrle",0,1)) %>%
+  mutate(var="VCP") %>%
+  dplyr::select(id,var,val)
+
+VCM <- vars_vect_control %>%
+  dplyr::select(id,intervention) %>%
+  rename(val=intervention) %>%
+  mutate(var="VCM")
+
+VCT <- vars_vect_control %>%
+  mutate(val=as.Date(date) - as.Date(date_debut_interv)) %>%
+  mutate(val=as.integer(val)) %>%
+  mutate(val=ifelse((is.na(val) | val<0),0,val)) %>%  # if no intervention or if the date of sampling is before the intervention, set to 0
+  mutate(var="VCT") %>%
+  dplyr::select(id,val,var)
+
+
+VCP_VCM_VCT <- rbind(VCP,VCM,VCT)
+# Export
+write.csv(VCP_VCM_VCT,file.path(path_to_output_datasets,"envCov_VCP_VCM_VCT.csv"),row.names = F)
+
+
+#' 
+#' ### Land use / land cover
+#' 
+## ------------------------------------------------------------------------
+lsm_to_extract<-c("lsm_l_shdi","lsm_l_siei","lsm_l_prd","lsm_c_np","lsm_c_pland","lsm_c_ed")  # landscape metrics to calculate for the LU/LC maps. A list of available LSM can be found with landscapemetrics::list_lsm()
+
+metadata_landcovers <- df_lulc_metadata  %>%
+  distinct(layer_label,layer_path,layer_id) %>%
+  filter(layer_label %in% layers_lulc) %>%
+  mutate(layer=seq(1,nrow(.),1))
+
+lulc_rasts_list <- metadata_landcovers$layer_path %>%
+  map(~raster(.)) %>%
+  map(~crop(.,st_transform(roi,proj4string(.))))
+
+# If the raster is not projected, project it to utm zone
+for (i in 1:length(lulc_rasts_list)){
+  if(proj4string(lulc_rasts_list[[i]])=="+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"){
+    lulc_rasts_list[[i]]<-projectRaster(lulc_rasts_list[[i]],crs=sf::st_crs(roi_utm)$proj4string,method = "ngb")
+  }
+}
+
+# Check if LU/LC rasters are ok prior to calculating LSM
+for (i in 1:length(lulc_rasts_list)){
+  print(landscapemetrics::check_landscape(lulc_rasts_list[[i]]))
+}
+
+# We have tried to run the process with all at once using furrr but it fails (probably because it is too long).
+# So we split the points into mutliple parts and run the process with a "for" loop.
+
+.extractLSM_singlePoint<-function(lulc_rasts_list,buffer_sizes,sf_points_metadata,lsm_to_extract,metadata_landcovers){
+
+ res_th_pt <- buffer_sizes %>%
+    set_names(buffer_sizes) %>%
+    future_map_dfr(~landscapemetrics::sample_lsm(lulc_rasts_list,
+                                                 sf_points_metadata,
+                                                 what = lsm_to_extract,
+                                                 shape = "circle",
+                                                 size = .),
+                   .id = "buffer")
+
+ res_th_pt <- res_th_pt %>%
+   dplyr::select(-c(id,percentage_inside)) %>%
+   rename(val=value,class_pixel=class) %>%
+   mutate(id=sf_points_metadata$id) %>%
+   mutate(buffer=as.numeric(buffer)) %>%
+   left_join(metadata_landcovers) %>%
+   dplyr::select(id,buffer,layer_id,class_pixel,level,metric,val)
+
+ return(res_th_pt)
+
+}
+
+sfPoints_list <- df_points_metadata %>%
+    filter(!(grepl("NAM",id))) %>% # only for CIV, because village NAM does not overlap the own LU/LC maps
+    transpose() %>%
+    map(~as.data.frame(.,stringsAsFactors=F))  %>%
+    map(~st_as_sf(.,coords = c("longitude", "latitude"), crs = 4326)) %>%
+    map(~st_transform(.,utm_zone))
+
+div_pts <- c(seq(0,length(sfPoints_list),50),length(sfPoints_list))
+
+LSM <- NULL
+
+for (i in 1:(length(div_pts)-1)){
+
+  cat(paste0(Sys.time()," : Processing points ",div_pts[i]+1," to ",div_pts[i+1]," over ",length(sfPoints_list)," in total \n"))
+
+  plan(multiprocess)
+  options(future.globals.maxSize= 20000*1024^2)
+
+  LSM_th_pts <- sfPoints_list[seq(div_pts[i]+1,div_pts[i+1],1)] %>%
+    future_map_dfr(~.extractLSM_singlePoint(lulc_rasts_list,buffer_sizes,.,lsm_to_extract,metadata_landcovers),.progress = T)
+
+  LSM <- rbind(LSM,LSM_th_pts)
+
+  # Export, overwriting the previous export at each iteration
+  write.csv(LSM,file.path(path_to_output_datasets,"envCov_LSM"),row.names = F)
+
+}
+

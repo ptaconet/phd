@@ -70,18 +70,19 @@ df_mosquitoes <- df_mosquitoes %>%
 
 # on fait les modifs pour aligner les référentiels
 # genre
-df_mosquitoes$genre <- df_mosquitoes$genre %>% str_replace_all(c("Culex_sp"="Culex",
-                                                               "Mansonia_sp"="Mansonia",
-                                                               "Aedes_sp"="Aedes"))
+df_mosquitoes$genre <- df_mosquitoes$genre %>% str_replace_all(c("Culex"="Culex_sp",
+                                                               "Mansonia"="Mansonia_sp",
+                                                               "Aedes"="Aedes_sp",
+                                                               "Phlebotomus"="Phlebotomus_sp"))
 # especeanoph
 # sort(unique(df_mosquitoes$especeanoph))
-df_mosquitoes$especeanoph <- df_mosquitoes$especeanoph %>% str_replace_all(c("Culex_sp"="Culex",
-                                                                           "Mansonia_sp"="Mansonia",
-                                                                           "Aedes_sp"="Aedes",
-                                                                           "An.funestus"="funestus",
-                                                                           "An.coustani"="coustani",
-                                                                           "An.pharoensis"="pharoensis",
-                                                                           "An.nili"="nili",
+df_mosquitoes$especeanoph <- df_mosquitoes$especeanoph %>% str_replace_all(c("Culex_sp"="Culex_sp",
+                                                                           "Mansonia_sp"="Mansonia_sp",
+                                                                           "Aedes_sp"="Aedes_sp",
+                                                                           "An.funestus"="An.funestus",
+                                                                           "An.coustani"="An.coustani",
+                                                                           "An.pharoensis"="An.pharoensis",
+                                                                           "An.nili"="An.nili",
                                                                            "UNIFORMIS"="Mans.uniformis",
                                                                            "AFRICANA"="Mans.africana",
                                                                            "AEGYPTI"="Ae.aegypti",
@@ -92,10 +93,23 @@ df_mosquitoes$especeanoph <- df_mosquitoes$especeanoph %>% str_replace_all(c("Cu
                                                                            "VITTATUS"="Ae.vittatus",
                                                                            "SP"="sp",
                                                                            "gambiaeS.1."="An.gambiae s.l.",
+                                                                           "An.gambiae s.l."="An.gambiae s.l.",
                                                                            "Ae.aegypti FORMOSUS"="Ae.aegypti",
                                                                            "DECENS"="Cx.decens",
                                                                            "QUINQUEFASCIATUS"="Cx.quinq",
                                                                            "UNIAe.vittatus"="UNIVITTATUS"))
+
+df_mosquitoes$especeanoph <-gsub("funestus","An.funestus",df_mosquitoes$especeanoph,fixed = TRUE)
+df_mosquitoes$especeanoph <-gsub("coustani","An.coustani",df_mosquitoes$especeanoph,fixed = TRUE)
+df_mosquitoes$especeanoph <-gsub("flavicosta","An.flavicosta",df_mosquitoes$especeanoph,fixed = TRUE)
+df_mosquitoes$especeanoph <-gsub("nili","An.nili",df_mosquitoes$especeanoph,fixed = TRUE)
+df_mosquitoes$especeanoph <-gsub("pharoensis","An.pharoensis",df_mosquitoes$especeanoph,fixed = TRUE)
+df_mosquitoes$especeanoph <-gsub("rufipes","An.rufipes",df_mosquitoes$especeanoph,fixed = TRUE)
+df_mosquitoes$especeanoph <-gsub("squamosus","An.squamosus",df_mosquitoes$especeanoph,fixed = TRUE)
+df_mosquitoes$especeanoph <-gsub("An.An.","An.",df_mosquitoes$especeanoph,fixed = TRUE)
+
+df_mosquitoes$pcr_espece <-gsub("An","An.",df_mosquitoes$pcr_espece,fixed = TRUE)
+
 df_mosquitoes$especeanoph[which(df_mosquitoes$especeanoph %in% c("","p"))]=NA
 # etatabdomen
 df_mosquitoes$etatabdomen[which(df_mosquitoes$etatabdomen %in% c("","Choisir"))]=NA
@@ -124,7 +138,51 @@ df_mosquitoes$pcr_rs[which(df_mosquitoes$pcr_rs %in% c(""))]=NA
 df_mosquitoes$heuredecapture<-as.numeric(df_mosquitoes$heuredecapture)
 
 
+## data from Pooda (bras complémentaire IVM)
+data_pooda <- read_excel("data/react_db/miscellaneous_data/CSH_data_final_pooda.xlsx")
 
+data_pooda <- data_pooda %>%
+  rename(idmoustique = Idmoustique_bis)
+colnames(data_pooda) = tolower(colnames(data_pooda))
+data_pooda <- data_pooda %>%
+  rename(especeanoph = espèceanophèle) %>%
+  dplyr::select(-c(datedétermination,codetechnicien,nummoustique,idlot,datecréation,odre,traitement))
+
+data_pooda$idpointdecapture <- paste0(data_pooda$nummission,data_pooda$idpointdecapture)
+data_pooda$idpostedecapture <- paste0(data_pooda$nummission,data_pooda$idpostedecapture)
+data_pooda$heuredecapture <- gsub("Choisir",NA,data_pooda$heuredecapture)
+data_pooda[data_pooda=="NA"]<-NA
+
+data_pooda[data_pooda=="NA"]<-NA
+data_pooda$kdre[which(data_pooda$kdre=="R")]="RR"
+data_pooda$kdrw[which(data_pooda$kdrw=="R")]="RR"
+data_pooda$pcr_pf[which(data_pooda$pcr_pf=="N")]=NA
+data_pooda$postedecapture[which(data_pooda$postedecapture=="ext")]="e"
+data_pooda$postedecapture[which(data_pooda$postedecapture=="int")]="i"
+data_pooda$parturite[which(data_pooda$parturite=="p")]="P"
+data_pooda$parturite[which(data_pooda$parturite=="ND")]=NA
+data_pooda$etatabdomen[which(data_pooda$etatabdomen=="Semi-gravide")]="SemiGravide"
+data_pooda$etatabdomen[which(data_pooda$etatabdomen=="Choisir")]=NA
+data_pooda$etatabdomen[which(data_pooda$etatabdomen=="ajeun")]="Ajeun"
+data_pooda$etatabdomen[which(data_pooda$etatabdomen=="AJeun")]="Ajeun"
+data_pooda$especeanoph[which(data_pooda$especeanoph=="gambiaeS.1")]="An.gambiae s.l."
+data_pooda$especeanoph[which(data_pooda$especeanoph=="funestus")]="An.funestus"
+data_pooda$especeanoph[which(data_pooda$especeanoph=="Choisir")]=NA
+data_pooda$especeanoph[which(data_pooda$especeanoph=="coustani")]="An.coustani"
+data_pooda$especeanoph[which(data_pooda$especeanoph=="nili")]="An.nili"
+data_pooda$especeanoph[which(data_pooda$especeanoph=="flavicosta")]="An.flavicosta"
+data_pooda$pcr_espece[which(data_pooda$pcr_espece=="Angambiae_ss")]="An.gambiae_ss"
+data_pooda$pcr_espece[which(data_pooda$pcr_espece=="Anarabiensis")]="An.arabiensis"
+data_pooda$pcr_espece[which(data_pooda$pcr_espece=="Afunestus")]="An.funestus_ss"
+data_pooda$pcr_espece[which(data_pooda$pcr_espece=="Ancoluzzii")]="An.coluzzii"
+data_pooda$pcr_espece[which(data_pooda$pcr_espece=="Anrivulorum")]="An.ruvilorum"
+data_pooda$pcr_espece[which(data_pooda$pcr_espece=="Anrivulorum_Like")]="An.ruvilorum_like"
+data_pooda$pcr_espece[which(data_pooda$pcr_espece=="Aleesoni")]="An.leesoni"
+data_pooda$heuredecapture<-as.numeric(data_pooda$heuredecapture)
+
+
+df_mosquitoes <- rbind(df_mosquitoes,data_pooda)
+df_mosquitoes$pcr_pf <- as.numeric(df_mosquitoes$pcr_pf)
 
 ## import ent_hlcmetadata to check if all villages / points de captures are ok
 #ent_hlcmetadata<-st_read(path_to_gpkg_database,"ent_hlcmetadata") %>% as_tibble

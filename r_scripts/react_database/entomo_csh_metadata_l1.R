@@ -9,7 +9,9 @@ query<-"SELECT * FROM entomo_csh_ctrlequalite_l0"
 df<-dbGetQuery(react_gpkg, query)
 
 # erase data from mission 3 from BF and other bad rows
-df <- df %>% filter(!(is.na(nummission))) %>% filter(nummission<=8) %>% filter(!(nummission==3 & codepays=="BF"))
+df <- df %>% filter(!(is.na(nummission))) %>% 
+  #filter(nummission<=8) %>% 
+  filter(!(nummission %in% c(3,15) & codepays=="BF"))
 
 
 coords_median_postecapture <- df %>% group_by(idpointdecapture,codepays) %>% dplyr::summarize(median_lat=median(Y,na.rm = T),median_lon=median(X,na.rm = T))
@@ -32,7 +34,7 @@ coords_median_postecapture<- coords_median_postecapture %>% arrange(idpostedecap
 coords_median_postecapture$quality_flag_position<-1
 
 ## Pour la mission 3 au BF on a perdu les données. On prend donc pour coordonnées des postes de captures la moyenne des coordonnées de chaque poste de capture des autres missions
-coords_median_postecapture$postedecapture<-substr(coords_median_postecapture$idpostedecapture,2,6)
+coords_median_postecapture$postedecapture<-substr(coords_median_postecapture$idpostedecapture,nchar(coords_median_postecapture$idpostedecapture)-4,nchar(coords_median_postecapture$idpostedecapture))
 coords_median_postecapture_mission3_bf<- coords_median_postecapture %>% filter(codepays=="BF") %>% group_by(postedecapture) %>% dplyr::summarize(median_lat=mean(median_lat),median_lon=mean(median_lon))
 coords_median_postecapture_mission3_bf$idpostedecapture<-paste0("3",coords_median_postecapture_mission3_bf$postedecapture)
 coords_median_postecapture_mission3_bf$postedecapture<-NULL
@@ -40,6 +42,11 @@ coords_median_postecapture_mission3_bf$codepays<-"BF"
 coords_median_postecapture_mission3_bf$quality_flag_position<-2
 coords_median_postecapture$postedecapture<-coords_median_postecapture$idpointdecapture<-NULL
 coords_median_postecapture<-rbind(as.data.frame(coords_median_postecapture),as.data.frame(coords_median_postecapture_mission3_bf))
+
+# on fait de meme pour la mission 15 dans les villages GBI, SID, KOU, BOH
+coords_median_postecapture_mission15_bf <- coords_median_postecapture_mission3_bf[which(grepl("GBI|SID|KOU|BOH",coords_median_postecapture_mission3_bf$idpostedecapture)),]
+coords_median_postecapture_mission15_bf$idpostedecapture <- paste0("15",substr(coords_median_postecapture_mission15_bf$idpostedecapture,2,nchar(coords_median_postecapture_mission15_bf$idpostedecapture)))
+coords_median_postecapture<-rbind(coords_median_postecapture,coords_median_postecapture_mission15_bf)
 
 
 ## On vérifie et éventuellement on corrige les dates pour le BF
@@ -62,7 +69,7 @@ dates_captures_from_supervcapture_bf$corresp<-dates_captures_from_supervcapture_
 
 # Pour la grande majorité des données on a les mêmes dates entre le fichier de Dieudo et le fichier de supervcapture. Pour les 2 dates qui ne correspondent pas on a vérifié que les bonnes dates sont celles du fichier de Dieudo
 coords_median_postecapture_bf<-coords_median_postecapture %>% filter(codepays=="BF")
-coords_median_postecapture_bf$idpostedecapture2<-substr(coords_median_postecapture_bf$idpostedecapture,1,4)
+coords_median_postecapture_bf$idpostedecapture2<-substr(coords_median_postecapture_bf$idpostedecapture,1,nchar(coords_median_postecapture_bf$idpostedecapture)-2) 
 dates_captures_from_supervcapture_bf$idpostedecapture2<-paste0(dates_captures_from_supervcapture_bf$nummission,dates_captures_from_supervcapture_bf$codevillage)
 coords_median_postecapture_bf<-left_join(coords_median_postecapture_bf,dates_captures_from_supervcapture_bf)
 coords_median_postecapture_bf$idpostedecapture2<-coords_median_postecapture_bf$date_from_supervcapture<-coords_median_postecapture_bf$corresp<-NULL
@@ -88,8 +95,8 @@ coords_median_postecapture_bf<-rbind(coords_median_postecapture_bf,c("1DMB4e","B
 coords_median_postecapture_bf<-rbind(coords_median_postecapture_bf,c("1DMB4i","BF",10.74427,-3.397680,1,"DMB","2017-01-20","2017-01-20 18:00:00","2017-01-21 09:00:00",2))
 
 coords_median_postecapture_bf$quality_flag_horaires<-1
-coords_median_postecapture_bf$poindecapture<-substr(coords_median_postecapture_bf$idpostedecapture,5,5)
-coords_median_postecapture_bf$idpointdecapture<-substr(coords_median_postecapture_bf$idpostedecapture,1,5)
+coords_median_postecapture_bf$poindecapture<-substr(coords_median_postecapture_bf$idpostedecapture,nchar(coords_median_postecapture_bf$idpostedecapture)-1,nchar(coords_median_postecapture_bf$idpostedecapture)-1)
+coords_median_postecapture_bf$idpointdecapture<-substr(coords_median_postecapture_bf$idpostedecapture,1,nchar(coords_median_postecapture_bf$idpostedecapture)-1)
 coords_median_postecapture_bf$idpostedecapture<-NULL
 coords_median_postecapture_bf<-unique(coords_median_postecapture_bf)
 

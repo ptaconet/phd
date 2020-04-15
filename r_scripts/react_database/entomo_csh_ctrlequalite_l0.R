@@ -574,7 +574,7 @@ all_data<-all_data %>% filter(!(codevillage %in% c("YOU","WUL")))
 
 
 #num_rows_by_week_year_civ<-all_data %>% filter(codepays=="CI") %>% group_by(week = lubridate::week(datedebut),year=year(datedebut),nummission) %>% summarise(value = n())
-
+all_data$nummission[which(all_data$nummission==14)]=13
 all_data$idpointdecapture<-paste0(all_data$nummission,all_data$codevillage,all_data$pointdecapture)
 all_data$idpostedecapture<-paste0(all_data$nummission,all_data$codevillage,all_data$pointdecapture,all_data$postedecapture)
 

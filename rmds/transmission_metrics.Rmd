@@ -1,0 +1,413 @@
+---
+title: "transmission_metrics"
+author: "Paul Taconet"
+date: "24/03/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      message = FALSE,
+                      warning = FALSE)
+
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file()) #set t
+```
+
+```{r packages}
+library(ggplot2)
+library(scales)
+library(sf)
+library(DBI)
+library(RSQLite)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(rlang)
+library(patchwork)
+library(plotly)
+library(htmlwidgets)
+#library(kable)
+library(kableExtra)
+library(mapview)
+library(stringr)
+library(emo)
+```
+
+```{r db_connect}
+# connect to database
+path_to_db <- "data/react_db/react_db.gpkg"
+react_gpkg <- DBI::dbConnect(RSQLite::SQLite(),dbname = path_to_db)
+
+# open tables
+trmetrics_entomo <- dbReadTable(react_gpkg, 'trmetrics_entomo')
+entomo_csh_metadata_l1 <- dbReadTable(react_gpkg, 'entomo_csh_metadata_l1')
+recensement_villages_l1 <- st_read(path_to_db,"recensement_villages_l1", quiet=T) %>%
+  filter(!is.na(intervention)) %>%
+  dplyr::select("codevillage","codepays","nomvillage","population","intervention","date_debut_interv","date_fin_interv","X","Y")
+
+# # join to trmetrics_entomo the tables related to the HLC dates and locations + villages
+# trmetrics_entomo <- trmetrics_entomo %>%
+#   left_join(entomo_csh_metadata_l1[c("idpointdecapture","nummission","codevillage","pointdecapture","codepays","date_capture","X","Y")], by = "idpointdecapture") %>%
+#   left_join(recensement_villages_l1[c("codevillage","intervention","date_debut_interv","date_fin_interv")], by = "codevillage") %>%
+#   dplyr::select(-fid)
+
+# get the number of human - nigth
+idpointdecaptures <- dbReadTable(react_gpkg, 'entomo_csh_metadata_l1') %>%
+  dplyr::select(idpointdecapture,nummission,codevillage,pointdecapture,codepays,date_capture)
+csh_exterior <- data.frame(idpointdecaptures, postedecapture = "e")
+csh_interior <- data.frame(idpointdecaptures, postedecapture = "i")
+csh_all <- rbind(csh_exterior,csh_interior) %>%
+  left_join(recensement_villages_l1) %>%
+  mutate(phase_interv = ifelse(as.Date(date_capture) < as.Date(date_debut_interv),"pre-intervention","post-intervention")) %>%
+  mutate(phase_interv = ifelse((is.na(phase_interv) & codepays=="BF" & as.Date(date_capture) < as.Date("2017-08-17")),"pre-intervention",phase_interv)) %>%
+  mutate(phase_interv = ifelse((is.na(phase_interv) & codepays=="CI" & as.Date(date_capture) < as.Date("2017-09-01")),"pre-intervention",phase_interv)) %>%
+  mutate(phase_interv = ifelse((is.na(phase_interv) & codepays=="BF" & as.Date(date_capture) > as.Date("2017-08-17")),"post-intervention",phase_interv)) %>%
+  mutate(phase_interv = ifelse((is.na(phase_interv) & codepays=="CI" & as.Date(date_capture) > as.Date("2017-09-01")),"post-intervention",phase_interv))
+
+
+# get mean date for each entomo mission in each country
+mean_date_by_mission <- entomo_csh_metadata_l1 %>%
+  group_by(codepays,nummission) %>%
+  summarise(date = mean(as.Date(date_capture))) %>%
+  as_tibble()
+
+# get start and end date of intervention for each country
+dates_intervention <- recensement_villages_l1 %>%
+  group_by(codepays) %>%
+  summarise(start_intervention_date=min(as.Date(date_debut_interv),na.rm = T),end_intervention_date=max(as.Date(date_fin_interv),na.rm = T))
+  
+```
+
+```{r rainbow_plots}
+#source("https://raw.githubusercontent.com/RainCloudPlots/RainCloudPlots/master/tutorial_R/R_rainclouds.R")
+source("https://raw.githubusercontent.com/RainCloudPlots/RainCloudPlots/master/tutorial_R/summarySE.R")
+#source("https://raw.githubusercontent.com/RainCloudPlots/RainCloudPlots/master/tutorial_R/simulateData.R")
+library(cowplot)
+library(forcats)
+
+#see https://wellcomeopenresearch.org/articles/4-63
+geom_flat_violin <- function(mapping = NULL, data = NULL, stat = "ydensity",
+                             position = "dodge", trim = TRUE, scale = "area",
+                             show.legend = NA, inherit.aes = TRUE, ...) {
+  layer(
+    data = data,
+    mapping = mapping,
+    stat = stat,
+    geom = GeomFlatViolin,
+    position = position,
+    show.legend = show.legend,
+    inherit.aes = inherit.aes,
+    params = list(
+      trim = trim,
+      scale = scale,
+      ...
+    )
+  )
+}
+
+#' @rdname ggplot2-ggproto
+#' @format NULL
+#' @usage NULL
+#' @export
+GeomFlatViolin <-
+  ggproto("GeomFlatViolin", Geom,
+    setup_data = function(data, params) {
+      data$width <- data$width %||%
+        params$width %||% (resolution(data$x, FALSE) * 0.9)
+
+      # ymin, ymax, xmin, and xmax define the bounding rectangle for each group
+      data %>%
+        group_by(group) %>%
+        mutate(
+          ymin = min(y),
+          ymax = max(y),
+          xmin = x,
+          xmax = x + width / 2
+        )
+    },
+
+    draw_group = function(data, panel_scales, coord) {
+      # Find the points for the line to go all the way around
+      data <- transform(data,
+        xminv = x,
+        xmaxv = x + violinwidth * (xmax - x)
+      )
+
+      # Make sure it's sorted properly to draw the outline
+      newdata <- rbind(
+        plyr::arrange(transform(data, x = xminv), y),
+        plyr::arrange(transform(data, x = xmaxv), -y)
+      )
+
+      # Close the polygon: set first and last point the same
+      # Needed for coord_polar and such
+      newdata <- rbind(newdata, newdata[1, ])
+
+      ggplot2:::ggname("geom_flat_violin", GeomPolygon$draw_panel(newdata, panel_scales, coord))
+    },
+
+    draw_key = draw_key_polygon,
+
+    default_aes = aes(
+      weight = 1, colour = "grey20", fill = "white", size = 0.5,
+      alpha = NA, linetype = "solid"
+    ),
+
+    libraryd_aes = c("x", "y")
+  )
+
+
+a <- trmetrics_entomo %>%
+    filter(genre == "Anopheles") %>%
+  group_by(idpointdecapture, postedecapture) %>%
+  summarise(ma = sum(ma)) %>%
+  right_join(csh_all) %>%
+  mutate(ma = ifelse(is.na(ma), 0, ma)) %>%
+  left_join(mean_date_by_mission) %>%
+  as_tibble()
+
+
+
+p9 <- ggplot(a %>% filter(codepays=="BF"),aes(x = forcats::fct_rev(phase_interv), y = ma, fill = forcats::fct_rev(phase_interv), colour = forcats::fct_rev(phase_interv)))+
+  geom_flat_violin(position = position_nudge(x = .25, y = -1), adjust =2, trim = TRUE)+
+  geom_point(position = position_jitter(width = .15), size = .25)+
+  geom_boxplot(aes(x = forcats::fct_rev(phase_interv), y = ma),outlier.shape = NA, alpha = 0.3, width = .1, colour = "BLACK") +
+  ylab('Score')+xlab('Group')+theme_cowplot()+guides(fill = FALSE, colour = FALSE) +
+  facet_wrap(~intervention)+
+  scale_colour_brewer(palette = "Dark2")+
+  scale_fill_brewer(palette = "Dark2")+
+  scale_y_continuous(limits = c(-1,NA)) +
+  ggtitle("Figure R9: Complex Raincloud Plots with Facet Wrap")
+
+p9
+
+
+```
+
+```{r functions}
+
+fun_agg_data_entomo <- function(trmetrics_entomo, df_n_obs, ...){
+  
+  group_var <- enquos(...)
+  
+  df_metric <- trmetrics_entomo %>%
+    filter(genre == "Anopheles") %>%
+    group_by(!!! group_var) %>%
+    summarise(val = sum(ma)) %>%
+    left_join(df_n_obs) %>%
+    mutate(val = round(val/n_obs,2)) %>%
+    left_join(mean_date_by_mission) %>%
+    dplyr::select(-n_obs) %>%
+    as_tibble()
+  
+  return(df_metric)
+
+}
+
+fun_plot_ts_entomo <- function(df, indicator_code, aes_color, facet = NULL, title, log2 = FALSE){
+  
+  aes_color <- enquo(aes_color)
+  facet <- enquo(facet)
+
+    th_plot <- ggplot(df, aes(x = date, y = val)) + 
+    geom_line(aes(color = !! aes_color), size = 0.5, linetype = "dashed") +
+    geom_point(aes(color = !! aes_color), size = 2) +
+    #scale_color_manual(values = c("#00AFBB", "#E7B800")) +
+    theme_minimal() +
+    labs(y = indicator_code) + 
+    scale_x_date(date_labels = "%b %Y", date_breaks = "2 months") +
+    #ylim(-0.01,NA) +
+    geom_vline(xintercept = as.numeric(mean(dates_intervention$start_intervention_date)),colour = "red", size = 0.3) +
+    #annotate(geom="text",label="start of interventions",x=mean(dates_intervention$start_intervention_date)-10, y=mean(ma_b_country$val), colour = "red", angle = 90, size = 3.5) +
+    #annotate(geom="text",label="Vertical red line = start of vector control interventions", colour = "red", size = 3.5, y=max(df$val), x=min(df$date)+160) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+    ggtitle(title)
+  
+  if(log2){
+    th_plot <- th_plot + scale_y_continuous(trans = 'log2', limits = c(-0.2,NA), labels = scales::number_format(accuracy = 0.01)) + labs(y = paste0(indicator_code," (log2 scale)"))
+  }
+   if(!quo_is_null(facet)){
+     th_plot <- th_plot + facet_grid(rows = vars(!!facet))
+   }
+
+      return(th_plot)
+}
+
+
+```
+
+Click a village to get additional information
+
+```{r map }
+areas <- st_read(path_to_db,"contexte_frontieresreact", quiet=T)
+mapview(areas, alpha.regions = 0.1, aplha = 1, layer.name = "Study areas") + mapview(recensement_villages_l1, zcol = "intervention", cex = 4, alpha.regions = 0.9, aplha = 1, layer.name = "Villages")
+```
+
+##  Ma : Human biting rate 
+
+Average number of bites by Anopheles mosquitoes received per human per night
+
+### By study area
+
+Average number of bites by Anopheles mosquitoes received per human per night, by study area
+
+`r emo::ji("warning")` : **y axis is log2 scaled**
+
+```{r ma_b_country}
+# by country
+
+df_n_obs <- csh_all %>%
+  group_by(codepays,nummission) %>%
+  summarise(n_obs = n())
+
+ma <- fun_agg_data_entomo(trmetrics_entomo, df_n_obs, codepays, nummission)
+
+plot <- fun_plot_ts_entomo(df = ma, 
+                           indicator_code = "ma", 
+                           aes_color = codepays, 
+                           title = "Human biting rate by study area", 
+                           log2 = TRUE)
+
+ggplotly(plot)
+
+
+
+a<- trmetrics_entomo %>%
+    filter(genre == "Anopheles") %>%
+  group_by(idpointdecapture,postedecapture) %>%
+  summarise(ma=sum(ma)) %>%
+  right_join(csh_all) %>%
+  mutate(ma=ifelse(is.na(ma),0,ma)) %>%
+  left_join(mean_date_by_mission) 
+
+
+
+
+# ggplot(a, aes(x=date, y=ma,  colour = codepays, group = interaction(codepays, date))) + 
+#   geom_boxplot(width=30) +
+#       scale_x_date(date_labels = "%b %Y", date_breaks = "2 months") +
+#    scale_y_continuous(trans = 'log2', labels = scales::number_format(accuracy = 0.01))
+
+ ggplot(a %>% filter(codepays=="BF"), aes(x=date, y=ma, group=date)) + 
+   geom_boxplot(width=30) +
+       scale_x_date(date_labels = "%b %Y", date_breaks = "2 months") +
+  # scale_y_continuous(trans = 'log2', labels = scales::number_format(accuracy = 0.01)) +
+   #facet_grid(rows = vars(codepays)) +
+       theme_minimal() +
+    labs(y = "ma") + 
+    scale_x_date(date_labels = "%b %Y", date_breaks = "2 months") +
+    geom_vline(xintercept = as.numeric(mean(dates_intervention$start_intervention_date)),colour = "red", size = 0.3) +
+    #annotate(geom="text",label="start of interventions",x=mean(dates_intervention$start_intervention_date)-10, y=mean(ma_b_country$val), colour = "red", angle = 90, size = 3.5) +
+    #annotate(geom="text",label="Vertical red line = start of vector control interventions", colour = "red", size = 3.5, y=max(df$val), x=min(df$date)+160) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+
+```
+
+### By study area and by Anopheles complex, all intervention types
+
+Average number of bites by Anopheles mosquitoes received per human per night, by Anopheles complex, split by study area.
+
+`r emo::ji("warning")` : **y axis is log2 scaled**
+
+```{r ma_b_country_cp}
+
+df_n_obs <- csh_all %>%
+  group_by(codepays,nummission) %>%
+  summarise(n_obs = n())
+
+ma <- fun_agg_data_entomo(trmetrics_entomo, df_n_obs, codepays, nummission, complex)  %>%
+  group_split(codepays)
+  
+plot <- map(ma, ~fun_plot_ts_entomo(df = ., 
+                            indicator_code = "ma", 
+                            aes_color = complex, 
+                            #facet = codepays, 
+                           title = paste0("Human biting rate by anopheles complex, study area = ",unique(.$codepays)), 
+                            log2 = TRUE))
+
+ggplotly(plot[[1]])
+ggplotly(plot[[2]])
+```
+
+### By study area and by intervention type, all anopheles species
+
+`r emo::ji("warning")` : **y axis is log2 scaled**
+
+```{r ma_b_country_interv}
+
+df_n_obs <- csh_all %>%
+  group_by(codepays,nummission,intervention) %>%
+  summarise(n_obs = n())
+
+ma <- fun_agg_data_entomo(trmetrics_entomo, df_n_obs, codepays, nummission, intervention) %>%
+  group_split(codepays)
+
+plot <- map(ma, ~fun_plot_ts_entomo(df = ., 
+                           indicator_code = "ma", 
+                           aes_color = intervention, 
+                           title = paste0("Human biting rate by intervention type, study area = ",unique(.$codepays)), 
+                           log2 = TRUE))
+
+ggplotly(plot[[1]])
+ggplotly(plot[[2]])
+
+
+
+
+
+
+
+
+```
+
+
+
+
+### By country and by anopheles species
+
+Average number of bites by Anopheles mosquitoes received per human per night, by Anopheles species, split by study area.
+
+**Note** : species was determined using qPCR techniques. Because of the large number of mosquitoes that were caught, not all the mosquitoes could be analysed. The table above the plot provides the number and proportion of mosquitoes that were analysed for species determination. In the plot, Ma was raised.
+
+```{r ma_b_country_sp, eval=F}
+
+ma_b_country_sp <- trmetrics_entomo %>%
+  filter(genre == "Anopheles",!is.na(species)) %>%
+  group_by(codepays,nummission,species) %>%
+  summarise(val = sum(ma)) %>%
+  left_join(df_n_obs) %>%
+  mutate(val = round(val/n_obs,2)) %>%
+  left_join(mean_date_by_mission) %>%
+  dplyr::select(-n_obs) %>%
+  as_tibble()
+
+df_ratio_identified <- trmetrics_entomo %>% 
+  filter(genre == "Anopheles") %>%
+  mutate(species=ifelse(is.na(species),"unidentified","identified")) %>%
+  group_by(codepays,nummission,species) %>%
+  summarise(count = sum(ma)) %>%
+  pivot_wider(names_from = species, values_from = count) %>%
+  mutate(ratio_identified = round(identified / (identified + unidentified)*100))
+
+# extrapolate
+ma_b_country_sp <- ma_b_country_sp %>%
+  left_join(df_ratio_identified) %>%
+  mutate(val = 100 * val / ratio_identified)
+
+b <- ggplot(ma_b_country_sp, aes(x = date, y = val)) +
+    geom_line(aes(color = species), size = 0.5, linetype = "dashed") +
+    geom_point(aes(color = species), size = 2) +
+    theme_minimal() +
+   labs(y = "ma (log2 scale)") + 
+  scale_y_continuous(trans = 'log2') +
+    scale_x_date(date_labels = "%b %Y", date_breaks = "2 months") +
+  geom_vline(xintercept = as.numeric(mean(dates_intervention$start_intervention_date)),colour = "red", size = 0.3) +
+ # annotate(geom="text",label="start of interventions",x=mean(dates_intervention$start_intervention_date)-10, y=mean(ma_b_country_sp$val), colour = "red", angle = 90, size = 3) +
+    annotate(geom="text",label="Vertical red line = Start of vector control interventions", colour = "red", size = 3.5, y=max(ma_b_country$val), x=min(ma_b_country$date)+160) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  facet_grid(codepays ~ .)  +
+  ggtitle("Human biting rate, by anopheles species, split by study area\n(extrapolated data)")
+
+```

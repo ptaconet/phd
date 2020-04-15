@@ -1,16 +1,16 @@
-require(RSQLite)
-require(dplyr)
-require(sf)
-require(rgdal)
-require(gdalUtils)
-require(raster)
-require(gdalUtils)
-require(readxl)
-require(lubridate)
-require(stringr)
-require(purrr)
-require(tidyverse)
-require(googlesheets4)
+library(RSQLite)
+library(dplyr)
+library(sf)
+library(rgdal)
+library(gdalUtils)
+library(raster)
+library(gdalUtils)
+library(readxl)
+library(lubridate)
+library(stringr)
+library(purrr)
+library(tidyverse)
+library(googlesheets4)
 
 path_to_amal_database<-"data/react_db/miscellaneous_data/React_dbase_V7.db"
 path_to_gpkg_database<-"data/react_db/react_db.gpkg"  # Empty gpkg template is available here : http://www.geopackage.org/data/empty.gpkg
@@ -27,6 +27,7 @@ react_gpkg <- dbConnect(RSQLite::SQLite(),path_to_gpkg_database)
 react_gpkg_light <- dbConnect(RSQLite::SQLite(),path_to_gpkg_light_database)
 
 ## Open and load tables metadata and metadata_mapping
+sheets_deauth()
 metadata_tables<-googlesheets4::read_sheet(path_to_metadata_table,sheet = "metadata_tables",col_types="c")
 metadata_contacts<-googlesheets4::read_sheet(path_to_metadata_table,sheet = "contacts",col_types="c")
 metadata_mapping<-googlesheets4::read_sheet(path_to_metadata_table,sheet = "metadata_mapping",col_types="c")
@@ -48,6 +49,9 @@ dbWriteTable(react_gpkg_light,"metadata_tables",metadata_tables %>% filter(ident
 "entomo_hobo_l0",
 "entomo_hygro_l0",
 "entomo_baro_l0",
+"entomo_gites_larvaires_ci_l0",
+"entomo_cfr_bf_l0",
+"entomo_ctp_bf_l0",
 "epidemio_active_bf_l0",
 "epidemio_active_ci_l0",
 "epidemio_active_l1",
@@ -161,11 +165,18 @@ data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(df_baro),tab
 
 # Entomo - gites larvaires
 source("r_scripts/react_database/entomo_gites_larvaires_ci_l0.R")
-entomo_gites_larvaires_ci_l0_sf<-st_as_sf(entomo_gites_larvaires_ci_l0,coords =  c("Part1coordgpsgitepteauLongitude", "Part1coordgpsgitepteauLatitude"), crs = 4326 )
+entomo_gites_larvaires_ci_l0_sf<-st_as_sf(entomo_gites_larvaires_ci_l0,coords =  c("part1coordgpsgitepteaulongitude", "part1coordgpsgitepteaulatitude"), crs = 4326 )
 entomo_gites_larvaires_ci_l0_sf<-cbind(entomo_gites_larvaires_ci_l0_sf,st_coordinates(entomo_gites_larvaires_ci_l0_sf))
 st_write(entomo_gites_larvaires_ci_l0_sf, path_to_gpkg_database, "entomo_gites_larvaires_ci_l0", delete_layer = TRUE)
 st_write(entomo_gites_larvaires_ci_l0_sf, path_to_gpkg_light_database, "entomo_gites_larvaires_ci_l0", delete_layer = TRUE)
 data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(entomo_gites_larvaires_ci_l0_sf),table="entomo_gites_larvaires_ci_l0"))
+
+# Entomo - CFR residuelle
+entomo_cfr_bf_l0 <- read_excel("data/react_db/miscellaneous_data/CFR_data_final_pooda.xlsx")
+entomo_cfr_bf_l0 <- cbind(fid = 1:nrow(entomo_cfr_bf_l0), entomo_cfr_bf_l0)
+dbWriteTable(react_gpkg,"entomo_cfr_bf_l0",entomo_cfr_bf_l0,overwrite=TRUE)
+dbWriteTable(react_gpkg,"entomo_cfr_bf_l0",entomo_cfr_bf_l0,overwrite=TRUE)
+data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(entomo_cfr_bf_l0),table="entomo_cfr_bf_l0"))
 
 # epidemio_xxx (toutes les tables épidémio)
 source("r_scripts/react_database/epidemio.R")
@@ -215,6 +226,35 @@ interv_irs_ctrlequalite_cone_l0 <- cbind(fid = 1:nrow(interv_irs_ctrlequalite_co
 dbWriteTable(react_gpkg,"interv_irs_ctrlequalite_cone_l0",interv_irs_ctrlequalite_cone_l0,overwrite=TRUE)
 dbWriteTable(react_gpkg_light,"interv_irs_ctrlequalite_cone_l0",interv_irs_ctrlequalite_cone_l0,overwrite=TRUE)
 data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(interv_irs_ctrlequalite_cone_l0),table="interv_irs_ctrlequalite_cone_l0"))
+
+# trmetrics_entomo, trmetrics_epidemio, trmetrics_humbevr
+source("r_scripts/react_database/metrics.R")
+trmetrics_entomo <- cbind(fid = 1:nrow(trmetrics_entomo), trmetrics_entomo)
+trmetrics_epidemio <- cbind(fid = 1:nrow(trmetrics_epidemio), trmetrics_epidemio)
+
+trmetrics_entomo_pointdecapture <- cbind(fid = 1:nrow(trmetrics_entomo_pointdecapture), trmetrics_entomo_pointdecapture)
+dbWriteTable(react_gpkg,"trmetrics_entomo_pointdecapture",trmetrics_entomo_pointdecapture,overwrite=TRUE)
+
+trmetrics_entomo_postedecapture <- cbind(fid = 1:nrow(trmetrics_entomo_postedecapture), trmetrics_entomo_postedecapture)
+dbWriteTable(react_gpkg,"trmetrics_entomo_postedecapture",trmetrics_entomo_postedecapture,overwrite=TRUE)
+
+
+dbWriteTable(react_gpkg,"trmetrics_entomo",trmetrics_entomo,overwrite=TRUE)
+dbWriteTable(react_gpkg_light,"trmetrics_entomo",trmetrics_entomo,overwrite=TRUE)
+dbWriteTable(react_gpkg,"trmetrics_epidemio",trmetrics_epidemio,overwrite=TRUE)
+dbWriteTable(react_gpkg_light,"trmetrics_epidemio",trmetrics_epidemio,overwrite=TRUE)
+
+data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(trmetrics_entomo),table="trmetrics_entomo"))
+data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(trmetrics_epidemio),table="trmetrics_epidemio"))
+
+# Data dictionnary of transmission metrics covariates :
+trmetrics_dictionary<-googlesheets4::read_sheet("https://docs.google.com/spreadsheets/d/1dIeSOa2WinXvOQGLmIjA0gFdsHnb6zMMsDME-G5pyMc/edit?usp=sharing",sheet = "var_reponse",col_types="c")
+trmetrics_dictionary <- cbind(fid = 1:nrow(trmetrics_dictionary), trmetrics_dictionary)
+dbWriteTable(react_gpkg,"trmetrics_dictionary",trmetrics_dictionary,overwrite=TRUE)
+dbWriteTable(react_gpkg_light,"trmetrics_dictionary",trmetrics_dictionary,overwrite=TRUE)
+data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(trmetrics_dictionary),table="trmetrics_dictionary"))
+
+
 
 # contexte_paysafriqueouest  downloaded here : https://data.humdata.org/dataset/west-and-central-africa-administrative-boundaries-levels
 adm_bound_sf<-read_sf("data/react_db/miscellaneous_data/wca_adm0/wca_adm0.shp")
@@ -292,20 +332,24 @@ st_write(lulc_zonal_stats_bf, path_to_gpkg_database, "lco_groundtruth_bf_zonalst
   LU_L4_classes<-read.csv(path_to_LU_L4_classes)
   LU_L5_classes<-read.csv(path_to_LU_L5_classes)
 
-  LU_L1_classes$classif_level<-"classificationL1"
-  LU_L2_classes$classif_level<-"classificationL2"
-  LU_L3_classes$classif_level<-"classificationL3"
-  LU_L4_classes$classif_level<-"classificationL4"
-  LU_L5_classes$classif_level<-"classificationL5"
+  LU_L1_classes$classif_level<-1
+  LU_L2_classes$classif_level<-2
+  LU_L3_classes$classif_level<-3
+  LU_L4_classes$classif_level<-4
+  LU_L5_classes$classif_level<-5
 
   LU_classes_bf<-rbind(LU_L1_classes,LU_L2_classes,LU_L3_classes,LU_L4_classes,LU_L5_classes) %>%
     arrange(classif_level,pixval) %>%
-    mutate(classif_level=gsub("classification","lco_bf",classif_level)) %>%
-    mutate(path_to_raster=case_when(classif_level=="lco_l1_bf" ~ path_to_LU_L1_bf,
-                                    classif_level=="lco_l2_bf" ~ path_to_LU_L2_bf,
-                                    classif_level=="lco_l3_bf" ~ path_to_LU_L3_bf,
-                                    classif_level=="lco_l4_bf" ~ path_to_LU_L4_bf,
-                                    classif_level=="lco_l5_bf" ~ path_to_LU_L5_bf
+    mutate(classif_name=case_when(classif_level==1 ~ "lco_l1_bf",
+                                  classif_level==2 ~ "lco_l2_bf",
+                                  classif_level==3 ~ "lco_l3_bf",
+                                  classif_level==4 ~ "lco_l4_bf",
+                                  classif_level==5 ~ "lco_l5_bf")) %>%
+    mutate(path_to_raster=case_when(classif_level==1 ~ path_to_LU_L1_bf,
+                                    classif_level==2 ~ path_to_LU_L2_bf,
+                                    classif_level==3 ~ path_to_LU_L3_bf,
+                                    classif_level==4 ~ path_to_LU_L4_bf,
+                                    classif_level==5 ~ path_to_LU_L5_bf
                                     ))
 
 
@@ -334,20 +378,24 @@ st_write(lulc_zonal_stats_bf, path_to_gpkg_database, "lco_groundtruth_bf_zonalst
   LU_L4_classes<-read.csv(path_to_LU_L4_classes)
   LU_L5_classes<-read.csv(path_to_LU_L5_classes)
 
-  LU_L1_classes$classif_level<-"classificationL1"
-  LU_L2_classes$classif_level<-"classificationL2"
-  LU_L3_classes$classif_level<-"classificationL3"
-  LU_L4_classes$classif_level<-"classificationL4"
-  LU_L5_classes$classif_level<-"classificationL5"
+  LU_L1_classes$classif_level<-1
+  LU_L2_classes$classif_level<-2
+  LU_L3_classes$classif_level<-3
+  LU_L4_classes$classif_level<-4
+  LU_L5_classes$classif_level<-5
 
   LU_classes_civ<-rbind(LU_L1_classes,LU_L2_classes,LU_L3_classes,LU_L4_classes,LU_L5_classes) %>%
     arrange(classif_level,pixval) %>%
-    mutate(classif_level=gsub("classification","lco_ci",classif_level)) %>%
-    mutate(path_to_raster=case_when(classif_level=="lco_l1_ci" ~ path_to_LU_L1_civ,
-                                    classif_level=="lco_l2_ci" ~ path_to_LU_L2_civ,
-                                    classif_level=="lco_l3_ci" ~ path_to_LU_L3_civ,
-                                    classif_level=="lco_l4_ci" ~ path_to_LU_L4_civ,
-                                    classif_level=="lco_l5_ci" ~ path_to_LU_L5_civ
+    mutate(classif_name=case_when(classif_level==1 ~ "lco_l1_ci",
+                                  classif_level==2 ~ "lco_l2_ci",
+                                  classif_level==3 ~ "lco_l3_ci",
+                                  classif_level==4 ~ "lco_l4_ci",
+                                  classif_level==5 ~ "lco_l5_ci")) %>%
+    mutate(path_to_raster=case_when(classif_level==1 ~ path_to_LU_L1_civ,
+                                    classif_level==2 ~ path_to_LU_L2_civ,
+                                    classif_level==3 ~ path_to_LU_L3_civ,
+                                    classif_level==4 ~ path_to_LU_L4_civ,
+                                    classif_level==5 ~ path_to_LU_L5_civ
     ))
 
 
@@ -355,7 +403,8 @@ st_write(lulc_zonal_stats_bf, path_to_gpkg_database, "lco_groundtruth_bf_zonalst
   africa_lc_pixval<-read.csv("data/landcovers/ESACCI-LC/ESACCI-LC_S2_Prototype_ColorLegend.csv",sep=";") %>%
     dplyr::select(NB_LAB,LCCOwnLabel) %>%
     setNames(c("pixval","lc_class")) %>%
-    mutate(classif_level="ESACCI-LC-L4-LC10-Map-20m-P1Y-2016-v1.0") %>%
+    mutate(classif_name="ESACCI-LC-L4-LC10-Map-20m-P1Y-2016-v1.0") %>%
+    mutate(classif_level=NA) %>%
     mutate(path_to_raster="data/landcovers/ESACCI-LC/ESACCI-LC-L4-LC10-Map-20m-P1Y-2016-v1.0.tif")
 
   ## ESA Globcover
@@ -364,19 +413,20 @@ st_write(lulc_zonal_stats_bf, path_to_gpkg_database, "lco_groundtruth_bf_zonalst
   globcover_lc_class<-globcover[[1]][[1]][2:length(globcover[[1]][[1]])] %>% gsub(" ","",.)
   globcover_pixval<-globcover[[2]][[1]][2:length(globcover[[2]][[1]])]  %>% gsub(" ","",.) %>% as.integer()
   globcover_lc_pixval<-data.frame(pixval=globcover_pixval,lc_class=globcover_lc_class,stringsAsFactors = F) %>%
-    mutate(classif_level="W020N20_ProbaV_LC100_epoch2015_global_v2.0.1") %>%
+    mutate(classif_name="W020N20_ProbaV_LC100_epoch2015_global_v2.0.1") %>%
+    mutate(classif_level=NA) %>%
     mutate(path_to_raster="data/landcovers/landcover_globcover_esa/W020N20_ProbaV_LC100_epoch2015_global_v2.0.1_discrete-classification_EPSG-4326.tif")
 
 
   LU_classes<-rbind(LU_classes_bf,LU_classes_civ,africa_lc_pixval,globcover_lc_pixval) %>%
-    setNames(c("class_pixel","class_label","layer_label","layer_path"))
+    setNames(c("pixval","pixlabel","classif_level","classif_label","classif_path"))
 
-  layer_id<-unique(LU_classes$layer_label) %>%
-    as.data.frame(stringsAsFactors=F) %>%
-    setNames("layer_label") %>%
-    mutate(layer_id=as.integer(seq(1,nrow(.),1)))
-
-  LU_classes<-left_join(LU_classes,layer_id)
+   layer_id<-unique(LU_classes$classif_label) %>%
+     as.data.frame(stringsAsFactors=F) %>%
+     setNames("classif_label") %>%
+     mutate(layer_id=as.integer(seq(1,nrow(.),1)))
+   
+   LU_classes<-left_join(LU_classes,layer_id)
 
   dbWriteTable(react_gpkg,"lco_metadata",LU_classes,overwrite=T)
   data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(LU_classes),table="lco_metadata"))
@@ -399,7 +449,8 @@ st_write(lulc_zonal_stats_bf, path_to_gpkg_database, "lco_groundtruth_bf_zonalst
 
 
   # Data dictionnary of environmental covariates :
-  environmental_covariates_dictionary <- read.csv(system.file("extdata/environmental_covariates_dictionary.csv", package = "malamodpkg"),stringsAsFactors = F,fileEncoding = "latin1")
+  #environmental_covariates_dictionary <- read.csv(system.file("extdata/environmental_covariates_dictionary.csv", package = "malamodpkg"),stringsAsFactors = F,fileEncoding = "latin1")
+  environmental_covariates_dictionary<-googlesheets4::read_sheet("https://docs.google.com/spreadsheets/d/1dIeSOa2WinXvOQGLmIjA0gFdsHnb6zMMsDME-G5pyMc/edit?usp=sharing",sheet = "var_prediction",col_types="c")
   environmental_covariates_dictionary <- cbind(fid = 1:nrow(environmental_covariates_dictionary), environmental_covariates_dictionary)
   dbWriteTable(react_gpkg,"env_dictionary",environmental_covariates_dictionary,overwrite=TRUE)
   data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(environmental_covariates_dictionary),table="env_dictionary"))
@@ -408,20 +459,24 @@ st_write(lulc_zonal_stats_bf, path_to_gpkg_database, "lco_groundtruth_bf_zonalst
   path_to_civ_folder<-"data/korhogo"
 
   # timeseries
-  paths<-c("envCov_TMIN1","envCov_TMAX1","envCov_TAMP1","envCov_TMIN7_A1","envCov_TAMP7_A1","envCov_TMAX7_A1","envCov_TMIN7_A2","envCov_TMAX7_A2","envCov_TAMP7_A2","envCov_VND8","envCov_VEV8","envCov_EVT8","envCov_SMO1","envCov_SMO7","envCov_RFD1","envCov_RFD8","envCov_LIG30","envCov_DTL7")
+  paths<-c("TMIN1","TMAX1","TAMP1","TMIN7","TMAX7","TAMP7","VNV8","VEV8","EVT8","SMO1","RFD1_F","RFD1_L","LIG30","DTL7","SPIs1","SPIs2")
   path_to_bf_ts<-paste0(path_to_bf_folder,"/",paths,".csv")
   path_to_civ_ts<-paste0(path_to_civ_folder,"/",paths,".csv")
   path_to_ts<-c(path_to_bf_ts,path_to_civ_ts)
 
   data_ts<-path_to_ts %>%
-    map(~read_csv(.)) %>%
-    do.call(rbind,.)
+    map(~read.csv(.,stringsAsFactors = F)) %>%
+    do.call(rbind,.) %>%
+    mutate(val = as.numeric(val)) %>%
+    mutate(date = as.character(date)) %>%
+    mutate(lag_time=as.integer(lag_time)) %>%
+    mutate(lag_n=as.integer(lag_n))
   data_ts <- cbind(fid = 1:nrow(data_ts), data_ts)
-  dbWriteTable(react_gpkg,"env_ts",data_ts,overwrite=TRUE)
-  data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(data_ts),table="env_ts"))
+  dbWriteTable(react_gpkg,"env_timeseries",data_ts,overwrite=TRUE)
+  data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(data_ts),table="env_timeseries"))
 
   # nightcatch
-  paths<-c("envCov_RFH","envCov_WDR","envCov_WSP","envCov_LMN")
+  paths<-c("RFH","WDR","WSP","LMN")
   path_to_bf_nightcatch<-paste0(path_to_bf_folder,"/",paths,".csv")
   path_to_civ_nightcatch<-paste0(path_to_civ_folder,"/",paths,".csv")
   path_to_nightcatch<-c(path_to_bf_nightcatch,path_to_civ_nightcatch)
@@ -433,39 +488,46 @@ st_write(lulc_zonal_stats_bf, path_to_gpkg_database, "lco_groundtruth_bf_zonalst
   dbWriteTable(react_gpkg,"env_nightcatch",data_nightcatch,overwrite=TRUE)
   data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(data_nightcatch),table="env_nightcatch"))
 
-  # static
-  paths<-c("envCov_TEL_TSL_TAS_WAC_TCI_TWI","envCov_WAD_WMD_WLS_WAL","envCov_POP","envCov_POH","envCov_BDE","envCov_BCH","envCov_HYS")
+  # static_buffer
+  paths<-c("TEL_TSL_TAS_WAC_TCI_TWI","WAD_WLS_WAL","POP","POH","HYS","BCH")
   path_to_bf_static<-paste0(path_to_bf_folder,"/",paths,".csv")
   path_to_civ_static<-paste0(path_to_civ_folder,"/",paths,".csv")
   path_to_static<-c(path_to_bf_static,path_to_civ_static)
 
-  data_static<-path_to_static %>%
+  data_staticbuffer<-path_to_static %>%
     map(~read_csv(.)) %>%
+    do.call(rbind,.) %>%
+    mutate(val=as.numeric(val))
+  data_staticbuffer <- cbind(fid = 1:nrow(data_staticbuffer), data_staticbuffer)
+  dbWriteTable(react_gpkg,"env_staticbuffer",data_staticbuffer,overwrite=TRUE)
+  data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(data_staticbuffer),table="env_staticbuffer"))
+  
+  # static_nobuffer
+  paths<-c("WMD","BDE","VCP_VCM_VCT")
+  path_to_bf_static<-paste0(path_to_bf_folder,"/",paths,".csv")
+  path_to_civ_static<-paste0(path_to_civ_folder,"/",paths,".csv")
+  path_to_static<-c(path_to_bf_static,path_to_civ_static)
+  
+  data_staticnobuffer<-path_to_static %>%
+    map(~read.csv(.,colClasses = "character")) %>%
     do.call(rbind,.)
-  data_static <- cbind(fid = 1:nrow(data_static), data_static)
-  dbWriteTable(react_gpkg,"env_static",data_static,overwrite=TRUE)
-  data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(data_static),table="env_static"))
-
-
+  
+  data_staticnobuffer <- cbind(fid = 1:nrow(data_staticnobuffer), data_staticnobuffer)
+  dbWriteTable(react_gpkg,"env_staticnobuffer",data_staticnobuffer,overwrite=TRUE)
+  data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(data_staticnobuffer),table="env_staticnobuffer"))
+  
   # landcover
-  path_to_lsm_civ<-"data/korhogo/envCov_LSM.csv"
-  path_to_lsm_bf<-"data/diebougou/envCov_LSM.csv"
+  path_to_lsm_civ<-"data/korhogo/LSM.csv"
+  path_to_lsm_bf<-"data/diebougou/LSM.csv"
 
-  lsm<-rbind(read.csv(path_to_lsm_civ,stringsAsFactors = F),read.csv(path_to_lsm_bf,stringsAsFactors = F))
+  lsm<-rbind(read.csv(path_to_lsm_civ,stringsAsFactors = F),read.csv(path_to_lsm_bf,stringsAsFactors = F)) #%>% mutate_all(as.character)
   lsm <- cbind(fid = 1:nrow(lsm), lsm)
   dbWriteTable(react_gpkg,"env_lsm",lsm,overwrite=TRUE)
   data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(lsm),table="env_lsm"))
 
-  # intervention
-  path_to_interv_civ<-"data/korhogo/envCov_VCP_VCM_VCT.csv"
-  path_to_interv_bf<-"data/diebougou/envCov_VCP_VCM_VCT.csv"
   
-  interv<-rbind(read.csv(path_to_interv_civ,stringsAsFactors = F),read.csv(path_to_interv_bf,stringsAsFactors = F))
-  interv <- cbind(fid = 1:nrow(interv), interv)
-  dbWriteTable(react_gpkg,"env_interv",interv,overwrite=TRUE)
-  data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(interv),table="env_interv"))
   
-
+  
   dbSendQuery(react_gpkg,"VACUUM") # It is very important to Vacuum. Not vacuuming may prevent the DB to be opened.
   dbDisconnect(react_gpkg)
   dbSendQuery(react_gpkg_light,"VACUUM") # It is very important to Vacuum. Not vacuuming may prevent the DB to be opened.
