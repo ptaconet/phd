@@ -182,6 +182,8 @@ data_pooda$heuredecapture<-as.numeric(data_pooda$heuredecapture)
 
 
 df_mosquitoes <- rbind(df_mosquitoes,data_pooda)
+df_mosquitoes$especeanoph[which(df_mosquitoes$especeanoph=="gambiaeS.1")]="An.gambiae s.l."
+
 df_mosquitoes$pcr_pf <- as.numeric(df_mosquitoes$pcr_pf)
 
 ## import ent_hlcmetadata to check if all villages / points de captures are ok

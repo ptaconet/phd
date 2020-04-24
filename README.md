@@ -7,24 +7,15 @@ PhD work.
 
 Github repo is organized as follow:
 
-    myproject/
-    ├── .gitignore
-    ├── .Rprofile
-    ├── _workflowr.yml
-    ├── analysis/
-    │   ├── about.Rmd
-    │   ├── index.Rmd
-    │   ├── license.Rmd
-    │   └── _site.yml
-    ├── code/
-    │   ├── README.md
-    ├── data/
-    │   └── README.md
-    ├── docs/
-    ├── myproject.Rproj
-    ├── output/
-    │   └── README.md
-    └── README.md
+    phd/
+    ├── docs : files used to render the website (https://ptaconet.github.io/phd)
+    ├── r_scripts/ : R scripts developed to process and analyse the data
+    │   ├── data_analysis/ : scripts for data analysis
+    │   ├── data_preparation/ : scripts for data preparation 
+    │      │── worfklow_object_based_data_analysis : Workflow for the generation of land cover map using a supervised object based image analysis combined with a hierarchical random forest classification approach
+    │   ├── react_database/ : scripts to build the REACT project geopackage database from the heterogeneous source files
+    │   └── temporary_miscellaneous/ : temporary and - or miscellaneous R scripts
+    ├── data : data used (both input and output) (folder is gitignored because of its size - several GB)
 
 This work is part of my PhD project realized at the
 [MIVEGEC](https://www.mivegec.ird.fr/en/) unit of the [French Research

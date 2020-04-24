@@ -25,7 +25,11 @@ rmarkdown::render("r_scripts/link_to_r_script_2.R",output_dir="/home/ptaconet/ph
 # to be verified...
 
 # the other way around (rmd to R) : https://bookdown.org/yihui/rmarkdown-cookbook/purl.html
-knitr::purl("r_scripts/data_preparation/workflow_extract_expl_var.Rmd","r_scripts/data_preparation/workflow_extract_expl_var.R") # convert from Rmd to R
+file.remove("r_scripts/data_preparation/workflow_extract_expl_var.R")
+knitr::purl("r_scripts/data_preparation/workflow_extract_expl_var.Rmd","r_scripts/data_preparation/workflow_extract_expl_var.R", documentation = 2) # convert from Rmd to R
+tx<-readLines("r_scripts/data_preparation/workflow_extract_expl_var.R")
+tx<-gsub(pattern = "#> ", replace = "", x = tx)
+writeLines(tx, con="r_scripts/data_preparation/workflow_extract_expl_var.R")
 #knitr::spin("r_scripts/data_preparation/workflow_extract_expl_var.R", knit = F) # CAREFUL it erases the Rmd that is already there ! 
 #rmarkdown::render("r_scripts/data_preparation/workflow_extract_expl_var.R",output_dir="/home/ptaconet/phd/rmds") # directly in html
 

@@ -31,6 +31,7 @@ library(kableExtra)
 library(mapview)
 library(stringr)
 library(emo)
+library(facetscales)
 ```
 
 ```{r db_connect}
@@ -51,9 +52,10 @@ recensement_villages_l1 <- st_read(path_to_db,"recensement_villages_l1", quiet=T
 #   left_join(recensement_villages_l1[c("codevillage","intervention","date_debut_interv","date_fin_interv")], by = "codevillage") %>%
 #   dplyr::select(-fid)
 
-# get the number of human - nigth
+# get the number of human - nights
 idpointdecaptures <- dbReadTable(react_gpkg, 'entomo_csh_metadata_l1') %>%
   dplyr::select(idpointdecapture,nummission,codevillage,pointdecapture,codepays,date_capture)
+
 csh_exterior <- data.frame(idpointdecaptures, postedecapture = "e")
 csh_interior <- data.frame(idpointdecaptures, postedecapture = "i")
 csh_all <- rbind(csh_exterior,csh_interior) %>%
@@ -78,7 +80,7 @@ dates_intervention <- recensement_villages_l1 %>%
   
 ```
 
-```{r rainbow_plots}
+```{r rainbow_plots, eval=F}
 #source("https://raw.githubusercontent.com/RainCloudPlots/RainCloudPlots/master/tutorial_R/R_rainclouds.R")
 source("https://raw.githubusercontent.com/RainCloudPlots/RainCloudPlots/master/tutorial_R/summarySE.R")
 #source("https://raw.githubusercontent.com/RainCloudPlots/RainCloudPlots/master/tutorial_R/simulateData.R")
@@ -184,16 +186,16 @@ p9
 
 ```
 
-```{r functions}
+```{r functions, eval=F}
 
-fun_agg_data_entomo <- function(trmetrics_entomo, df_n_obs, ...){
+fun_agg_data_entomo <- function(trmetrics_entomo, df_n_obs, var, ...){
   
   group_var <- enquos(...)
   
   df_metric <- trmetrics_entomo %>%
-    filter(genre == "Anopheles") %>%
+    filter(genre == "Anopheles", var == var) %>%
     group_by(!!! group_var) %>%
-    summarise(val = sum(ma)) %>%
+    summarise(val = sum(val)) %>%
     left_join(df_n_obs) %>%
     mutate(val = round(val/n_obs,2)) %>%
     left_join(mean_date_by_mission) %>%
@@ -243,171 +245,121 @@ areas <- st_read(path_to_db,"contexte_frontieresreact", quiet=T)
 mapview(areas, alpha.regions = 0.1, aplha = 1, layer.name = "Study areas") + mapview(recensement_villages_l1, zcol = "intervention", cex = 4, alpha.regions = 0.9, aplha = 1, layer.name = "Villages")
 ```
 
+Following indicators are provided for each study area : 
+
+```{r indicators }
+googlesheets4::sheets_deauth()
+df_indicators <- googlesheets4::read_sheet("https://docs.google.com/spreadsheets/d/1dIeSOa2WinXvOQGLmIjA0gFdsHnb6zMMsDME-G5pyMc/edit?usp=sharing", sheet = "var_reponse3", col_types="c")
+df_indicators %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+
 ##  Ma : Human biting rate 
 
-Average number of bites by Anopheles mosquitoes received per human per night
+### All Anopheles species
 
-### By study area
-
-Average number of bites by Anopheles mosquitoes received per human per night, by study area
-
-`r emo::ji("warning")` : **y axis is log2 scaled**
+Number of bites by Anopheles mosquitoes received per human per night, by study area
 
 ```{r ma_b_country}
 # by country
 
-df_n_obs <- csh_all %>%
-  group_by(codepays,nummission) %>%
-  summarise(n_obs = n())
+ma_an <- trmetrics_entomo %>%
+  filter(genre=="Anopheles", var=="ma", as.numeric(nummission) <= 8) %>%
+  group_by(idpostedecapture,codepays, nummission, intervention) %>%
+  summarise(val = sum(val))
 
-ma <- fun_agg_data_entomo(trmetrics_entomo, df_n_obs, codepays, nummission)
-
-plot <- fun_plot_ts_entomo(df = ma, 
-                           indicator_code = "ma", 
-                           aes_color = codepays, 
-                           title = "Human biting rate by study area", 
-                           log2 = TRUE)
-
-ggplotly(plot)
-
+bf <- ggplot(ma_an %>% filter(codepays == "BF", nummission <= 8), aes(x = nummission, y = val, fill = intervention)) +
+   geom_boxplot(outlier.shape = NA) +
+   ylim(0,40) + # 40 for BF, 400 for CI
+   geom_vline(xintercept = 3.5, colour = "red", size = 0.3) +  # 3.4 for BF, 4.5 for CI
+   annotate(geom="text",label="start of interventions",x = 3.7, y = 37, colour = "red", angle = 90, size = 3.5) +
+   theme_minimal() +
+   labs(y = "Human biting rate (all Anoph. species)") 
 
 
-a<- trmetrics_entomo %>%
-    filter(genre == "Anopheles") %>%
-  group_by(idpointdecapture,postedecapture) %>%
-  summarise(ma=sum(ma)) %>%
-  right_join(csh_all) %>%
-  mutate(ma=ifelse(is.na(ma),0,ma)) %>%
-  left_join(mean_date_by_mission) 
+ci <- ggplot(ma_an %>% filter(codepays == "CI", nummission <= 8), aes(x = nummission, y = val, fill = intervention)) +
+   geom_boxplot(outlier.shape = NA) +
+   ylim(0,400) + # 40 for BF, 400 for CI
+   geom_vline(xintercept = 4.5, colour = "red", size = 0.3) +  # 3.4 for BF, 4.5 for CI
+   annotate(geom="text",label="start of interventions",x = 4.7, y = 370, colour = "red", angle = 90, size = 3.5) +
+   theme_minimal() +
+   labs(y = "Human biting rate (all Anoph. species)") 
 
+# 
+# 
+# scales_y <- list(
+#   BF = scale_y_continuous(limits = c(0,40)),
+#   CI = scale_y_continuous(limits = c(0,400))
+# )
+# 
+# pl <- ggplot(ma_an %>% filter(nummission <= 8), aes(x = as.character(nummission), y = val, fill = intervention)) +
+#    geom_boxplot(outlier.shape = NA) +
+#   #facet_wrap(~codepays, scale="free",  dir = "v") +
+#     facet_grid_sc(rows = vars(codepays), scales = list(y = scales_y)) +
+#    #ylim(0,400) + # 40 for BF, 400 for CI
+#    geom_vline(xintercept = 4.5, colour = "red", size = 0.3) +  # 3.4 for BF, 4.5 for CI
+#    annotate(geom="text",label="start of interventions",x = 4.7, y = 370, colour = "red", angle = 90, size = 3.5) +
+#    theme_minimal() +
+#    labs(y = "Human biting rate (all Anoph. species)") 
 
-
-
-# ggplot(a, aes(x=date, y=ma,  colour = codepays, group = interaction(codepays, date))) + 
-#   geom_boxplot(width=30) +
-#       scale_x_date(date_labels = "%b %Y", date_breaks = "2 months") +
-#    scale_y_continuous(trans = 'log2', labels = scales::number_format(accuracy = 0.01))
-
- ggplot(a %>% filter(codepays=="BF"), aes(x=date, y=ma, group=date)) + 
-   geom_boxplot(width=30) +
-       scale_x_date(date_labels = "%b %Y", date_breaks = "2 months") +
-  # scale_y_continuous(trans = 'log2', labels = scales::number_format(accuracy = 0.01)) +
-   #facet_grid(rows = vars(codepays)) +
-       theme_minimal() +
-    labs(y = "ma") + 
-    scale_x_date(date_labels = "%b %Y", date_breaks = "2 months") +
-    geom_vline(xintercept = as.numeric(mean(dates_intervention$start_intervention_date)),colour = "red", size = 0.3) +
-    #annotate(geom="text",label="start of interventions",x=mean(dates_intervention$start_intervention_date)-10, y=mean(ma_b_country$val), colour = "red", angle = 90, size = 3.5) +
-    #annotate(geom="text",label="Vertical red line = start of vector control interventions", colour = "red", size = 3.5, y=max(df$val), x=min(df$date)+160) +
-    theme(axis.text.x = element_text(angle = 90, hjust = 1))
-
-
+bf
+ci
 
 ```
 
-### By study area and by Anopheles complex, all intervention types
+### By major Anopheles species
 
-Average number of bites by Anopheles mosquitoes received per human per night, by Anopheles complex, split by study area.
+Number of bites by Anopheles mosquitoes received per human per night, by Anopheles species, split by study area.
 
-`r emo::ji("warning")` : **y axis is log2 scaled**
+**Note** : species was determined using qPCR techniques. Because of the large number of mosquitoes that were caught, not all the mosquitoes could be analysed. The table provides the number and proportion of mosquitoes that were analysed for species determination. In the plot, Ma was raised.
 
-```{r ma_b_country_cp}
-
-df_n_obs <- csh_all %>%
-  group_by(codepays,nummission) %>%
-  summarise(n_obs = n())
-
-ma <- fun_agg_data_entomo(trmetrics_entomo, df_n_obs, codepays, nummission, complex)  %>%
-  group_split(codepays)
-  
-plot <- map(ma, ~fun_plot_ts_entomo(df = ., 
-                            indicator_code = "ma", 
-                            aes_color = complex, 
-                            #facet = codepays, 
-                           title = paste0("Human biting rate by anopheles complex, study area = ",unique(.$codepays)), 
-                            log2 = TRUE))
-
-ggplotly(plot[[1]])
-ggplotly(plot[[2]])
-```
-
-### By study area and by intervention type, all anopheles species
-
-`r emo::ji("warning")` : **y axis is log2 scaled**
-
-```{r ma_b_country_interv}
-
-df_n_obs <- csh_all %>%
-  group_by(codepays,nummission,intervention) %>%
-  summarise(n_obs = n())
-
-ma <- fun_agg_data_entomo(trmetrics_entomo, df_n_obs, codepays, nummission, intervention) %>%
-  group_split(codepays)
-
-plot <- map(ma, ~fun_plot_ts_entomo(df = ., 
-                           indicator_code = "ma", 
-                           aes_color = intervention, 
-                           title = paste0("Human biting rate by intervention type, study area = ",unique(.$codepays)), 
-                           log2 = TRUE))
-
-ggplotly(plot[[1]])
-ggplotly(plot[[2]])
-
-
-
-
-
-
-
-
-```
-
-
-
-
-### By country and by anopheles species
-
-Average number of bites by Anopheles mosquitoes received per human per night, by Anopheles species, split by study area.
-
-**Note** : species was determined using qPCR techniques. Because of the large number of mosquitoes that were caught, not all the mosquitoes could be analysed. The table above the plot provides the number and proportion of mosquitoes that were analysed for species determination. In the plot, Ma was raised.
-
-```{r ma_b_country_sp, eval=F}
+```{r ma_b_country_sp}
 
 ma_b_country_sp <- trmetrics_entomo %>%
-  filter(genre == "Anopheles",!is.na(species)) %>%
-  group_by(codepays,nummission,species) %>%
-  summarise(val = sum(ma)) %>%
-  left_join(df_n_obs) %>%
-  mutate(val = round(val/n_obs,2)) %>%
-  left_join(mean_date_by_mission) %>%
-  dplyr::select(-n_obs) %>%
-  as_tibble()
+  filter(genre == "Anopheles",var == "ma", !is.na(species)) %>%
+  group_by(idpostedecapture,codepays,nummission,species,intervention) %>%
+  summarise(val = sum(val))
 
 df_ratio_identified <- trmetrics_entomo %>% 
-  filter(genre == "Anopheles") %>%
+  filter(genre == "Anopheles",var == "ma") %>%
   mutate(species=ifelse(is.na(species),"unidentified","identified")) %>%
-  group_by(codepays,nummission,species) %>%
-  summarise(count = sum(ma)) %>%
-  pivot_wider(names_from = species, values_from = count) %>%
+  group_by(idpostedecapture,species) %>%
+  summarise(count = sum(val)) %>%
+  pivot_wider(names_from = species, values_from = count, values_fill =  list(count = 0)) %>%
   mutate(ratio_identified = round(identified / (identified + unidentified)*100))
 
 # extrapolate
-ma_b_country_sp <- ma_b_country_sp %>%
+ma_sp <- ma_b_country_sp %>%
   left_join(df_ratio_identified) %>%
-  mutate(val = 100 * val / ratio_identified)
+  mutate(val = 100 * val / ratio_identified) %>%
+  filter(species %in% c("An.coluzzii","An.funestus_ss","An.gambiae_ss")) %>%
+  filter(as.numeric(nummission) <= 8)
 
-b <- ggplot(ma_b_country_sp, aes(x = date, y = val)) +
-    geom_line(aes(color = species), size = 0.5, linetype = "dashed") +
-    geom_point(aes(color = species), size = 2) +
-    theme_minimal() +
-   labs(y = "ma (log2 scale)") + 
-  scale_y_continuous(trans = 'log2') +
-    scale_x_date(date_labels = "%b %Y", date_breaks = "2 months") +
-  geom_vline(xintercept = as.numeric(mean(dates_intervention$start_intervention_date)),colour = "red", size = 0.3) +
- # annotate(geom="text",label="start of interventions",x=mean(dates_intervention$start_intervention_date)-10, y=mean(ma_b_country_sp$val), colour = "red", angle = 90, size = 3) +
-    annotate(geom="text",label="Vertical red line = Start of vector control interventions", colour = "red", size = 3.5, y=max(ma_b_country$val), x=min(ma_b_country$date)+160) +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
-  facet_grid(codepays ~ .)  +
-  ggtitle("Human biting rate, by anopheles species, split by study area\n(extrapolated data)")
+# ma_sp <- trmetrics_entomo %>%
+#   filter(genre=="Anopheles", var=="ma", as.numeric(nummission) <= 8) %>%
+#   group_by(idpostedecapture, codepays, species, nummission, intervention) %>%
+#   summarise(val = sum(val)) %>%
+#   filter(species %in% c("An.coluzzii","An.funestus_ss","An.gambiae_ss"))
 
+
+bf <- ggplot(ma_sp %>% filter(codepays == "BF", nummission <= 8), aes(x = nummission, y = val, fill = intervention)) +
+   geom_boxplot(outlier.shape = NA) +
+   ylim(0,20) + 
+   geom_vline(xintercept = 3.5, colour = "red", size = 0.3) + 
+   annotate(geom="text",label="start of interventions",x = 3.7, y = 37, colour = "red", angle = 90, size = 3.5) +
+   labs(y = "Human biting rate") + 
+  facet_wrap(~species, scales = "free", ncol = 1)
+
+ci <- ggplot(ma_sp %>% filter(codepays == "CI", nummission <= 8), aes(x = nummission, y = val, fill = intervention)) +
+   geom_boxplot(outlier.shape = NA) +
+   #ylim(0,20) + # 40 for BF, 400 for CI
+   geom_vline(xintercept = 4.5, colour = "red", size = 0.3) +  # 3.4 for BF, 4.5 for CI
+   #annotate(geom="text",label="start of interventions",x = 4.7, y = 37, colour = "red", angle = 90, size = 4.5) +
+   labs(y = "Human biting rate") + 
+  facet_wrap(~species, scales = "free", ncol = 1)
+
+bf
+ci
 ```

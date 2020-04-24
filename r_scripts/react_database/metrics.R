@@ -298,19 +298,19 @@ pres_ma_an <- trmetrics_entomo %>%
    filter(var=="ma",genre=="Anopheles") %>% 
    group_by(idpointdecapture) %>%
    summarise(ma_an=sum(val)) %>%
-   mutate(pres_an=1) %>%
+   mutate(pres_an=TRUE) %>%
    right_join(idpointdecaptures) %>%
    mutate(ma_an = ifelse(is.na(ma_an),0,ma_an)) %>%
-   mutate(pres_an = ifelse(is.na(pres_an),0,pres_an))
+   mutate(pres_an = ifelse(is.na(pres_an),FALSE,pres_an))
    
 pres_ma_oth<- trmetrics_entomo %>%
    filter(var=="ma",genre!="Anopheles") %>% 
    group_by(idpointdecapture) %>%
    summarise(ma_oth=sum(val)) %>%
-   mutate(pres_oth=1) %>%
+   mutate(pres_oth=TRUE) %>%
    right_join(idpointdecaptures) %>%
    mutate(ma_oth = ifelse(is.na(ma_oth),0,ma_oth)) %>%
-   mutate(pres_oth = ifelse(is.na(pres_oth),0,pres_oth))
+   mutate(pres_oth = ifelse(is.na(pres_oth),FALSE,pres_oth))
 
 eir_an <-  trmetrics_entomo %>%
    filter(var=="eir",genre=="Anopheles") %>% 
@@ -324,8 +324,8 @@ er_an <- trmetrics_entomo %>%
    group_by(idpointdecapture,postedecapture) %>%
    summarise(ma=sum(val)) %>%
    pivot_wider(names_from = postedecapture, values_from = ma , values_fill = list(ma = 0)) %>%
-   #mutate(er_an = round(e/(e+i)*100)) %>%
-   mutate(er_an = e) %>%
+   mutate(er_an = round(e/(e+i)*100)) %>%
+   #mutate(er_an = e) %>%
    dplyr::select(-c(e,i)) %>%
    right_join(idpointdecaptures) %>%
    mutate(er_an = ifelse(is.na(er_an),0,er_an))
@@ -335,8 +335,8 @@ er_oth <- trmetrics_entomo %>%
    group_by(idpointdecapture,postedecapture) %>%
    summarise(ma=sum(val)) %>%
    pivot_wider(names_from = postedecapture, values_from = ma , values_fill = list(ma = 0)) %>%
-   #mutate(er_oth = round(e/(e+i)*100)) %>%
-   mutate(er_oth = e) %>%
+   mutate(er_oth = round(e/(e+i)*100)) %>%
+   #mutate(er_oth = e) %>%
    dplyr::select(-c(e,i)) %>%
    right_join(idpointdecaptures) %>%
    mutate(er_oth = ifelse(is.na(er_oth),0,er_oth))
@@ -388,8 +388,8 @@ pres_ma_by_complex <- trmetrics_entomo %>%
    right_join(idpointdecaptures) %>%
    mutate(ma_funestus = ifelse(is.na(ma_funestus),0,ma_funestus)) %>%
    mutate(ma_gambiae = ifelse(is.na(ma_gambiae),0,ma_gambiae)) %>%
-   mutate(pres_funestus =  ifelse(ma_funestus==0,0,1)) %>%
-   mutate(pres_gambiae =  ifelse(ma_gambiae==0,0,1))
+   mutate(pres_funestus =  ifelse(ma_funestus==0,FALSE,TRUE)) %>%
+   mutate(pres_gambiae =  ifelse(ma_gambiae==0,FALSE,TRUE))
    
 pres_ma_by_species <- trmetrics_entomo %>%
    filter(var=="ma",genre=="Anopheles",species %in% c("An.funestus_ss","An.coluzzii","An.gambiae_ss")) %>% 
@@ -403,9 +403,9 @@ pres_ma_by_species <- trmetrics_entomo %>%
    mutate(ma_funestus_ss = ifelse(is.na(ma_funestus_ss),0,ma_funestus_ss)) %>%
    mutate(ma_coluzzi = ifelse(is.na(ma_coluzzi),0,ma_coluzzi)) %>%
    mutate(ma_gambiae_ss = ifelse(is.na(ma_gambiae_ss),0,ma_gambiae_ss)) %>%
-   mutate(pres_funestus_ss =  ifelse(ma_funestus_ss==0,0,1)) %>%
-   mutate(pres_gambiae_ss =  ifelse(ma_gambiae_ss==0,0,1)) %>%
-   mutate(pres_coluzzi =  ifelse(ma_coluzzi==0,0,1))
+   mutate(pres_funestus_ss =  ifelse(ma_funestus_ss==0,FALSE,TRUE)) %>%
+   mutate(pres_gambiae_ss =  ifelse(ma_gambiae_ss==0,FALSE,TRUE)) %>%
+   mutate(pres_coluzzi =  ifelse(ma_coluzzi==0,FALSE,TRUE))
 
 er_by_complex <- trmetrics_entomo %>%
    filter(var=="ma",genre=="Anopheles",complex %in% c("An.funestus","An.gambiae s.l.")) %>% 
@@ -414,10 +414,10 @@ er_by_complex <- trmetrics_entomo %>%
    mutate(complex = gsub("An.funestus","er_funestus",complex)) %>%
    mutate(complex = gsub("An.gambiae s.l.","er_gambiae",complex)) %>%
    pivot_wider(names_from = c(postedecapture,complex), values_from = ma , values_fill = list(ma = 0)) %>%
-   #mutate(er_funestus = round(e_er_funestus/(e_er_funestus+i_er_funestus)*100)) %>%
-   #mutate(er_gambiae = round(e_er_gambiae/(e_er_gambiae+i_er_gambiae)*100)) %>%
-   mutate(er_funestus = e_er_funestus) %>%
-   mutate(er_gambiae = e_er_gambiae) %>%
+   mutate(er_funestus = round(e_er_funestus/(e_er_funestus+i_er_funestus)*100)) %>%
+   mutate(er_gambiae = round(e_er_gambiae/(e_er_gambiae+i_er_gambiae)*100)) %>%
+   #mutate(er_funestus = e_er_funestus) %>%
+   #mutate(er_gambiae = e_er_gambiae) %>%
    dplyr::select(-c(e_er_funestus,e_er_gambiae,i_er_funestus,i_er_gambiae)) %>%
    right_join(idpointdecaptures) %>%
    mutate(er_funestus = ifelse(is.na(er_funestus),0,er_funestus)) %>%
@@ -432,12 +432,12 @@ er_by_species <- trmetrics_entomo %>%
    mutate(species = gsub("An.coluzzii","er_coluzzi",species)) %>%
    mutate(species = gsub("An.gambiae_ss","er_gambiae_ss",species)) %>%
    pivot_wider(names_from = c(postedecapture,species), values_from = ma , values_fill = list(ma = 0)) %>%
-   #mutate(er_funestus_ss = round(e_er_funestus_ss/(e_er_funestus_ss+i_er_funestus_ss)*100)) %>%
-   #mutate(er_gambiae_ss = round(e_er_gambiae_ss/(e_er_gambiae_ss+i_er_gambiae_ss)*100)) %>%
-   #mutate(er_coluzzi = round(e_er_coluzzi/(e_er_coluzzi+i_er_coluzzi)*100)) %>%
-   mutate(er_funestus_ss = e_er_funestus_ss) %>%
-   mutate(er_gambiae_ss = e_er_gambiae_ss) %>%
-   mutate(er_coluzzi = e_er_coluzzi) %>%
+   mutate(er_funestus_ss = round(e_er_funestus_ss/(e_er_funestus_ss+i_er_funestus_ss)*100)) %>%
+   mutate(er_gambiae_ss = round(e_er_gambiae_ss/(e_er_gambiae_ss+i_er_gambiae_ss)*100)) %>%
+   mutate(er_coluzzi = round(e_er_coluzzi/(e_er_coluzzi+i_er_coluzzi)*100)) %>%
+   #mutate(er_funestus_ss = e_er_funestus_ss) %>%
+   #mutate(er_gambiae_ss = e_er_gambiae_ss) %>%
+   #mutate(er_coluzzi = e_er_coluzzi) %>%
    dplyr::select(-c(e_er_coluzzi,e_er_funestus_ss,i_er_funestus_ss,i_er_coluzzi,i_er_gambiae_ss,e_er_gambiae_ss)) %>%
    right_join(idpointdecaptures) %>%
    mutate(er_funestus_ss = ifelse(is.na(er_funestus_ss),0,er_funestus_ss)) %>%
@@ -583,19 +583,19 @@ pres_ma_an <- trmetrics_entomo %>%
    filter(var=="ma",genre=="Anopheles") %>% 
    group_by(idpostedecapture) %>%
    summarise(ma_an=sum(val)) %>%
-   mutate(pres_an=1) %>%
+   mutate(pres_an=TRUE) %>%
    right_join(idpostesdecaptures) %>%
    mutate(ma_an = ifelse(is.na(ma_an),0,ma_an)) %>%
-   mutate(pres_an = ifelse(is.na(pres_an),0,pres_an))
+   mutate(pres_an = ifelse(is.na(pres_an),FALSE,pres_an))
 
 pres_ma_oth<- trmetrics_entomo %>%
    filter(var=="ma",genre!="Anopheles") %>% 
    group_by(idpostedecapture) %>%
    summarise(ma_oth=sum(val)) %>%
-   mutate(pres_oth=1) %>%
+   mutate(pres_oth=TRUE) %>%
    right_join(idpostesdecaptures) %>%
    mutate(ma_oth = ifelse(is.na(ma_oth),0,ma_oth)) %>%
-   mutate(pres_oth = ifelse(is.na(pres_oth),0,pres_oth))
+   mutate(pres_oth = ifelse(is.na(pres_oth),FALSE,pres_oth))
 
 eir_an <-  trmetrics_entomo %>%
    filter(var=="eir",genre=="Anopheles") %>% 
@@ -651,8 +651,8 @@ pres_ma_by_complex <- trmetrics_entomo %>%
    right_join(idpostesdecaptures) %>%
    mutate(ma_funestus = ifelse(is.na(ma_funestus),0,ma_funestus)) %>%
    mutate(ma_gambiae = ifelse(is.na(ma_gambiae),0,ma_gambiae)) %>%
-   mutate(pres_funestus =  ifelse(ma_funestus==0,0,1)) %>%
-   mutate(pres_gambiae =  ifelse(ma_gambiae==0,0,1))
+   mutate(pres_funestus =  ifelse(ma_funestus==0,FALSE,TRUE)) %>%
+   mutate(pres_gambiae =  ifelse(ma_gambiae==0,FALSE,TRUE))
 
 pres_ma_by_species <- trmetrics_entomo %>%
    filter(var=="ma",genre=="Anopheles",species %in% c("An.funestus_ss","An.coluzzii","An.gambiae_ss")) %>% 
@@ -666,9 +666,9 @@ pres_ma_by_species <- trmetrics_entomo %>%
    mutate(ma_funestus_ss = ifelse(is.na(ma_funestus_ss),0,ma_funestus_ss)) %>%
    mutate(ma_coluzzi = ifelse(is.na(ma_coluzzi),0,ma_coluzzi)) %>%
    mutate(ma_gambiae_ss = ifelse(is.na(ma_gambiae_ss),0,ma_gambiae_ss)) %>%
-   mutate(pres_funestus_ss =  ifelse(ma_funestus_ss==0,0,1)) %>%
-   mutate(pres_gambiae_ss =  ifelse(ma_gambiae_ss==0,0,1)) %>%
-   mutate(pres_coluzzi =  ifelse(ma_coluzzi==0,0,1))
+   mutate(pres_funestus_ss =  ifelse(ma_funestus_ss==0,FALSE,TRUE)) %>%
+   mutate(pres_gambiae_ss =  ifelse(ma_gambiae_ss==0,FALSE,TRUE)) %>%
+   mutate(pres_coluzzi =  ifelse(ma_coluzzi==0,FALSE,TRUE))
 
 kdre_rs_an <- trmetrics_entomo %>%
    filter(var=="kdre_RS") %>%
@@ -806,7 +806,7 @@ trmetrics_entomo_postedecapture <- trmetrics_entomo_postedecapture %>%
     dplyr::select("codevillage","codepays","intervention","date_debut_interv","date_fin_interv")
  
  entomo_csh_metadata_l1 <- dbReadTable(react_gpkg, 'entomo_csh_metadata_l1') %>%
-    dplyr::select("idpointdecapture","codevillage","date_capture")
+    dplyr::select("idpointdecapture","codevillage","date_capture","nummission")
  
  
  trmetrics_entomo <- trmetrics_entomo %>%
@@ -884,8 +884,13 @@ trmetrics_entomo_postedecapture <- trmetrics_entomo_postedecapture %>%
     mutate(prop_tested_5_10 = tested_5_10 / total_5_10 * 100) %>%
     mutate(spr_sup_10 = sup_10_TRUE / tested_sup_10 * 100) %>% # proportion of people tested with age >10 among all the people with age >10 in the village
     mutate(spr_0_5 = `0_5_TRUE` / `tested_0_5` * 100) %>%
-    mutate(spr_5_10 = `5_10_TRUE` / `tested_5_10` * 100)
-    
+    mutate(spr_5_10 = `5_10_TRUE` / `tested_5_10` * 100) %>%
+    mutate(tot_FALSE = sup_10_FALSE + `5_10_FALSE` + `0_5_FALSE`) %>%
+    mutate(tot_TRUE = sup_10_TRUE + `5_10_TRUE` + `0_5_TRUE`) %>% 
+    mutate(tested_tot = tot_FALSE + tot_TRUE) %>%
+    mutate(total_tot = total_0_5 + total_5_10 + total_sup_10) %>%
+    mutate(prop_tested_tot = tested_tot / total_tot * 100) %>%
+    mutate(spr_tot = tot_TRUE / tested_tot * 100) 
  
  ######## pfpn	: Total number of febrile malaria cases as a proportion of all febrile cases  ########
  
@@ -943,6 +948,7 @@ trmetrics_entomo_postedecapture <- trmetrics_entomo_postedecapture %>%
  
  trmetrics_epidemio <- trmetrics_epidemio %>%
    left_join(recensement_villages_l1) %>%
+    mutate(nummission = as.numeric(nummission)) %>%
    mutate(phase_interv = ifelse(as.Date(datenquete) < as.Date(date_debut_interv),"pre-intervention","post-intervention")) %>%
    mutate(phase_interv = ifelse((is.na(phase_interv) & codepays=="BF" & as.Date(datenquete) < as.Date("2017-08-17")),"pre-intervention",phase_interv)) %>%
    mutate(phase_interv = ifelse((is.na(phase_interv) & codepays=="CI" & as.Date(datenquete) < as.Date("2017-09-01")),"pre-intervention",phase_interv)) %>%

@@ -457,12 +457,11 @@ write.csv(RFD1_L, file.path("data",roi_name,"RFD1_L.csv"), row.names = F)
 # Download Sentinel-2 L2A data - bands B03, B04, B08, B11, SCENE_CLASSIFICATION - for the region and time frames of interest ;
 variables <- c("B03","B04","B08","B11","9_SCENE_CLASSIFICATION")
 spectral_indices=c("ndvi","mndvi","ndwi","bri")
-#s2l2a <- eodataflow::eodf_geturl_dl(times_start = df_sampling_points$date - 120, times_end = df_sampling_points$date, roi = roi, roi_name = roi_name, collection = "S2L2A", variables = variables, parallel = parallel, verbose = verbose)
+s2l2a <- eodataflow::eodf_geturl_dl(times_start = df_sampling_points$date - 120, times_end = df_sampling_points$date, roi = roi, roi_name = roi_name, collection = "S2L2A", variables = variables, parallel = parallel, verbose = verbose)
 
 # temporary, to remove when it is working
 #s2l2a <- readRDS("data/korhogo/s2l2a_list_of_urls_120d.RData")
-s2l2a <-  readRDS("data/diebougou/s2l2a_list_of_urls_120d.RData")
-#s2l2a$list_of_urls <- s2l2a
+#s2l2a <-  readRDS("data/diebougou/s2l2a_list_of_urls_120d.RData")
 
 # Import the bands in R ;
 #  + Mask bad quality pixels (e.g. clouds or shadows) in the B03, B04, B08, B11 bands using the SCENE_CLASSIFICATION band (ouput of the ESA Sen2cor processing). Rule : mask if SCENE_CLASSIFICATION is one of : DARK_AREA_PIXELS, CLOUD_MEDIUM_PROBABILITY, CLOUD_HIGH_PROBABILITY, THIN_CIRRUS, CLOUD_SHADOWS, UNCLASSIFIED ; 
@@ -471,11 +470,10 @@ s2l2a <-  readRDS("data/diebougou/s2l2a_list_of_urls_120d.RData")
 #  + Extract the averaged value from the resulting products within each buffer around the sampling points ;
 #  + Set the final values to NA when more than 50 % of the pixels within the buffers are missing.
 
-#SPI_s2 <- NULL
-  SPI_s2 <- read.csv(file.path("data",roi_name,"SPIs2.csv"))
+SPI_s2 <- NULL
+#SPI_s2 <- read.csv(file.path("data",roi_name,"SPIs2.csv"))
 
-#for(i in 1:length(s2l2a$list_of_urls)){
-for(i in 109:length(s2l2a$list_of_urls)){
+for(i in 1:length(s2l2a$list_of_urls)){
   cat(paste0(Sys.time(), ": Calculating spectral indices n° ",i," over ",length(s2l2a$list_of_urls),"\n"))
   if(!(nrow(s2l2a$list_of_urls[[i]])==1 && is.na(s2l2a$list_of_urls[[i]]$time_start))){   # case there are no image available
     
@@ -520,9 +518,6 @@ for(i in 109:length(s2l2a$list_of_urls)){
      file.remove(tmp$path[which(as.numeric(tmp$difftime)<30)])
   }
 }
-
-# fill NAs
-#TODO
 ```
 
 #### WVV10, WVH10
@@ -530,14 +525,14 @@ for(i in 109:length(s2l2a$list_of_urls)){
 ```{r }
 variables <- c("VV","VH")
 spectral_indices=c("VV","VH","VV/VH")
-#s1 <- eodataflow::eodf_geturl_dl(times_start = df_sampling_points$date - 120, times_end = df_sampling_points$date, roi = roi, roi_name = roi_name, collection = "S1-AWS-IW-VVVH", variables = variables, parallel = parallel, verbose = verbose)
+s1 <- eodataflow::eodf_geturl_dl(times_start = df_sampling_points$date - 120, times_end = df_sampling_points$date, roi = roi, roi_name = roi_name, collection = "S1-AWS-IW-VVVH", variables = variables, parallel = parallel, verbose = verbose)
 
 # temporary, to remove when it is working
 #s1 <- readRDS("data/korhogo/s1_list_of_urls_120d.RData")
-s1 <- readRDS("data/diebougou/s1_list_of_urls_120d.RData")
+#s1 <- readRDS("data/diebougou/s1_list_of_urls_120d.RData")
 
-#SPI_s1 <- NULL
-SPI_s1 <- read.csv(file.path("data",roi_name,"SPIs1.csv"))
+SPI_s1 <- NULL
+#SPI_s1 <- read.csv(file.path("data",roi_name,"SPIs1.csv"))
 
 for(i in 1:length(s1$list_of_urls)){
   cat("Calculating spectral indices n° ",i," over",length(s1$list_of_urls),"\n")
@@ -575,11 +570,6 @@ for(i in 1:length(s1$list_of_urls)){
     file.remove(tmp$path[which(as.numeric(tmp$difftime)<30)])
   }
 }
-
-# fill NAs
-#TODO
-        
-
 ```
 
 #### LIG30
@@ -775,7 +765,7 @@ dem_and_derivatives_rast <- brick(dem_and_derivatives)
 names(dem_and_derivatives_rast)<-c("TEL","TSL","TAS","WAC","TCI","TWI")
 
 # Extract the averaged value from the resulting products within each buffer around the sampling points.
-TEL_TSL_TAS_WAC_TCI_TWI <- eodataflow::extract_var_on_buffers(dem_and_derivatives_rast, sf_points_metadata, buffer_sizes_v2, verbose = TRUE )
+      TEL_TSL_TAS_WAC_TCI_TWI <- eodataflow::extract_var_on_buffers(dem_and_derivatives_rast, sf_points_metadata, buffer_sizes_v2, verbose = TRUE )
 
 # Convert accumulation from number of pixels to surface in ha
 TEL_TSL_TAS_WAC_TCI_TWI <- mutate(TEL_TSL_TAS_WAC_TCI_TWI,val=if_else(var=="WAC",val*res(dem_and_derivatives_rast)[1]*res(dem_and_derivatives_rast)[2]/10000,val))
@@ -942,20 +932,10 @@ write.csv(HYS,file.path("data",roi_name,"HYS.csv"),row.names = F)
 ```{r }
 # Import 
 vars_vect_control <- df_points_metadata %>%
-  mutate(codevillage=substr(id,2,4)) %>%
+  mutate(codevillage=str_extract(id, "[A-Z]+")) %>%
   left_join(sf_villages,by="codevillage") %>%
   dplyr::select(id,date,intervention,date_debut_interv) %>%
   mutate(intervention=ifelse(is.na(intervention),"Ctrle",intervention))
-
-VCP <- vars_vect_control %>%
-  mutate(val=ifelse(intervention=="Ctrle",0,1)) %>%
-  mutate(var="VCP") %>%
-  dplyr::select(id,var,val)
-
-VCM <- vars_vect_control %>%
-  dplyr::select(id,intervention) %>%
-  rename(val=intervention) %>%
-  mutate(var="VCM")
 
 VCT <- vars_vect_control %>%
   mutate(val=as.Date(date) - as.Date(date_debut_interv)) %>%
@@ -964,8 +944,20 @@ VCT <- vars_vect_control %>%
   mutate(var="VCT") %>%
   dplyr::select(id,val,var)
 
+VCP <- VCT %>%
+   mutate(val=ifelse(val>0,TRUE,FALSE)) %>%
+   mutate(var="VCP")
+
+VCM <- vars_vect_control %>%
+  dplyr::select(id,intervention) %>%
+  left_join(VCT) %>%
+  mutate(intervention=ifelse(val==0,"Ctrle",intervention)) %>%
+  dplyr::select(-val) %>%
+  rename(val=intervention) %>%
+  mutate(var="VCM")
 
 VCP_VCM_VCT <- rbind(VCP,VCM,VCT)
+
 # Export
 write.csv(VCP_VCM_VCT,file.path("data",roi_name,"VCP_VCM_VCT.csv"),row.names = F)
 

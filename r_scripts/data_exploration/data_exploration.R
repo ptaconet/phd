@@ -87,7 +87,7 @@ fun_ccm_df <- function(df_timeseries, var, buffer, function_to_apply = "mean"){
 }
 
 # function to get correlation matrix for the CCM
-fun_ccm_corrmat <- function(df_timeseries_wide, df_response_var, column_response_var, filter_0){
+fun_ccm_corrmat_sup0 <- function(df_timeseries_wide, df_response_var, column_response_var){
   
   df_response_var <- df_response_var %>%
     select(id, column_response_var) %>%
@@ -97,28 +97,53 @@ fun_ccm_corrmat <- function(df_timeseries_wide, df_response_var, column_response
   #  left_join(df_response_var, by = "id") 
   
   df_timeseries_wide <- df_response_var %>%
-    right_join(df_timeseries_wide, by = "id") 
-  
-  if(filter_0){
-    df_timeseries_wide <- df_timeseries_wide %>% filter(response_val > 0)
-  }
-  
+    right_join(df_timeseries_wide, by = "id") %>%
+    filter(response_val > 0)
+
   correlation <- sapply(df_timeseries_wide[,3:(ncol(df_timeseries_wide))], function(x) cor(x, df_timeseries_wide$response_val, method = "spearman", use = "na.or.complete"))# Spearman’s rank order correlation was applied because mosquito capture rates as well as some environmental quantities, especially daytime length and precipitation, are non-Gaussian distributed.
-  #correlation_pval <- sapply(df_timeseries_wide[,2:(ncol(df_timeseries_wide)-1)], function(x) cor.test(x, df_timeseries_wide$response_val, method = "spearman", use = "na.or.complete", exact = FALSE))
+  correlation_pval <- sapply(df_timeseries_wide[,3:(ncol(df_timeseries_wide))], function(x) cor.test(x, df_timeseries_wide$response_val, method = "spearman", use = "na.or.complete", exact = FALSE))
+  correlation_pval_df <- correlation_pval["p.value",] %>% as.data.frame() %>% pivot_longer(colnames(correlation_pval)) %>% as_tibble()
+  colnames(correlation_pval_df) <- c("name","pval")
   correlation_df <- as.data.frame(correlation)
-  correlation_df$time_lag_1 <- as.numeric(sub('.*\\_', '', rownames(correlation_df)))
-  correlation_df$time_lag_2 <- as.numeric(stringr::str_match(rownames(correlation_df), '([^_]+)(?:_[^_]+){1}$')[,2])  
+  correlation_df$name <- rownames(correlation_df)
+  correlation_df <- left_join(correlation_df,correlation_pval_df, by="name")
+  correlation_df$time_lag_1 <- as.numeric(sub('.*\\_', '', correlation_df$name))
+  correlation_df$time_lag_2 <- as.numeric(stringr::str_match( correlation_df$name, '([^_]+)(?:_[^_]+){1}$')[,2])  
   correlation_df <- arrange(correlation_df, time_lag_1, time_lag_2)
   correlation_df$abs_corr <- abs(correlation_df$correlation)
+  correlation_df$name <- NULL
   
   return(correlation_df)
+  
+}
+
+fun_ccm_corrmat_0 <- function(df_timeseries_wide, df_response_var, column_response_var){
+  
+  df_response_var <- df_response_var %>%
+    select(id, column_response_var) %>%
+    rename(response_val = column_response_var) %>%
+    mutate(response_val = as.factor(response_val))
+  
+  df_timeseries_wide <- df_response_var %>%
+    right_join(df_timeseries_wide, by = "id")
+  
+  pval <-  sapply(df_timeseries_wide[,3:(ncol(df_timeseries_wide))], function(x) kruskal.test(x, df_timeseries_wide$response_val))
+  pval_df <- pval["p.value",] %>% as.data.frame() %>% pivot_longer(colnames(pval)) %>% as_tibble()
+  colnames(pval_df) <- c("name","pval")
+  pval_df$time_lag_1 <- as.numeric(sub('.*\\_', '', pval_df$name))
+  pval_df$time_lag_2 <- as.numeric(stringr::str_match( pval_df$name, '([^_]+)(?:_[^_]+){1}$')[,2])  
+  pval_df <- arrange(pval_df, time_lag_1, time_lag_2)
+  pval_df$name <- NULL
   
 }
   
 # function to plot the CCM the 
 fun_ccm_plot <- function(correlation_df, var, buffer, country){
   
-  abs_corr <- correlation_df %>% filter(abs_corr == max(abs_corr))
+  correlation_df$correlation[which(correlation_df$pval > 0.05)] <- NA
+  correlation_df$abs_corr[which(correlation_df$pval > 0.05)] <- NA
+  
+  abs_corr <- correlation_df %>% filter(abs_corr == max(abs_corr, na.rm = T))
 
   if(nrow(correlation_df)>10){
     abs_corr2 <- correlation_df %>% arrange(desc(abs_corr)) %>% top_frac(.03) # 3 % top correlations will be blacked borders
@@ -151,8 +176,10 @@ fun_ccm_plot <- function(correlation_df, var, buffer, country){
 
 env_timeseries2 <- env_timeseries2 %>%
   mutate(predictive_df = pmap(list(predictive_df, var, buffer, fun_summarize), ~fun_ccm_df(..1, ..2, ..3, function_to_apply = ..4))) %>% # transform the predictive vars (widening it)
-  mutate(ccm_corrmat = map(predictive_df, ~fun_ccm_corrmat(., trmetrics_entomo_postedecapture, "ma_an", TRUE))) %>%  # calculate correlation between ma_an and the predictive vars
-  mutate(ccm_plot = pmap(list(ccm_corrmat, var, buffer, codepays), ~fun_ccm_plot(..1,..2,..3,..4))) # plot CCM
+  mutate(ccm_corrmat_sup0 = map(predictive_df, ~fun_ccm_corrmat_sup0(., trmetrics_entomo_postedecapture, "ma_an"))) %>%  # calculate correlation between ma_an and the predictive vars
+  mutate(ccm_plot_sup0 = pmap(list(ccm_corrmat_sup0, var, buffer, codepays), ~fun_ccm_plot(..1,..2,..3,..4))) %>% # plot CCM
+  mutate(ccm_corrmat_0 = map(predictive_df, ~fun_ccm_corrmat_sup0(., trmetrics_entomo_postedecapture, "pres_an"))) #%>% 
+  #mutate(ccm_plot_0 = pmap(list(ccm_corrmat_0, var, buffer, codepays), ~fun_ccm_plot(..1,..2,..3,..4)))
   
 vars <- unique(env_timeseries2$var)
 
@@ -161,7 +188,7 @@ for(i in 1:length(vars)){
   th_timeseries_expl_bf <- env_timeseries %>%
     filter(var == vars[i], codepays == "BF") %>%
     group_by(date, buffer) %>%
-    summarise(val = mean(val)) %>%
+    summarise(val = mean(val, na.rm = T)) %>%
     as_tibble() %>%
     mutate(date = as.Date(date))
   
@@ -177,19 +204,20 @@ for(i in 1:length(vars)){
     geom_boxplot(aes(x = th_timeseries_resp_bf$date, y = th_timeseries_resp_bf$ma_an * scaleFactor_bf, group = th_timeseries_resp_bf$date), show.legend = FALSE, outlier.shape=NA) + 
     geom_jitter(aes(x = th_timeseries_resp_bf$date, y = th_timeseries_resp_bf$ma_an * scaleFactor_bf, group = th_timeseries_resp_bf$date), position=position_jitter(2), cex=0.3) + 
     #geom_flat_violin(aes(x = th_timeseries_resp_bf$date, y = th_timeseries_resp_bf$ma_an * scaleFactor_bf, group = th_timeseries_resp_bf$date), position = position_nudge(x = .25, y = -1), adjust =2, trim = TRUE)+
-    scale_y_continuous(name = vars[i], sec.axis = sec_axis(~./scaleFactor_bf, name = "ma_an")) +
-    scale_x_date(date_labels = "%b %Y", date_breaks = "2 months") +
+    scale_y_continuous(name = "Rainfall (mm)", sec.axis = sec_axis(~./scaleFactor_bf, name = "Human biting rate")) +
+    scale_x_date(date_labels = "%m/%Y", date_breaks = "2 months") +
     theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
-    theme_minimal()
+    theme_minimal() +
+    ggtitle("BF")
   
   
   
   th_env_timeseries <- env_timeseries2 %>% filter(var == vars[i], codepays == "BF")
   
-  th_patchwork_bf <- th_env_timeseries$ccm_plot[[1]]
+  th_patchwork_bf <- th_env_timeseries$ccm_plot_sup0[[1]]
   if(nrow(th_env_timeseries)>1){
     for(j in 2:nrow(th_env_timeseries)){
-     th_patchwork_bf <- th_patchwork_bf + th_env_timeseries$ccm_plot[[j]]
+     th_patchwork_bf <- th_patchwork_bf + th_env_timeseries$ccm_plot_sup0[[j]]
     }
   }
   
@@ -197,7 +225,7 @@ for(i in 1:length(vars)){
   th_timeseries_expl_ci <- env_timeseries %>%
     filter(var == vars[i], codepays == "CI") %>%
     group_by(date, buffer) %>%
-    summarise(val = mean(val)) %>%
+    summarise(val = mean(val, na.rm = T)) %>%
     as_tibble() %>%
     mutate(date = as.Date(date))
   
@@ -213,17 +241,18 @@ for(i in 1:length(vars)){
     geom_boxplot(aes(x = th_timeseries_resp_ci$date, y = th_timeseries_resp_ci$ma_an * scaleFactor_ci, group = th_timeseries_resp_ci$date), show.legend = FALSE, outlier.shape = NA) + 
     geom_jitter(aes(x = th_timeseries_resp_ci$date, y = th_timeseries_resp_ci$ma_an * scaleFactor_ci, group = th_timeseries_resp_ci$date), position=position_jitter(2), cex=0.3) + 
     #geom_flat_violin(aes(x = th_timeseries_resp_bf$date, y = th_timeseries_resp_bf$ma_an * scaleFactor_bf, group = th_timeseries_resp_bf$date), position = position_nudge(x = .25, y = -1), adjust =2, trim = TRUE)+
-    scale_y_continuous(name = vars[i], sec.axis = sec_axis(~./scaleFactor_ci, name = "ma_an")) +
+    scale_y_continuous(name = "Rainfall (mm)", sec.axis = sec_axis(~./scaleFactor_ci, name = "Human biting rate")) +
     scale_x_date(date_labels = "%m/%Y", date_breaks = "2 months") +
     theme(axis.text.x = element_text(angle = 40, hjust = 1)) +
-    theme_minimal()
+    theme_minimal() +
+    ggtitle("CI")
   
   
   th_env_timeseries <- env_timeseries2 %>% filter(var == vars[i], codepays == "CI")
-  th_patchwork_ci <- th_env_timeseries$ccm_plot[[1]]
+  th_patchwork_ci <- th_env_timeseries$ccm_plot_sup0[[1]]
   if(nrow(th_env_timeseries) > 0){
     for(j in 2:nrow(th_env_timeseries)){
-      th_patchwork_ci <- th_patchwork_ci + th_env_timeseries$ccm_plot[[j]]
+      th_patchwork_ci <- th_patchwork_ci + th_env_timeseries$ccm_plot_sup0[[j]]
     }
   }
 
@@ -289,3 +318,17 @@ corrplot(res[[1]],
          type = "upper", 
          diag= FALSE,
          tl.col = "dark grey", tl.srt = 45)
+
+
+
+
+
+
+
+
+
+bf <- trmetrics_entomo_postedecapture %>% left_join(entomo_csh_metadata_l1) %>% filter(codepays=="BF")
+bf_sup0 <- bf %>% filter(ma_an>0)
+bf.binned <- mltools::bin_data(bf_sup0$ma_an, bins = 7, binType = "quantile")
+ci.binned <- mltools::bin_data(ci_sup0$ma_an, bins = 10, binType = "quantile")
+
