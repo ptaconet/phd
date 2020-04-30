@@ -5,7 +5,7 @@ library(DBI)
 library(RSQLite)
 require(tidyverse)
 
-path_to_gpkg_database <- "data/react_db/react_db.gpkg"
+#path_to_gpkg_database <- "data/react_db/react_db.gpkg"
 react_gpkg <- DBI::dbConnect(RSQLite::SQLite(),dbname = path_to_gpkg_database)
 
 # --- ### --- ###--- ###--- ###--- ###--- ###

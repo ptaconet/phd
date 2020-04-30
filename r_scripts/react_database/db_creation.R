@@ -472,11 +472,11 @@ st_write(lulc_zonal_stats_bf, path_to_gpkg_database, "lco_groundtruth_bf_zonalst
     mutate(lag_time=as.integer(lag_time)) %>%
     mutate(lag_n=as.integer(lag_n))
   data_ts <- cbind(fid = 1:nrow(data_ts), data_ts)
-  dbWriteTable(react_gpkg,"env_timeseries",data_ts,overwrite=TRUE)
+  dbWriteTable(react_gpkg,"env_spatiotemporal",data_ts,overwrite=TRUE)
   data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(data_ts),table="env_timeseries"))
 
   # nightcatch
-  paths<-c("RFH","WDR","WSP","LMN")
+  paths<-c("RFH","WDR","WSP","LMN","NMA")
   path_to_bf_nightcatch<-paste0(path_to_bf_folder,"/",paths,".csv")
   path_to_civ_nightcatch<-paste0(path_to_civ_folder,"/",paths,".csv")
   path_to_nightcatch<-c(path_to_bf_nightcatch,path_to_civ_nightcatch)
@@ -488,6 +488,19 @@ st_write(lulc_zonal_stats_bf, path_to_gpkg_database, "lco_groundtruth_bf_zonalst
   dbWriteTable(react_gpkg,"env_nightcatch",data_nightcatch,overwrite=TRUE)
   data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(data_nightcatch),table="env_nightcatch"))
 
+  # nightcatch_postedecapture
+  paths<-c("NMT_NML_NMH_NDP")
+  path_to_bf_nightcatch_postedecapture<-paste0(path_to_bf_folder,"/",paths,".csv")
+  path_to_civ_nightcatch_postedecapture<-paste0(path_to_civ_folder,"/",paths,".csv")
+  path_to_nightcatch_postedecapture<-c(path_to_bf_nightcatch_postedecapture,path_to_civ_nightcatch_postedecapture)
+  
+  data_nightcatch_postedecapture<-path_to_nightcatch_postedecapture %>%
+    map(~read_csv(.)) %>%
+    do.call(rbind,.)
+  data_nightcatch_postedecapture <- cbind(fid = 1:nrow(data_nightcatch_postedecapture), data_nightcatch_postedecapture)
+  dbWriteTable(react_gpkg,"env_nightcatch_postedecapture",data_nightcatch_postedecapture,overwrite=TRUE)
+  data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(data_nightcatch_postedecapture),table="env_nightcatch_postedecapture"))
+  
   # static_buffer
   paths<-c("TEL_TSL_TAS_WAC_TCI_TWI","WAD_WLS_WAL","POP","POH","HYS","BCH")
   path_to_bf_static<-paste0(path_to_bf_folder,"/",paths,".csv")
@@ -499,7 +512,7 @@ st_write(lulc_zonal_stats_bf, path_to_gpkg_database, "lco_groundtruth_bf_zonalst
     do.call(rbind,.) %>%
     mutate(val=as.numeric(val))
   data_staticbuffer <- cbind(fid = 1:nrow(data_staticbuffer), data_staticbuffer)
-  dbWriteTable(react_gpkg,"env_staticbuffer",data_staticbuffer,overwrite=TRUE)
+  dbWriteTable(react_gpkg,"env_spatial",data_staticbuffer,overwrite=TRUE)
   data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(data_staticbuffer),table="env_staticbuffer"))
   
   # static_nobuffer
@@ -513,7 +526,7 @@ st_write(lulc_zonal_stats_bf, path_to_gpkg_database, "lco_groundtruth_bf_zonalst
     do.call(rbind,.)
   
   data_staticnobuffer <- cbind(fid = 1:nrow(data_staticnobuffer), data_staticnobuffer)
-  dbWriteTable(react_gpkg,"env_staticnobuffer",data_staticnobuffer,overwrite=TRUE)
+  dbWriteTable(react_gpkg,"env_static",data_staticnobuffer,overwrite=TRUE)
   data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(data_staticnobuffer),table="env_staticnobuffer"))
   
   # landcover
@@ -522,7 +535,7 @@ st_write(lulc_zonal_stats_bf, path_to_gpkg_database, "lco_groundtruth_bf_zonalst
 
   lsm<-rbind(read.csv(path_to_lsm_civ,stringsAsFactors = F),read.csv(path_to_lsm_bf,stringsAsFactors = F)) #%>% mutate_all(as.character)
   lsm <- cbind(fid = 1:nrow(lsm), lsm)
-  dbWriteTable(react_gpkg,"env_lsm",lsm,overwrite=TRUE)
+  dbWriteTable(react_gpkg,"env_landcover",lsm,overwrite=TRUE)
   data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(lsm),table="env_lsm"))
 
   

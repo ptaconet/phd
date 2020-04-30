@@ -16,15 +16,17 @@ path_to_db <- "data/react_db/react_db.gpkg"
 react_gpkg <- DBI::dbConnect(RSQLite::SQLite(),dbname = path_to_db)
 
 # open tables
-trmetrics_entomo_pointdecapture <- dbReadTable(react_gpkg, 'trmetrics_entomo_pointdecapture') %>% dplyr::select(-fid) %>% rename(id = idpointdecapture)
+#trmetrics_entomo_pointdecapture <- dbReadTable(react_gpkg, 'trmetrics_entomo_pointdecapture') %>% dplyr::select(-fid) %>% rename(id = idpointdecapture)
 trmetrics_entomo_postedecapture <- dbReadTable(react_gpkg, 'trmetrics_entomo_postedecapture') %>% dplyr::select(-fid) %>% rename(id = idpointdecapture)
 entomo_csh_metadata_l1 <- dbReadTable(react_gpkg, 'entomo_csh_metadata_l1') %>% dplyr::select(-fid)
 recensement_villages_l1 <- st_read(path_to_db,"recensement_villages_l1", quiet=T) %>%
   filter(!is.na(intervention)) %>%
   dplyr::select("codevillage","codepays","nomvillage","population","intervention","date_debut_interv","date_fin_interv","X","Y")
-env_timeseries <-  dbReadTable(react_gpkg, 'env_timeseries') %>% dplyr::select(-fid) %>% filter(var!="WMW30")
-env_staticnobuffer <-  dbReadTable(react_gpkg, 'env_staticnobuffer') %>% dplyr::select(-fid)
+env_spatiotemporal <-  dbReadTable(react_gpkg, 'env_spatiotemporal') %>% dplyr::select(-fid) %>% filter(var!="WMW30")
+env_static <-  dbReadTable(react_gpkg, 'env_static') %>% dplyr::select(-fid)
+env_spatial <- dbReadTable(react_gpkg,'env_spatial') %>% dplyr::select(-fid)
 env_nightcatch <-  dbReadTable(react_gpkg, 'env_nightcatch') %>% dplyr::select(-fid)
+env_landcover <-  dbReadTable(react_gpkg, 'env_landcover') %>% dplyr::select(-fid)
 
 # get the number of human - nights
 idpointdecaptures <- dbReadTable(react_gpkg, 'entomo_csh_metadata_l1') %>%
@@ -37,25 +39,26 @@ mean_date_by_mission <- entomo_csh_metadata_l1 %>%
   as_tibble()
 
 
-# get response variable table
+# get table of explanatory variables
 googlesheets4::sheets_deauth()
-response_vars <- googlesheets4::read_sheet("https://docs.google.com/spreadsheets/d/1dIeSOa2WinXvOQGLmIjA0gFdsHnb6zMMsDME-G5pyMc/edit?usp=sharing", sheet = "var_reponse2", col_types="c")
-prediction_vars <- googlesheets4::read_sheet("https://docs.google.com/spreadsheets/d/1dIeSOa2WinXvOQGLmIjA0gFdsHnb6zMMsDME-G5pyMc/edit?usp=sharing", sheet = "var_prediction", col_types="c")
+#response_vars <- googlesheets4::read_sheet("https://docs.google.com/spreadsheets/d/1dIeSOa2WinXvOQGLmIjA0gFdsHnb6zMMsDME-G5pyMc/edit?usp=sharing", sheet = "var_reponse2", col_types="c")
+prediction_vars <- googlesheets4::read_sheet("https://docs.google.com/spreadsheets/d/1dIeSOa2WinXvOQGLmIjA0gFdsHnb6zMMsDME-G5pyMc/edit?usp=sharing", sheet = "var_explication", col_types="c")
+
 
 # join codepays and variable type to the explanatory vars
-env_timeseries <- env_timeseries %>%
+env_spatiotemporal <- env_spatiotemporal %>%
   mutate(buffer = as.character(buffer)) %>%
   right_join(idpointdecaptures[,c("idpointdecapture","codepays")], by =  c("id" = "idpointdecapture")) %>%
-  left_join(prediction_vars[,c("code","type")], by = c("var" = "code"))
+  left_join(prediction_vars[,c("code","type_group1")], by = c("var" = "code"))
   
   
 # retructurate in lists
-env_timeseries2 <- env_timeseries %>%
+env_spatiotemporal2 <- env_spatiotemporal %>%
   dplyr::select(-c(lag_time, date)) %>%
-  group_by(type, var, codepays, buffer) %>%
+  group_by(type_group1, var, codepays, buffer) %>%
   tidyr::nest(predictive_df = c(id, lag_n , val)) %>%
   mutate(fun_summarize = ifelse(var %in% c("RFD1","RFD7"), "sum", "mean")) %>%
-  arrange(type, var, codepays, as.numeric(buffer), fun_summarize)
+  arrange(type_group1, var, codepays, as.numeric(buffer), fun_summarize)
 
 # function to create the data.frame for CCM
 fun_ccm_df <- function(df_timeseries, var, buffer, function_to_apply = "mean"){
@@ -113,6 +116,9 @@ fun_ccm_corrmat_sup0 <- function(df_timeseries_wide, df_response_var, column_res
   correlation_df$abs_corr <- abs(correlation_df$correlation)
   correlation_df$name <- NULL
   
+  correlation_df$correlation[which(correlation_df$pval > 0.05)] <- NA
+  correlation_df$abs_corr[which(correlation_df$pval > 0.05)] <- NA
+  
   return(correlation_df)
   
 }
@@ -135,13 +141,14 @@ fun_ccm_corrmat_0 <- function(df_timeseries_wide, df_response_var, column_respon
   pval_df <- arrange(pval_df, time_lag_1, time_lag_2)
   pval_df$name <- NULL
   
+  pval_df$pval[which(pval_df$pval > 0.05)] <- NA
+  
+  return(pval_df)
+  
 }
   
 # function to plot the CCM the 
 fun_ccm_plot <- function(correlation_df, var, buffer, country){
-  
-  correlation_df$correlation[which(correlation_df$pval > 0.05)] <- NA
-  correlation_df$abs_corr[which(correlation_df$pval > 0.05)] <- NA
   
   abs_corr <- correlation_df %>% filter(abs_corr == max(abs_corr, na.rm = T))
 
@@ -174,18 +181,18 @@ fun_ccm_plot <- function(correlation_df, var, buffer, country){
 }
 
 
-env_timeseries2 <- env_timeseries2 %>%
+env_spatiotemporal2 <- env_spatiotemporal2 %>%
   mutate(predictive_df = pmap(list(predictive_df, var, buffer, fun_summarize), ~fun_ccm_df(..1, ..2, ..3, function_to_apply = ..4))) %>% # transform the predictive vars (widening it)
-  mutate(ccm_corrmat_sup0 = map(predictive_df, ~fun_ccm_corrmat_sup0(., trmetrics_entomo_postedecapture, "ma_an"))) %>%  # calculate correlation between ma_an and the predictive vars
+  mutate(ccm_corrmat_sup0 = map(predictive_df, ~fun_ccm_corrmat_sup0(., trmetrics_entomo_postedecapture, "ma_an"))) %>%  # calculate correlation between the response var and the predictive vars
   mutate(ccm_plot_sup0 = pmap(list(ccm_corrmat_sup0, var, buffer, codepays), ~fun_ccm_plot(..1,..2,..3,..4))) %>% # plot CCM
-  mutate(ccm_corrmat_0 = map(predictive_df, ~fun_ccm_corrmat_sup0(., trmetrics_entomo_postedecapture, "pres_an"))) #%>% 
+  mutate(ccm_corrmat_0 = map(predictive_df, ~fun_ccm_corrmat_0(., trmetrics_entomo_postedecapture, "pres_an"))) #%>% 
   #mutate(ccm_plot_0 = pmap(list(ccm_corrmat_0, var, buffer, codepays), ~fun_ccm_plot(..1,..2,..3,..4)))
   
-vars <- unique(env_timeseries2$var)
+vars <- unique(env_spatiotemporal2$var)
 
 for(i in 1:length(vars)){
 
-  th_timeseries_expl_bf <- env_timeseries %>%
+  th_timeseries_expl_bf <- env_spatiotemporal %>%
     filter(var == vars[i], codepays == "BF") %>%
     group_by(date, buffer) %>%
     summarise(val = mean(val, na.rm = T)) %>%
@@ -212,17 +219,17 @@ for(i in 1:length(vars)){
   
   
   
-  th_env_timeseries <- env_timeseries2 %>% filter(var == vars[i], codepays == "BF")
+  th_env_spatiotemporal <- env_spatiotemporal2 %>% filter(var == vars[i], codepays == "BF")
   
-  th_patchwork_bf <- th_env_timeseries$ccm_plot_sup0[[1]]
-  if(nrow(th_env_timeseries)>1){
-    for(j in 2:nrow(th_env_timeseries)){
-     th_patchwork_bf <- th_patchwork_bf + th_env_timeseries$ccm_plot_sup0[[j]]
+  th_patchwork_bf <- th_env_spatiotemporal$ccm_plot_sup0[[1]]
+  if(nrow(th_env_spatiotemporal)>1){
+    for(j in 2:nrow(th_env_spatiotemporal)){
+     th_patchwork_bf <- th_patchwork_bf + th_env_spatiotemporal$ccm_plot_sup0[[j]]
     }
   }
   
   
-  th_timeseries_expl_ci <- env_timeseries %>%
+  th_timeseries_expl_ci <- env_spatiotemporal %>%
     filter(var == vars[i], codepays == "CI") %>%
     group_by(date, buffer) %>%
     summarise(val = mean(val, na.rm = T)) %>%
@@ -248,11 +255,11 @@ for(i in 1:length(vars)){
     ggtitle("CI")
   
   
-  th_env_timeseries <- env_timeseries2 %>% filter(var == vars[i], codepays == "CI")
-  th_patchwork_ci <- th_env_timeseries$ccm_plot_sup0[[1]]
-  if(nrow(th_env_timeseries) > 0){
-    for(j in 2:nrow(th_env_timeseries)){
-      th_patchwork_ci <- th_patchwork_ci + th_env_timeseries$ccm_plot_sup0[[j]]
+  th_env_spatiotemporal <- env_spatiotemporal2 %>% filter(var == vars[i], codepays == "CI")
+  th_patchwork_ci <- th_env_spatiotemporal$ccm_plot_sup0[[1]]
+  if(nrow(th_env_spatiotemporal) > 0){
+    for(j in 2:nrow(th_env_spatiotemporal)){
+      th_patchwork_ci <- th_patchwork_ci + th_env_spatiotemporal$ccm_plot_sup0[[j]]
     }
   }
 
@@ -274,17 +281,24 @@ for(i in 1:length(vars)){
 
 
 
-env_timeseries3 <- env_timeseries2 %>%
-  mutate(ccm_maxcorr_vcor = map_dbl(ccm_corrmat, function(x) x$correlation[which.max(abs(x$correlation))])) %>%
-  mutate(ccm_max_corr_lag1 = map_dbl(ccm_corrmat, function(x) x$time_lag_1[which.max(abs(x$correlation))])) %>%
-  mutate(ccm_max_corr_lag2 = map_dbl(ccm_corrmat, function(x) x$time_lag_2[which.max(abs(x$correlation))])) %>%
-  select(-c(predictive_df, ccm_corrmat, ccm_plot)) %>%
+env_spatiotemporal3 <- env_spatiotemporal2 %>%
+  mutate(ccm_maxcorr_vcor = map_dbl(ccm_corrmat_sup0, function(x) x$correlation[which.max(abs(x$correlation))])) %>% # get max correlation value
+  mutate(ccm_maxcorr_lag1 = map_dbl(ccm_corrmat_sup0, function(x) x$time_lag_1[which.max(abs(x$correlation))])) %>% # get time lag 1 for max correlation value
+  mutate(ccm_maxcorr_lag2 = map_dbl(ccm_corrmat_sup0, function(x) x$time_lag_2[which.max(abs(x$correlation))])) %>% # get time lag 2 for max correlation value
+  select(-c(predictive_df, ccm_corrmat_sup0, ccm_plot_sup0, ccm_corrmat_0)) %>%
   as_tibble()
+
+
+
+
+
+
+
 
 
 ########## static
 
-env_staticnobuffer2 <- env_staticnobuffer %>%
+env_static2 <- env_static %>%
   pivot_wider(names_from = var, values_from = val) %>%
   right_join(trmetrics_entomo_postedecapture) %>%
   left_join(entomo_csh_metadata_l1, by = c("id" = "idpointdecapture")) %>%
@@ -292,7 +306,7 @@ env_staticnobuffer2 <- env_staticnobuffer %>%
   map(~select(.,ma_an,WMD,BDE,VCT)) %>%
   map(~mutate_all(.,as.numeric))
 
-res <- env_staticnobuffer2 %>%
+res <- env_static2 %>%
   map(.,~cor(.,method = "spearman", use = "na.or.complete"))
 
 library(corrplot)

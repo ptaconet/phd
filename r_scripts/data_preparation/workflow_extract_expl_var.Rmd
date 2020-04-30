@@ -746,6 +746,79 @@ write.csv(LMN, file.path("data",roi_name,"LMN.csv"), row.names = F)
 
 ```
 
+#### NMT, NML, NMH, NMA
+
+```{r }
+df_points_metadata_entomo2 <- df_points_metadata_entomo %>%
+  mutate(idpostedecapture = paste0(id,"e")) %>%
+  dplyr::select(idpostedecapture)
+
+df_points_metadata_entomo3 <- df_points_metadata_entomo2 %>%
+    mutate(idpostedecapture = gsub("e","i",idpostedecapture))
+
+df_points_metadata_entomo2 <- rbind(df_points_metadata_entomo2,df_points_metadata_entomo3)
+
+# open data stored in db
+NMT_NML <- st_read(path_to_db,"entomo_hobo_l0", stringsAsFactors=F) %>%
+  group_by(idpostedecapture) %>%
+  summarise(NMT=mean(temperature, na.rm = T), NML=mean(luminosite, na.rm = T)) %>%
+  pivot_longer(cols = c("NMT","NML")) %>%
+  rename(var = name, val = value) %>%
+  right_join(df_points_metadata_entomo2)
+
+NMT_NMH_NDP <- st_read(path_to_db,"entomo_hygro_l0", stringsAsFactors=F) %>%
+  group_by(idpostedecapture) %>%
+  summarise(NMT=mean(temperature, na.rm = T), NMH=mean(humidity, na.rm = T), NDP=mean(pointderosee, na.rm = T)) %>%
+  pivot_longer(cols = c("NMT","NMH","NDP")) %>%
+  rename(var = name, val = value) %>%
+  right_join(df_points_metadata_entomo2)
+
+NMT_NMH_NMA <- st_read(path_to_db,"entomo_baro_l0", stringsAsFactors=F) %>%
+  group_by(codevillage,nummission) %>%
+  summarise(NMT=mean(temperature, na.rm = T), NMH=mean(humidity, na.rm = T), NMA = mean(pressure, na.rm = T)) %>%
+  pivot_longer(cols = c("NMT","NMH","NMA")) %>%
+  rename(var = name, val = value) %>%
+  mutate(nummission = as.character(nummission)) %>%
+  right_join(st_read(path_to_db,"entomo_csh_metadata_l1", stringsAsFactors=F)) %>%
+  filter(codepays == country) %>%
+  dplyr::select(idpointdecapture,var,val) %>%
+  as_tibble() %>%
+  dplyr::select(-codevillage) %>%
+  rename(id = idpointdecapture)
+
+NMA <- NMT_NMH_NMA %>%
+  filter(var=="NMA")
+
+NMT_NMH_NMA <- NMT_NMH_NMA %>%
+  filter(var!="NMA") %>%
+  mutate(idpostedecapture = paste0(id,"e")) %>%
+  dplyr::select(-id)
+
+NMT_NMH_NMA2 <- NMT_NMH_NMA %>%
+    mutate(idpostedecapture = gsub("e","i",idpostedecapture))
+
+NMT_NMH_NMA <- rbind(NMT_NMH_NMA,NMT_NMH_NMA2)
+
+NMT_NML_NMH_NDP <- full_join(NMT_NML,NMT_NMH_NDP, by = c("idpostedecapture","var"))
+NMT_NML_NMH_NDP$val <- rowMeans(NMT_NML_NMH_NDP[,c("val.x", "val.y")], na.rm=TRUE)
+NMT_NML_NMH_NDP$val.x <- NMT_NML_NMH_NDP$val.y <- NULL
+
+NMT_NML_NMH_NDP <- NMT_NML_NMH_NDP %>%
+  dplyr::select(idpostedecapture,var,val) %>%
+  full_join(NMT_NMH_NMA, by = c("idpostedecapture","var")) %>%
+  rename(val = val.x) %>%
+  mutate(val = ifelse((var == "NMT" & is.na(val)),val.y,val)) %>% # si la température n'existe ni dans le hobo ni dans l'hygro, on la remplace par celle du baro
+  mutate(val = ifelse((var == "NMH" & is.na(val)),val.y,val)) %>% # de même pour l'humidité
+  dplyr::select(-val.y) %>%
+  filter(var %in% c("NMT","NML","NMH","NDP"))
+
+# Save to disk
+write.csv(NMA, file.path("data",roi_name,"NMA.csv"), row.names = F)
+write.csv(NMT_NML_NMH_NDP, file.path("data",roi_name,"NMT_NML_NMH_NDP.csv"), row.names = F)
+
+```
+
+
 ### Non-temporal indicators
 
 #### TEL, TSL, TAS, TCI, TWI, WAC
@@ -765,7 +838,7 @@ dem_and_derivatives_rast <- brick(dem_and_derivatives)
 names(dem_and_derivatives_rast)<-c("TEL","TSL","TAS","WAC","TCI","TWI")
 
 # Extract the averaged value from the resulting products within each buffer around the sampling points.
-      TEL_TSL_TAS_WAC_TCI_TWI <- eodataflow::extract_var_on_buffers(dem_and_derivatives_rast, sf_points_metadata, buffer_sizes_v2, verbose = TRUE )
+TEL_TSL_TAS_WAC_TCI_TWI <- eodataflow::extract_var_on_buffers(dem_and_derivatives_rast, sf_points_metadata, buffer_sizes_v2, verbose = TRUE )
 
 # Convert accumulation from number of pixels to surface in ha
 TEL_TSL_TAS_WAC_TCI_TWI <- mutate(TEL_TSL_TAS_WAC_TCI_TWI,val=if_else(var=="WAC",val*res(dem_and_derivatives_rast)[1]*res(dem_and_derivatives_rast)[2]/10000,val))

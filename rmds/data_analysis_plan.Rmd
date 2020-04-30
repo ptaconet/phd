@@ -597,6 +597,12 @@ L'idée de ces graphes est donc double :
 - c'est un moyen graphique de représenter les éléments de notre système (variables à expliquer, variables explicatives) et les liens qui relient ces éléments entre eux ;
 - c'est aussi un moyen, une fois les modèles mathématiques univariés établis, de répresenter graphiquement l'effet et la significativité de l'effet entre 2 éléments du système.
 
+Enseignements à tirer du modèle conceptuel :
+
+- une modification du comportement d'un élément du système peut entrainer une modification de la variable réponse dans le positif ou dans le négatif (ex: précipitations remplit ou vide les gites larvaires, température de l'air favorise l'activité des moustiques ou évapore les gites, forte activité chlorophylienne = beaucoup d'eau mais aussi capacité de dispersion limitée, etc)
+- dans les faits on étudie souvent des proxy : ex. précipitations = proxy de la quantité de gites larvaires, activité chlorophylienne = proxy de l'humidité, etc.
+- on ne teste pas toutes les associations car on n'a pas certaines données (e.g. pas de données sur les gites domestiques)
+
 ### Etat d'avancement 
 
 Ces tableaux (noeuds et liens) sont en cours de constitution sur le classeur disponible à l'adresse suivante : 

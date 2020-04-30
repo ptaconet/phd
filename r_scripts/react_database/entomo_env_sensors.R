@@ -451,11 +451,11 @@
     rbind(df_hobo_mission_1) %>%
     left_join(ent_hlcmetadataraw) %>%
     filter(date_heure>=date_heure_debut & date_heure<=date_heure_fin) %>% # on ne garde que les heures pendant lesquelles il y a des captures
-    mutate(idpointdecapture=paste0(nummission,codevillage,pointdecapture,postedecapture)) %>%
-    dplyr::select(idpointdecapture,position,date_heure,temperature,luminosite) %>%
+    mutate(idpostedecapture=paste0(nummission,codevillage,pointdecapture,postedecapture)) %>%
+    dplyr::select(idpostedecapture,position,date_heure,temperature,luminosite) %>%
     rename(date_time=date_heure)
 
-  # View(df_hobo %>% group_by(idpointdecapture) %>% summarise(compte=n(),min_date=min(date_heure),max_date=max(date_heure)))
+  # View(df_hobo %>% group_by(idpostedecapture) %>% summarise(compte=n(),min_date=min(date_heure),max_date=max(date_heure)))
 
   ## pareil pour hygro
 
@@ -499,11 +499,11 @@
     rbind(df_hygro_mission_1) %>%
     left_join(ent_hlcmetadataraw) %>%
     filter(date_heure>=date_heure_debut & date_heure<=date_heure_fin) %>% # on ne garde que les heures pendant lesquelles il y a des captures
-    mutate(idpointdecapture=paste0(nummission,codevillage,pointdecapture,postedecapture)) %>%
-    dplyr::select(idpointdecapture,date_heure,temperature,humidity,pointderosee) %>%
+    mutate(idpostedecapture=paste0(nummission,codevillage,pointdecapture,postedecapture)) %>%
+    dplyr::select(idpostedecapture,date_heure,temperature,humidity,pointderosee) %>%
     rename(date_time=date_heure)
 
-  # View(df_hygro %>% group_by(idpointdecapture) %>% summarise(compte=n(),min_date=min(date_heure),max_date=max(date_heure)))
+  # View(df_hygro %>% group_by(idpostedecapture) %>% summarise(compte=n(),min_date=min(date_heure),max_date=max(date_heure)))
 
   df_hygro$date_time<-as.character(df_hygro$date_time)
   df_hobo$date_time<-as.character(df_hobo$date_time)
@@ -513,3 +513,174 @@
   ####################################################################
   ############################## CIV  ################################
   ####################################################################
+  
+  path_to_folder<-"data/react_db/miscellaneous_data/Donnees_Environn_CI_ok/Donnees_brutes/Donnees/Data"
+  
+  sacs_enquetes_paths <- list.files(path_to_folder,pattern = "planning",full.names = T)
+  df_sacs_enquetes <- NULL
+  for (i in 1:length(sacs_enquetes_paths)){
+    th_enq<-read_excel(sacs_enquetes_paths[i]) %>%
+      dplyr::select(Code,Code_village) 
+    th_enq$nummission<-as.numeric(substr(sacs_enquetes_paths[i],nchar(sacs_enquetes_paths[i])-5,nchar(sacs_enquetes_paths[i])-5))
+    colnames(th_enq) <- c("sac","codevillage","nummission")
+    df_sacs_enquetes <- rbind(df_sacs_enquetes,th_enq)
+  }
+  
+  df_sacs_enquetes$codevillage[which(df_sacs_enquetes$codevillage=="KOU")]<-"KON"
+  df_sacs_enquetes$codevillage[which(df_sacs_enquetes$codevillage=="NAV")]<-"NAA"
+  #df_sacs_enquetes$date_capture<-as.Date(df_sacs_enquetes$date_capture)
+  #df_sacs_enquetes$date_heure_debut <-as_datetime(df_sacs_enquetes$date_heure_debut)
+  #df_sacs_enquetes$date_heure_fin <-as_datetime(df_sacs_enquetes$date_heure_fin)
+  
+  #hlc_dates<-read_sf(path_to_gpkg_database,"entomo_csh_metadata_l1") %>% as_tibble %>% mutate(nummission=as.numeric(nummission)) %>% filter(codepays=="CI") %>% dplyr::select(codevillage,date_capture,nummission,date_heure_debut,date_heure_fin)  %>% unique()
+  #hlc_pointsdepcature <- read_sf(path_to_gpkg_database,"entomo_csh_metadata_l1") %>% as_tibble %>% mutate(nummission=as.numeric(nummission)) %>% filter(codepays=="CI") %>% dplyr::select(codevillage,date_capture,idpointdecapture,pointdecapture,nummission,date_heure_debut,date_heure_fin)
+  #df_sacs_enquetes <- df_sacs_enquetes %>% left_join(hlc_dates)
+  
+  hlc_postedepcature_ext <- read_sf(path_to_gpkg_database,"entomo_csh_metadata_l1") %>% as_tibble %>% mutate(nummission=as.numeric(nummission)) %>% filter(codepays=="CI") %>% dplyr::select(codevillage,date_capture,idpointdecapture,pointdecapture,nummission,date_heure_debut,date_heure_fin) %>% mutate(postedecapture="e") %>% mutate(idpostedecapture=paste0(idpointdecapture,postedecapture))
+  hlc_postedepcature_int <- hlc_postedepcature_ext %>% mutate(postedecapture='i') %>%  mutate(idpostedecapture=paste0(idpointdecapture,postedecapture))
+  hlc_postedepcature <- rbind(hlc_postedepcature_ext,hlc_postedepcature_int)
+  
+  hlc_postedepcature <- hlc_postedepcature %>% left_join(df_sacs_enquetes) %>% mutate(fichier = paste0(sac,pointdecapture,postedecapture)) %>% mutate(date_heure_debut=as_datetime(date_heure_debut)) %>% mutate(date_heure_fin=as_datetime(date_heure_fin))
+  
+  
+  # hobo
+  dirs_hobo <- list.dirs(path_to_folder)
+  dirs_hobo <- dirs_hobo[which(grepl("Hobo",dirs_hobo))]
+  
+  df_hobo_ci <- NULL
+  for(i in 1:length(dirs_hobo)){
+    th_nummission <- as.numeric(substr(dirs_hobo[i],nchar(dirs_hobo[i]),nchar(dirs_hobo[i])))
+      files_hobo <- list.files(dirs_hobo[i],full.names = T)
+      if(th_nummission==3){ sk = 0 } else {sk = 1} 
+       for(j in 1:length(files_hobo)){
+         th_fichier <- substr(files_hobo[j],nchar(files_hobo[j])-6,nchar(files_hobo[j])-4)
+         hlc_postedepcature_th_mission_th_sac <- hlc_postedepcature %>% filter(nummission==th_nummission,fichier==th_fichier)
+         
+         th_data <- read.csv(files_hobo[j],skip = sk)
+         colnames(th_data)<-c("position","date_time","temperature","luminosite")
+         th_data$date<- substr(th_data$date,1,8)
+         th_data$date<-paste0(substr(th_data$date,1,6),"20",substr(th_data$date,7,8))
+         th_data$date <- as.Date(th_data$date,format = "%d/%m/%Y")
+         th_data$date_time<-as_datetime(paste0(th_data$date,substr(th_data$date_time,9,nchar(as.character(th_data$date_time)))))
+         th_data$date[which(hour(th_data$date_time)<10)] <- as.Date(th_data$date[which(hour(th_data$date_time)<10)]-1)
+         th_data$date=as.character(th_data$date)
+         
+         th_data <- th_data %>% 
+           left_join(hlc_postedepcature_th_mission_th_sac,by=c("date"="date_capture")) %>%
+           filter(!is.na(fichier)) %>%
+           filter(date_time>=date_heure_debut & date_time<=date_heure_fin) %>%
+           dplyr::select(idpostedecapture,position,date_time,temperature,luminosite)
+         
+         df_hobo_ci <- rbind(df_hobo_ci,th_data)
+       }
+      
+  }
+  
+  
+  # baro
+  dirs_baro <- list.dirs(path_to_folder)
+  dirs_baro <- dirs_baro[which(grepl("Humidity",dirs_baro))]
+  
+  df_baro_ci <- NULL
+  
+  for(i in 1:length(dirs_baro)){
+    
+    th_nummission <- as.numeric(substr(dirs_baro[i],nchar(dirs_baro[i]),nchar(dirs_baro[i])))
+    files_baro <- list.files(dirs_baro[i],full.names = T)
+    files_baro <- c(files_baro[1],files_baro[3],files_baro[5])
+    
+    for(j in 1:length(files_baro)){
+      
+      if(j==1){
+        th_fichier="A"
+      } else if (j==2) {
+          th_fichier="B"
+      } else if (j==3) {
+            th_fichier="C"}
+      
+      hlc_postedepcature_th_mission_th_sac <-  hlc_postedepcature %>% filter(nummission==th_nummission,sac==th_fichier) %>% group_by(codevillage,date_capture,nummission) %>% summarise(date_heure_debut=min(date_heure_debut), date_heure_fin=min(date_heure_fin))
+    
+      if(grepl("xls",files_baro[j])){
+        th_data <- read_excel(files_baro[j])
+        th_data$Date <- as.character(as.Date(th_data$Date))
+        th_data$Time <- substr(as.character(th_data$Time),12,19)
+        th_data$Ch1_Value <- as.numeric(th_data$Ch1_Value)
+        th_data$Ch2_Value <- as.numeric(th_data$Ch2_Value)
+        th_data$Ch3_Value <- as.numeric(th_data$Ch3_Value)
+      } else {
+        th_data <- read.delim(files_baro[j], stringsAsFactors = F)
+        th_data$Date <- as.character(as.Date(th_data$Date,format = "%d/%m/%Y"))
+      }
+      
+      th_data <- th_data %>%
+        mutate(date_time = as_datetime(paste0(Date," ",Time))) %>%
+        dplyr::select(Position,Date,date_time,Ch1_Value,Ch2_Value,Ch3_Value)
+      colnames(th_data) <- c("position","date","date_time","humidity","temperature","pressure")
+      th_data$date[which(hour(th_data$date_time)<10)] <- as.character(as.Date(th_data$date[which(hour(th_data$date_time)<10)])-1)
+
+      
+      th_data <- th_data %>% 
+        right_join(hlc_postedepcature_th_mission_th_sac,by=c("date"="date_capture"))
+      
+      if(NA %in% unique(th_data$date_time)){ cat("mission ",i," sac ",th_fichier,"\n")}
+        
+        th_data <- th_data %>%
+        filter(!is.na(date_time)) %>%
+        filter(date_time>=date_heure_debut & date_time<=date_heure_fin) %>%
+        dplyr::select(position,date_time,codevillage,nummission,humidity,temperature,pressure)
+      
+      df_baro_ci <- rbind(df_baro_ci,th_data)
+    }
+    
+  }
+    
+  
+  # hygro
+  dirs_hygro <- list.dirs(path_to_folder)
+  dirs_hygro <- dirs_hygro[which(grepl("thermo",dirs_hygro))]
+  
+  df_hygro_ci <- NULL
+  
+  for(i in 1:length(dirs_hygro)){
+    th_nummission <- as.numeric(substr(dirs_hygro[i],nchar(dirs_hygro[i]),nchar(dirs_hygro[i])))
+    files_hygro <- list.files(dirs_hygro[i],full.names = T)
+    for(j in 1:length(files_hygro)){
+      th_fichier <- substr(files_hygro[j],nchar(files_hygro[j])-6,nchar(files_hygro[j])-4)
+      hlc_postedepcature_th_mission_th_sac <- hlc_postedepcature %>% filter(nummission==th_nummission,fichier==th_fichier)
+      
+      
+      th_data <- read_excel(files_hygro[j],skip = 3)
+      colnames(th_data)<-c("date","heure","temperature","humidity","pointderosee")
+
+      th_data$date <- as.Date(th_data$date,format = "%d/%m/%Y")
+      th_data$date_time<-as_datetime(paste0(th_data$date," ",th_data$heure))
+      th_data$date[which(hour(th_data$date_time)<10)] <- as.Date(th_data$date[which(hour(th_data$date_time)<10)]-1)
+      th_data$date=as.character(th_data$date)
+      
+      th_data <- th_data %>% 
+        left_join(hlc_postedepcature_th_mission_th_sac,by=c("date"="date_capture")) %>%
+        filter(!is.na(fichier)) %>%
+        filter(date_time>=date_heure_debut & date_time<=date_heure_fin) %>%
+        dplyr::select(idpostedecapture,date_time,temperature,humidity,pointderosee)
+      
+      df_hygro_ci <- rbind(df_hygro_ci,th_data)
+    }
+    
+  }
+  
+  
+  
+  
+  df_hygro_ci$date_time<-as.character(df_hygro_ci$date_time)
+  df_hobo_ci$date_time<-as.character(df_hobo_ci$date_time)
+  df_baro_ci$date_time<-as.character(df_baro_ci$date_time)
+
+  
+  
+  ########### bind data from both countries
+  df_hobo<-rbind(df_hobo,df_hobo_ci)
+  df_hygro<-rbind(df_hygro,df_hygro_ci)
+  df_baro<-rbind(df_baro,df_baro_ci)
+  
+  df_hobo$position<-NULL
+  df_baro$position<-NULL

@@ -234,10 +234,13 @@ coords_postecapture_civ_no_horaire$heure_fin[which(coords_postecapture_civ_no_ho
 coords_postecapture_civ_no_horaire$heure_debut<-paste0(floor(coords_postecapture_civ_no_horaire$heure_debut),":",sprintf("%02d",round(coords_postecapture_civ_no_horaire$heure_debut%%1*60)),":00")
 coords_postecapture_civ_no_horaire$heure_fin<-paste0(floor(coords_postecapture_civ_no_horaire$heure_fin),":",sprintf("%02d",round(coords_postecapture_civ_no_horaire$heure_fin%%1*60)),":00")
 coords_postecapture_civ_no_horaire$date_min<-paste0(coords_postecapture_civ_no_horaire$date_from_barnabas," ",coords_postecapture_civ_no_horaire$heure_debut)
-coords_postecapture_civ_no_horaire$date_max<-paste0(coords_postecapture_civ_no_horaire$date_from_barnabas+1," ",coords_postecapture_civ_no_horaire$heure_fin)
+coords_postecapture_civ_no_horaire$date_max<-paste0(coords_postecapture_civ_no_horaire$date_from_barnabas+1," 0",coords_postecapture_civ_no_horaire$heure_fin)
 
 coords_median_postecapture_civ$heure_debut<-coords_median_postecapture_civ$heure_fin<-NULL
 coords_postecapture_civ_no_horaire$mean_heure_min_vill_mission<-coords_postecapture_civ_no_horaire$mean_heure_max_vill_mission<-coords_postecapture_civ_no_horaire$mean_heure_min_vill<-coords_postecapture_civ_no_horaire$mean_heure_max_vill<-coords_postecapture_civ_no_horaire$mean_heure_min<-coords_postecapture_civ_no_horaire$mean_heure_max<-coords_postecapture_civ_no_horaire$heure_debut<-coords_postecapture_civ_no_horaire$heure_fin<-NULL
+
+coords_median_postecapture_civ$date_min<-as.character(coords_median_postecapture_civ$date_min)
+coords_median_postecapture_civ$date_max<-as.character(coords_median_postecapture_civ$date_max)
 
 coords_median_postecapture_civ<-rbind(coords_median_postecapture_civ,coords_postecapture_civ_no_horaire)
 
