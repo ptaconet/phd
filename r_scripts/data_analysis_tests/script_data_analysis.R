@@ -6,7 +6,6 @@ library(GGally)
 library(googlesheets4)
 library(correlation)
 library(glmertree)
-library(performance)
 
 ## source functions
 source("functions_script_data_analysis.R")
