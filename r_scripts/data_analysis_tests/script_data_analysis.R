@@ -206,7 +206,7 @@ expl_landcover_pres <- df_resp %>% left_join(expl_landcover) %>%  mutate_all(~if
 ####### ####### ####### 
 # Ici il n'y a que 8 variables. Nous pouvons donc les conserver toutes pour le modèle multivarié. Le code suivant est à but principalement exploratoire.
 expl_nightcatch_pos <- df_resp %>% left_join(expl_nightcatch) %>% left_join(expl_nightcatch_2) %>% dplyr::select(ma_gambiae_ss,RFH,WDR,WSP,LMN,NMT,NML,NMH,NDP) %>% filter(ma_gambiae_ss > 0)
-expl_nightcatch_pres <- df_resp %>% left_join(expl_nightcatch) %>% left_join(expl_nightcatch_2) %>% dplyr::select(pres_ma_gambiae_ss,RFH,WDR,WSP,LMN,NMT,NML,NMH,NDP) 
+expl_nightcatch_pres <- df_resp %>% left_join(expl_nightcatch) %>% left_join(expl_nightcatch_2) %>% dplyr::select(ma_gambiae_ss_bin,RFH,WDR,WSP,LMN,NMT,NML,NMH,NDP) 
 
 # presence / absence (variables names can be retrieved in the dataframe expl_metadata)
 ggpairs(expl_nightcatch_pres, upper = list(continuous = wrap("cor", method = "spearman")))
@@ -219,7 +219,7 @@ ggpairs(expl_nightcatch_pos, upper = list(continuous = wrap("cor", method = "spe
 ####### ####### ####### 
 # Ici il n'y a que 10 variables. Nous pouvons donc les conserver toutes pour le modèle multivarié. Le code suivant est à but principalement exploratoire.
 expl_spatial_pos <- df_resp %>% left_join(expl_spatial) %>% dplyr::select(ma_gambiae_ss,TEL,TSL,TAS,WAC,TCI,TWI,WAD,WLS,WAL,HYS) %>% filter(ma_gambiae_ss>0)
-expl_spatial_pres <-  df_resp %>% left_join(expl_spatial) %>% dplyr::select(pres_ma_gambiae_ss,TEL,TSL,TAS,WAC,TCI,TWI,WAD,WLS,WAL,HYS)
+expl_spatial_pres <-  df_resp %>% left_join(expl_spatial) %>% dplyr::select(ma_gambiae_ss_bin,TEL,TSL,TAS,WAC,TCI,TWI,WAD,WLS,WAL,HYS)
 
 # presence / absence (variables names can be retrieved in the dataframe expl_metadata)
 ggpairs(expl_spatial_pres, upper = list(continuous = wrap("cor", method = "spearman")))
@@ -232,7 +232,7 @@ ggpairs(expl_spatial_pos, upper = list(continuous = wrap("cor", method = "spearm
 ####### ####### ####### 
 # Ici il n'y a que 5 variables. Nous pouvons donc les conserver toutes pour le modèle multivarié. Le code suivant est à but principalement exploratoire.
 expl_static_pos <- df_resp %>% left_join(expl_static) %>% dplyr::select(ma_gambiae_ss,WMD,BDE,VCP,VCM,VCT) %>% filter(ma_gambiae_ss>0)
-expl_static_pres <-  df_resp %>% left_join(expl_static) %>% dplyr::select(pres_ma_gambiae_ss,WMD,BDE,VCP,VCM,VCT)
+expl_static_pres <-  df_resp %>% left_join(expl_static) %>% dplyr::select(ma_gambiae_ss_bin,WMD,BDE,VCP,VCM,VCT)
 
 # presence / absence (variables names can be retrieved in the dataframe expl_metadata)
 ggpairs(expl_static_pres, upper = list(continuous = wrap("cor", method = "spearman")))
