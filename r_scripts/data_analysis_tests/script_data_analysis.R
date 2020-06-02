@@ -15,14 +15,14 @@ setwd("/home/ptaconet/Bureau/data_analysis")
 ## get datasets
 df_resp <- readRDS("resp_var.rds")  # response variable (ma_gambiae_ss OR ma_funestus_ss OR ma_coluzzi) + metadata (codevillage, date, point de capture etc.)
 expl_spatiotemporal_list <- readRDS("expl_var_spatiotemporal.rds")  # list of time related explanatory variables. each element of the list is an explanatory variable (rainfall, soil moisture, etc.) extracted up to 120 days prior to the night of catch
-expl_landcover <- readRDS("expl_var_landcover.rds")  # landcover related expl. var
+expl_landcover <- readRDS("expl_var_landcover2.rds")  # landcover related expl. var
 expl_nightcatch <- readRDS("expl_var_nightcatch.rds")    # expl. var for the night of catch (derived from sat. data) (rainfall, wind, etc)
 expl_nightcatch_2 <- readRDS("expl_var_nightcatch_2.rds")  # expl. var for the night of catch (derived from micro climate in-situ sensors)
 expl_spatial <- readRDS("expl_var_spatial.rds")   # spatial-only expl. var (altitude, etc.)
 expl_static <- readRDS("expl_var_static.rds")  # non temporal and non-spatial expl. var (implementation of LAV, etc.)
 googlesheets4::sheets_deauth()
 expl_metadata <- googlesheets4::read_sheet("https://docs.google.com/spreadsheets/d/1dIeSOa2WinXvOQGLmIjA0gFdsHnb6zMMsDME-G5pyMc/edit?usp=sharing", sheet = "var_explication", col_types="c")
-
+distances_csh_points <- readRDS("dists_csh_points.rds")
 
 ### Some EDA for the response variable (resp. var is ma_gambiae_ss, i.e. number of bites by Anopheles gambiae ss)
 
@@ -191,6 +191,17 @@ env_spatiotemporal2$ccm_plot_sup0_distance[[which(env_spatiotemporal2$var=="RFD1
 # on pourrait utiliser les glmertree mais le temps de calcul au regard des différentes combinaisons de lags temporels semble prohibitif. 
 
 
+# expl_dynamic <- data.frame(idpointdecapture=env_spatiotemporal2$predictive_df[[1]]$idpointdecapture,
+#                            VNV8_2000_0_0=env_spatiotemporal2$predictive_df[[1]]$VNV8_2000_0_0,
+#                            EVT8_2000_0_0=env_spatiotemporal2$predictive_df[[2]]$EVT8_2000_0_0,
+#                            RFD1_F_2000_17=env_spatiotemporal2$predictive_df[[3]]$RFD1_F_2000_17_42,
+#                            SMO1_2000_6_8=env_spatiotemporal2$predictive_df[[4]]$SMO1_2000_6_8,
+#                            TAMP1_2000_1_2=env_spatiotemporal2$predictive_df[[5]]$TAMP1_2000_1_2,
+#                            TMAX1_2000_1_6=env_spatiotemporal2$predictive_df[[6]]$TMAX1_2000_1_6,
+#                            TMIN1_2000_0_1=env_spatiotemporal2$predictive_df[[7]]$TMIN1_2000_0_1)
+
+expl_dynamic <- readRDS("expl_dynamic.rds")
+
 ####### ####### ####### 
 ###### for landcover variables
 ####### ####### ####### 
@@ -200,12 +211,45 @@ env_spatiotemporal2$ccm_plot_sup0_distance[[which(env_spatiotemporal2$var=="RFD1
 expl_landcover_pos <- df_resp %>% left_join(expl_landcover) %>% filter(ma_gambiae_ss > 0) %>%  mutate_all(~ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x))
 expl_landcover_pres <- df_resp %>% left_join(expl_landcover) %>%  mutate_all(~ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x))
 
+# pour les variables d'occupation du sol en approche univariée, il me semble que le facteur aléatoire à consédirer est le numéro de mission (effet temporel) plutot que le codevillage/pointdecapture (effet spatial)
+# en effet si l'on prend le code village/point de capture : pour 1 village donné, une variable donnée d'occupation du sol aura toujours la même valeur tout au long de l'étude. Ainsi, si l'on prend codevillage comme effet aléatoire, on aura toujours une pente nulle : on ne peut donc pas mesurer l'effet d'une variable d'occ. du sol sur l'abondance des moustiques
+# par contre, si l'on prend nummission comme effet aléatoire, on peut comparer, pour chaque mission, l'effet d'une var d'occ sol sur l'abondance des moustiques ()
+
+expl_landcover_pos$nummission <- as.factor(expl_landcover_pos$nummission)
+
+cor_df <- data.frame(metric=character(),corr=numeric(),pval=numeric())
+for (i in 14:(ncol(expl_landcover_pos)-1)){
+  cat(i,"\n")
+  if(sum(expl_landcover_pos[,i])!=0){
+  th_cor <- correlation(cbind(expl_landcover_pos[i],expl_landcover_pos$ma_gambiae_ss,expl_landcover_pos$nummission), method = "spearman", multilevel = TRUE)
+  
+  cor_df <- rbind(cor_df,data.frame(metric=colnames(expl_landcover_pos[i]),  corr=th_cor$r, pval=th_cor$p))
+  }
+  
+}
+
+# retenir les variables d'occupation du sol dont la p val est signicative et qui sont le mieux corrélées
+var_to_retain <- cor_df %>% filter(pval<=0.05) %>% mutate(abs_corr = abs(corr)) %>% arrange(desc(abs_corr)) %>% top_n(20)
+expl_landcover_pos <- expl_landcover_pos %>% dplyr::select(idpostedecapture,var_to_retain$metric)
+
+
+# par ex : avec le code ci-dessous, on voit bien que si l'on considère codevillage comme effet aléatoire, on aura une pente de 0
+ggplot(expl_landcover_pos, aes(x = lsm_c_ed_500_12_40, y = ma_gambiae_ss)) +
+  geom_point() +
+  facet_wrap(. ~ codevillage) 
+
+# par contre si l'on met nummission comme effet aléatoire, alors on autorise la variable d'occ. sol à avoir un effet sur la densité aggressive.
+ggplot(expl_landcover_pos, aes(x = lsm_c_pland_500_5_5, y = ma_gambiae_ss)) +
+  geom_point() +
+  facet_wrap(. ~ nummission) 
+
+
 
 ####### ####### ####### 
 ###### for covariates covering the night of the catch 
 ####### ####### ####### 
 # Ici il n'y a que 8 variables. Nous pouvons donc les conserver toutes pour le modèle multivarié. Le code suivant est à but principalement exploratoire.
-expl_nightcatch_pos <- df_resp %>% left_join(expl_nightcatch) %>% left_join(expl_nightcatch_2) %>% dplyr::select(ma_gambiae_ss,RFH,WDR,WSP,LMN,NMT,NML,NMH,NDP) %>% filter(ma_gambiae_ss > 0)
+expl_nightcatch_pos <- df_resp %>% left_join(expl_nightcatch) %>% left_join(expl_nightcatch_2) %>% dplyr::select(idpostedecapture,ma_gambiae_ss,RFH,WDR,WSP,LMN,NMT,NML,NMH,NDP) %>% filter(ma_gambiae_ss > 0)
 expl_nightcatch_pres <- df_resp %>% left_join(expl_nightcatch) %>% left_join(expl_nightcatch_2) %>% dplyr::select(ma_gambiae_ss_bin,RFH,WDR,WSP,LMN,NMT,NML,NMH,NDP) 
 
 # presence / absence (variables names can be retrieved in the dataframe expl_metadata)
@@ -218,7 +262,7 @@ ggpairs(expl_nightcatch_pos, upper = list(continuous = wrap("cor", method = "spe
 ###### for spatial-only data
 ####### ####### ####### 
 # Ici il n'y a que 10 variables. Nous pouvons donc les conserver toutes pour le modèle multivarié. Le code suivant est à but principalement exploratoire.
-expl_spatial_pos <- df_resp %>% left_join(expl_spatial) %>% dplyr::select(ma_gambiae_ss,TEL,TSL,TAS,WAC,TCI,TWI,WAD,WLS,WAL,HYS) %>% filter(ma_gambiae_ss>0)
+expl_spatial_pos <- df_resp %>% left_join(expl_spatial) %>% dplyr::select(idpostedecapture,ma_gambiae_ss,TEL,TSL,TAS,WAC,TCI,TWI,WAD,WLS,WAL,HYS) %>% filter(ma_gambiae_ss>0)
 expl_spatial_pres <-  df_resp %>% left_join(expl_spatial) %>% dplyr::select(ma_gambiae_ss_bin,TEL,TSL,TAS,WAC,TCI,TWI,WAD,WLS,WAL,HYS)
 
 # presence / absence (variables names can be retrieved in the dataframe expl_metadata)
@@ -231,7 +275,7 @@ ggpairs(expl_spatial_pos, upper = list(continuous = wrap("cor", method = "spearm
 ###### for static variables
 ####### ####### ####### 
 # Ici il n'y a que 5 variables. Nous pouvons donc les conserver toutes pour le modèle multivarié. Le code suivant est à but principalement exploratoire.
-expl_static_pos <- df_resp %>% left_join(expl_static) %>% dplyr::select(ma_gambiae_ss,WMD,BDE,VCP,VCM,VCT) %>% filter(ma_gambiae_ss>0)
+expl_static_pos <- df_resp %>% left_join(expl_static) %>% dplyr::select(idpostedecapture,ma_gambiae_ss,WMD,BDE,VCP,VCM,VCT) %>% filter(ma_gambiae_ss>0)
 expl_static_pres <-  df_resp %>% left_join(expl_static) %>% dplyr::select(ma_gambiae_ss_bin,WMD,BDE,VCP,VCM,VCT)
 
 # presence / absence (variables names can be retrieved in the dataframe expl_metadata)
@@ -247,10 +291,58 @@ ggpairs(expl_static_pos, upper = list(continuous = wrap("cor", method = "spearma
 
 
 
+
 ###########################
 ####### Multivariate modeling
 ###########################
 # TODO
+
+# expl_static_pos$ma_gambiae_ss=NULL
+# expl_spatial_pos$ma_gambiae_ss=NULL
+# expl_nightcatch_pos$ma_gambiae_ss=NULL
+# 
+# expl_dynamic$idpostedecapture=paste0(expl_dynamic$idpointdecapture,"e")
+# expl_dynamic$idpointdecapture=NULL
+# expl_dynamic2 <- expl_dynamic
+# expl_dynamic2$idpostedecapture = gsub("e","i",expl_dynamic2$idpostedecapture)
+# expl_dynamic <- rbind(expl_dynamic,expl_dynamic2)
+# 
+# a<-left_join(expl_static_pos,expl_spatial_pos, by="idpostedecapture")
+# a<-left_join(a,expl_landcover_pos, by="idpostedecapture")
+# a<-left_join(a,expl_dynamic, by="idpostedecapture")
+# a<-left_join(a,expl_nightcatch_pos, by="idpostedecapture")
+# 
+# a <-a  %>% left_join(df_resp %>% dplyr::select(codevillage,idpointdecapture,idpostedecapture,pointdecapture,nummission,date_capture,ma_gambiae_ss,X,Y,int_ext)) %>% left_join(distances_csh_points)
+# 
+# a$doy=lubridate::yday(as.Date(a$date_capture))
+# a$date_capture=NULL
+# a$idpostedecapture=NULL
+# a$idpointdecapture=NULL
+# 
+# a <- a %>% mutate_all(~ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x))
+
+
+df_for_mod <- readRDS("/home/ptaconet/Bureau/data_analysis/df_for_mod.rds")
+
+
+# CV using leave-1-village-out (to evaluate the model on unpredicted villages)
+# to get list of village : unique(train$codevillage)
+train = df_for_mod %>% filter(codevillage!="KPE")
+test = df_for_mod %>% filter(codevillage=="KPE")
+
+# CV using leave-1-mission-out (to evaluate the model on trained villages but unpredicted missions)
+# to get list of missions : unique(train$nummission)
+train = df_for_mod %>% filter(nummission!="11")
+test = df_for_mod %>% filter(nummission=="11")
+
+train$nummission=NULL
+
+library(ranger)
+
+mod <- ranger(ma_gambiae_ss~., train,importance = "permutation")
+
+test$predictions=predict(mod,test)$predictions
+plot(test$ma_gambiae_ss,test$predictions)
 
 
 ###########################

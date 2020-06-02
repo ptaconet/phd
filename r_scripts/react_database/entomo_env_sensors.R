@@ -609,7 +609,11 @@
         th_data$Ch3_Value <- as.numeric(th_data$Ch3_Value)
       } else {
         th_data <- read.delim(files_baro[j], stringsAsFactors = F)
-        th_data$Date <- as.character(as.Date(th_data$Date,format = "%d/%m/%Y"))
+        if(i==8 && j==2){
+          th_data$Date <- as.character(as.Date(th_data$Date,format = "%Y/%m/%d"))
+        } else {
+          th_data$Date <- as.character(as.Date(th_data$Date,format = "%d/%m/%Y"))
+        }
       }
       
       th_data <- th_data %>%
