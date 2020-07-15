@@ -141,7 +141,7 @@ options(future.globals.maxSize= 20000*1024^2) # 20 GB for the max size to be exp
 
 ### Indicators covering the 120 days preceding the sampling dates
 
-#### TMIN1, TMAX1, TAMP1, TMIN7, TMAX7, TAMP7
+#### TMIN1, TMAX1, TAMP1, TMIN8, TMAX8, TAMP8
 ```{r }
 # Download MOD11A1.006 and MYD11A1.006 data - bands LST_Night_1km and LST_Day_1km - for the region and time frames of interest ;
 variables <- c("LST_Day_1km","LST_Night_1km")
@@ -195,10 +195,10 @@ rasts_lst_min <- eodataflow::prepare_mixed_products(rasts_lst_night_terra,rasts_
 ## Extract :
 # - LST day Weekly (aka. LST max)
 # - LST nigth Weekly (aka. LST min)
-TMAX7 <- eodataflow::extract_var_on_buffers(rasts_lst_max, df_sampling_points$sf_points, buffer_sizes_v1, "mean", TRUE, df_sampling_points$date, code_indice = "TMAX7")
-TMAX7$val <- TMAX7_A2$val - 273.15
-TMIN7 <- eodataflow::extract_var_on_buffers(rasts_lst_min, df_sampling_points$sf_points, buffer_sizes_v1, "mean", TRUE, df_sampling_points$date, code_indice = "TMIN7")
-TMIN7$val <- TMIN7_A2$val - 273.15
+TMAX8 <- eodataflow::extract_var_on_buffers(rasts_lst_max, df_sampling_points$sf_points, buffer_sizes_v1, "mean", TRUE, df_sampling_points$date, code_indice = "TMAX8")
+TMAX8$val <- TMAX8_A2$val - 273.15
+TMIN8 <- eodataflow::extract_var_on_buffers(rasts_lst_min, df_sampling_points$sf_points, buffer_sizes_v1, "mean", TRUE, df_sampling_points$date, code_indice = "TMIN8")
+TMIN8$val <- TMIN8_A2$val - 273.15
 ```
 
 Fill the NAs in daily and weekly products and compute temperature amplitude :
@@ -207,27 +207,27 @@ Fill the NAs in daily and weekly products and compute temperature amplitude :
 # Fill NAs for Daily and Weekly maximum temperature
 TMx_M_nafill <- eodataflow::ts_fillna_l1tol5(TMAX1_wNA,TMAX7_A2)
 TMAX1 <- TMx_M_nafill[[1]]
-TMAX7 <- TMx_M_nafill[[2]]
+TMAX8 <- TMx_M_nafill[[2]]
 
 # Fill NAs for Daily and Weekly minimum temperature
 TNx_M_nafill <- eodataflow::ts_fillna_l1tol5(TMIN1_wNA,TMIN7_A2)
 TMIN1 <- TNx_M_nafill[[1]]
-TMIN7 <- TNx_M_nafill[[2]]
+TMIN8 <- TNx_M_nafill[[2]]
 
 TAMP1 <- merge(TMAX1,TMIN1,by=c("id","buffer","date","lag_n","lag_time")) %>%
   mutate(val = val.x-val.y) %>%
   dplyr::select(-c(val.x,val.y,var.x,var.y,qval.x,qval.y)) %>%
   mutate(var = "TAMP1")
 
-TAMP7 <- merge(TMAX7,TMIN7,by=c("id","buffer","date","lag_n","lag_time")) %>%
+TAMP8 <- merge(TMAX8,TMIN8,by=c("id","buffer","date","lag_n","lag_time")) %>%
   mutate(val = val.x-val.y) %>%
   dplyr::select(-c(val.x,val.y,var.x,var.y,qval.x,qval.y)) %>%
   mutate(var = "TAMP7_A2")
 
 TMAX1$qval <- NULL
 TMIN1$qval <- NULL
-TMAX7$qval <- NULL
-TMIN7$qval <- NULL
+TMAX8$qval <- NULL
+TMIN8$qval <- NULL
 ```
 
 Save to disk :
@@ -236,9 +236,9 @@ Save to disk :
 write.csv(TMAX1, file.path("data",roi_name,"TMAX1.csv"), row.names = F)
 write.csv(TMIN1, file.path("data",roi_name,"TMIN1.csv"), row.names = F)
 write.csv(TAMP1, file.path("data",roi_name,"TAMP1.csv"), row.names = F)
-write.csv(TMAX7, file.path("data",roi_name,"TMAX7.csv"), row.names = F)
-write.csv(TMIN7, file.path("data",roi_name,"TMIN7.csv"), row.names = F)
-write.csv(TAMP7, file.path("data",roi_name,"TAMP7.csv"), row.names = F)
+write.csv(TMAX7, file.path("data",roi_name,"TMAX8.csv"), row.names = F)
+write.csv(TMIN7, file.path("data",roi_name,"TMIN8.csv"), row.names = F)
+write.csv(TAMP7, file.path("data",roi_name,"TAMP8.csv"), row.names = F)
 ```
 
 

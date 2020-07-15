@@ -428,6 +428,10 @@ st_write(lulc_zonal_stats_bf, path_to_gpkg_database, "lco_groundtruth_bf_zonalst
    
    LU_classes<-left_join(LU_classes,layer_id)
 
+   lco_pix_priority <- read.csv("data/react_db/miscellaneous_data/landcover/lco_pix_priority.csv",stringsAsFactors = F)
+   LU_classes <- LU_classes %>%
+     left_join(lco_pix_priority)
+   
   dbWriteTable(react_gpkg,"lco_metadata",LU_classes,overwrite=T)
   data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(LU_classes),table="lco_metadata"))
 
@@ -459,7 +463,7 @@ st_write(lulc_zonal_stats_bf, path_to_gpkg_database, "lco_groundtruth_bf_zonalst
   path_to_civ_folder<-"data/korhogo"
 
   # timeseries
-  paths<-c("TMIN1","TMAX1","TAMP1","TMIN7","TMAX7","TAMP7","VNV8","VEV8","EVT8","SMO1","RFD1_F","RFD1_L","LIG30","DTL7","SPIs1","SPIs2")
+  paths<-c("TMIN1","TMAX1","TAMP1","TMIN8","TMAX8","TAMP8","VNV8","VEV8","EVT8","SMO1","RFD1_F","RFD1_L","LIG30","DTL7","SPIs1","SPIs2")
   path_to_bf_ts<-paste0(path_to_bf_folder,"/",paths,".csv")
   path_to_civ_ts<-paste0(path_to_civ_folder,"/",paths,".csv")
   path_to_ts<-c(path_to_bf_ts,path_to_civ_ts)
@@ -513,7 +517,7 @@ st_write(lulc_zonal_stats_bf, path_to_gpkg_database, "lco_groundtruth_bf_zonalst
     mutate(val=as.numeric(val))
   data_staticbuffer <- cbind(fid = 1:nrow(data_staticbuffer), data_staticbuffer)
   dbWriteTable(react_gpkg,"env_spatial",data_staticbuffer,overwrite=TRUE)
-  data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(data_staticbuffer),table="env_staticbuffer"))
+  data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(data_staticbuffer),table="env_spatial"))
   
   # static_nobuffer
   paths<-c("WMD","BDE","VCP_VCM_VCT")
@@ -527,7 +531,7 @@ st_write(lulc_zonal_stats_bf, path_to_gpkg_database, "lco_groundtruth_bf_zonalst
   
   data_staticnobuffer <- cbind(fid = 1:nrow(data_staticnobuffer), data_staticnobuffer)
   dbWriteTable(react_gpkg,"env_static",data_staticnobuffer,overwrite=TRUE)
-  data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(data_staticnobuffer),table="env_staticnobuffer"))
+  data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(data_staticnobuffer),table="env_static"))
   
   # landcover
   path_to_lsm_civ<-"data/korhogo/LSM.csv"
