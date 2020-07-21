@@ -139,21 +139,27 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
     library(purrr)
     library(future)
     if(type == "model_comparison"){
-      df <- df[,c("resp_var","codevillage","pointdecapture",expl_vars_to_keep,expl_vars_to_test)]
+      to_scale <- df[,c(expl_vars_to_keep,expl_vars_to_test)]
+      to_scale <- as.data.frame(scale(to_scale))
+      df <- cbind(df[,c("resp_var","codevillage","pointdecapture")],to_scale)
+      start <- 4 + length(expl_vars_to_keep)
+      expl_vars_to_keep <- paste(expl_vars_to_keep,collapse = "*")
       if(mod == "presence"){
         glm_base <- glmmTMB(as.formula(paste0("resp_var ~ ",expl_vars_to_keep," + (1|codevillage/pointdecapture)")), data = df, family = binomial(link = "logit"))
-        mod_comp <- future_map_dfr(colnames(df[5:ncol(df)]), function(x) anova(glmmTMB(as.formula(paste0("resp_var ~ ",expl_vars_to_keep," + ",x," + ",expl_vars_to_keep,"*",x," + (1|codevillage/pointdecapture)")), data = df, family = binomial(link = "logit")),glm_base))
+        mod_comp <- future_map_dfr(colnames(df[start:ncol(df)]), function(x) anova(glmmTMB(as.formula(paste0("resp_var ~ ",expl_vars_to_keep,"*",.x," + (1|codevillage/pointdecapture)")), data = df, family = binomial(link = "logit")), glm_base))
       } else if (mod == "abundance"){
-        glm_base <- glmmTMB(as.formula(paste0("resp_var ~ ",expl_vars_to_keep," + (1|codevillage/pointdecapture)")), data = df, family = nbinom2(link = "log"))
-        mod_comp <- future_map_dfr(colnames(df[5:ncol(df)]), ~anova(glmmTMB(as.formula(paste0("resp_var ~ ",expl_vars_to_keep," + ",.x," + ",expl_vars_to_keep,"*",.x," + (1|codevillage/pointdecapture)")), data = df, family = nbinom2(link = "log")),glm_base))
+        glm_base <- glmmTMB(as.formula(paste0("resp_var ~ ",expl_vars_to_keep," + (1|codevillage/pointdecapture)")), data = df, family = truncated_nbinom2)
+        mod_comp <- future_map(colnames(df[start:ncol(df)]), ~anova(glmmTMB(as.formula(paste0("resp_var ~ ",expl_vars_to_keep,"*",.x,"  + (1|codevillage/pointdecapture)")), data = df, family = truncated_nbinom2), glm_base))
       }
-      aic_glm_base <- mod_comp$AIC[1]
-      toDelete <- seq(1, nrow(mod_comp), 2)
-      mod_comp <- mod_comp[-toDelete,]
-      mod_comp <- as.data.frame(mod_comp)
-      mod_comp$name <- expl_vars_to_test
-      mod_comp$diff_aic <-  mod_comp$AIC - aic_glm_base
-
+      
+      aic_glm_base <- mod_comp[[1]]$AIC[1]
+      AIC <- mod_comp %>% map(~pluck(.,"AIC")[2])
+      pval <- mod_comp %>% map(~pluck(.,"Pr(>Chisq)")[2])
+      name <- expl_vars_to_test
+      
+      mod_comp <- data.frame(name = name, res = unlist(AIC), pval = unlist(pval))
+      mod_comp$diff_res_w_basemod <- mod_comp$res - aic_glm_base
+      
       return(mod_comp)
       
     } else if(type == "univariate_selection"){
@@ -161,7 +167,7 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
       if(mod == "presence"){
         pvals <- future_map_dfr(colnames(df[4:ncol(df)]), ~Anova(glmmTMB(as.formula(paste0("resp_var ~ ",.x," + (1|codevillage/pointdecapture)")), data = df, family = binomial(link = "logit")))[3])
       } else if (mod == "abundance"){
-        pvals <- future_map_dfr(colnames(df[4:ncol(df)]), ~Anova(glmmTMB(as.formula(paste0("resp_var ~ ",.x," + (1|codevillage/pointdecapture)")), data = df, family = nbinom2(link = "log")))[3])
+        pvals <- future_map_dfr(colnames(df[4:ncol(df)]), ~Anova(glmmTMB(as.formula(paste0("resp_var ~ ",.x," + (1|codevillage/pointdecapture)")), data = df, family = truncated_nbinom2))[3])
       }
       
       pvals <- as.data.frame(pvals)
@@ -438,4 +444,180 @@ lsm_rules <- function(lay){
   if(is.null(var_to_rm)) { stop("error")}
   return(var_to_rm)
   
+}
+
+
+
+
+
+
+
+
+
+load_spatiotemporal_data <- function(vars, buffers, lag_time_window, summarize_days_to_week, code_pays, entomo_csh_metadata_l1){
+  
+  env_spatiotemporal <- dbReadTable(react_gpkg, 'env_spatiotemporal') %>% dplyr::select(-fid) %>% mutate(date = as.Date(date)) %>% dplyr::rename(idpointdecapture = id) %>% filter(var %in% vars, buffer %in% buffers, lag_time >= lag_time_window[1] , lag_time <= lag_time_window[2])
+  
+  if(summarize_days_to_week){
+  
+  fun_summarize_week <- function(var_to_summarize){
+    
+    env_spatiotemporal_summarize <- env_spatiotemporal %>%
+      filter(var==var_to_summarize) %>%
+      group_by(idpointdecapture,buffer,lag_n = lubridate::week(date)) %>%
+      summarise(val=mean(val, na.rm = T),date = min(date)) %>%
+      group_by(idpointdecapture,buffer) %>%
+      mutate(lag_n=seq(n()-1,0,-1)) %>%
+      mutate(var = gsub("1","7",var_to_summarize), lag_time = NA) %>%
+      as_tibble()
+    
+    return(env_spatiotemporal_summarize)
+    
+  }
+  
+  env_spatiotemporal <- env_spatiotemporal %>%
+    bind_rows(fun_summarize_week("TMAX1")) %>%
+    bind_rows(fun_summarize_week("TMIN1")) %>%
+    bind_rows(fun_summarize_week("TAMP1")) %>%
+    bind_rows(fun_summarize_week("SMO1"))
+  
+  }
+  
+  # spatiotemporal
+  env_spatiotemporal <- env_spatiotemporal %>%
+    mutate(buffer = as.character(buffer)) %>%
+    right_join(entomo_csh_metadata_l1[,c("idpointdecapture","codepays")]) %>%
+    left_join(prediction_vars[,c("code","type_group1","short_name","temporal_aggregation_days")], by = c("var" = "code"))
+  
+  env_spatiotemporal <- env_spatiotemporal %>%
+    dplyr::select(-c(lag_time, date)) %>%
+    group_by(type_group1, var, codepays, buffer) %>%
+    tidyr::nest(predictive_df = c(idpointdecapture, lag_n , val)) %>%
+    mutate(fun_summarize_ccm = ifelse(var %in% c("RFD1_F","RFD1_L","RFD7_F","RFD7_L"), "sum", "mean")) %>%
+    arrange(type_group1, var, codepays, as.numeric(buffer), fun_summarize_ccm) #%>%
+  # filter(!(var %in% c("RFD1_L","TAMP7","TMAX7","TMIN7"))) %>%
+  # filter(!(var %in% c("RFD1_F","SMO1","VEV8","VNV8","EVT8","TMAX1","TMIN1","TAMP1") && buffer %in% c("500","1000"))) %>%
+  # filter(!(var %in% c("VNV30","VMV30","WNW30","WVV10","WVH10") && buffer %in% c("500","1000","2000")))
+  
+  
+  env_spatiotemporal <- env_spatiotemporal %>% 
+    mutate(predictive_df = pmap(list(predictive_df, var, buffer, fun_summarize_ccm), ~fun_ccm_df(..1, ..2, ..3, function_to_apply = ..4))) %>%
+    filter(codepays==code_pays)
+  
+    
+  th_env_spatiotemporal <- env_spatiotemporal$predictive_df[[1]]
+  
+  for(i in 2:nrow(env_spatiotemporal)){
+    th_env_spatiotemporal <- left_join(th_env_spatiotemporal,env_spatiotemporal$predictive_df[[i]])
+  }
+  
+  return(th_env_spatiotemporal)
+  
+}
+
+
+
+
+load_spatial_data <- function(code_pays){
+  
+  # extract ligth from satellite data
+  LIG <- dbReadTable(react_gpkg, 'env_spatiotemporal') %>% dplyr::select(-fid) %>% mutate(date = as.Date(date)) %>% dplyr::rename(idpointdecapture = id) %>% filter(var == "LIG30", lag_n == 3) %>% dplyr::select(idpointdecapture,buffer,val,var)
+  
+  # spatial-only explanatory variables
+  env_spatial <- dbReadTable(react_gpkg,'env_spatial') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id)
+  
+  # non-spatial explanatory variables
+  env_static <- dbReadTable(react_gpkg, 'env_static') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id)
+  
+  # variables for the night of catch
+  env_nightcatch <-  dbReadTable(react_gpkg, 'env_nightcatch') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id)
+  
+  # variables for the night of catch at the postedecapture level
+  env_nightcatch_postedecapture <- dbReadTable(react_gpkg,"env_nightcatch_postedecapture") %>% dplyr::select(-fid)
+  
+  # landcover variables
+  env_landcover <-  dbReadTable(react_gpkg, 'env_landcover') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id) %>% filter(buffer > 250, !(metric %in% c("ed","np")))
+  
+  metrics_defs <- landscapemetrics::list_lsm() # list of landscape metrics
+  
+  if(code_pays == "BF"){
+    lid <-  c(1,2,3,4,5,11,12)
+  } else if (code_pays == "CI"){
+    lid <-  c(6,7,8,9,10,11,12)
+    
+  }
+  
+  env_landcover <- env_landcover %>%
+    filter(layer_id %in% lid) %>%
+    left_join(metrics_defs) %>%
+    dplyr::select(-c(level,metric,name,type)) %>%
+    pivot_wider(names_from = c(function_name,buffer,layer_id,pixval), values_from = val, names_sep = "_", values_fill = list(val = 0)) %>%
+    mutate_all(funs(replace_na(.,0)))
+
+  # all other data
+  env_spatial <- env_spatial %>%bind_rows(LIG) %>% pivot_wider(names_from = c("var","buffer"), values_from = val) %>% mutate_all(~ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x))
+  th_env_nightcatch_postedecapture <- env_nightcatch_postedecapture %>% pivot_wider(names_from = var, values_from = val) %>% mutate_all(~ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x))
+  th_env_nightcatch  <- env_nightcatch %>% pivot_wider(names_from = var, values_from = val) %>% mutate_all(~ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x))
+  th_env_static <- env_static %>% pivot_wider(names_from = var, values_from = val) %>% mutate_all(~ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x)) %>% mutate(VCT=as.numeric(VCT), WMD=as.numeric(WMD),BDE=as.numeric(BDE),VCP=ifelse(VCP=="TRUE",1,0))
+  
+  return(list(env_landcover, env_spatial, th_env_nightcatch_postedecapture, th_env_nightcatch, th_env_static))
+  
+}
+  
+
+load_csh_sp_coord <- function(){
+  
+  # spatial coordinates
+  mean_coords_points_4326 = st_read(path_to_db, 'entomo_csh_metadata_l1', crs = 4326) %>%
+    group_by(codevillage,pointdecapture) %>%
+    summarise(X_4326=mean(X),Y_4326=mean(Y)) %>%
+    st_drop_geometry() %>%
+    st_as_sf(coords = c("X_4326", "Y_4326"), crs = 4326)
+  
+  mean_coords_points_4326$X_4326 = as.numeric(st_coordinates(mean_coords_points_4326)[,1])
+  mean_coords_points_4326$Y_4326 = as.numeric(st_coordinates(mean_coords_points_4326)[,2])
+  mean_coords_points_4326 = st_drop_geometry(mean_coords_points_4326) %>% as_tibble() %>% mutate(codevillage=as.character(codevillage), pointdecapture=as.character(pointdecapture))
+  
+  mean_coords_points_32630 = st_read(path_to_db, 'entomo_csh_metadata_l1', crs = 4326) %>%
+    group_by(codevillage,pointdecapture) %>%
+    summarise(X_32630=mean(X),Y_32630=mean(Y)) %>%
+    st_drop_geometry() %>%
+    st_as_sf(coords = c("X_32630", "Y_32630"), crs = 4326) %>%
+    st_transform(32630)
+  
+  mean_coords_points_32630$X_32630 = as.numeric(st_coordinates(mean_coords_points_32630)[,1])
+  mean_coords_points_32630$Y_32630 = as.numeric(st_coordinates(mean_coords_points_32630)[,2])
+  mean_coords_points_32630 = st_drop_geometry(mean_coords_points_32630) %>% as_tibble() %>% mutate(codevillage=as.character(codevillage), pointdecapture=as.character(pointdecapture))
+  
+  return(list(mean_coords_points_4326, mean_coords_points_32630))
+  
+}
+
+
+fun_ffs_tempvar <- function(time_vars, cols_to_keep, logtransform_resp_var){
+  
+  modcomp <- data.frame(name = character(), res = numeric(), diff_res_w_basemod = numeric(), var = character())
+  
+  for(i in 1:length(time_vars)){
+    cat('calculating column to keep for temporal variable ',time_vars[i],"\n")
+    expl_vars_to_test =  colnames(th_trmetrics_entomo_postedecapture[which(grepl(time_vars[i],colnames(th_trmetrics_entomo_postedecapture)))])
+    if(time_vars[i] %in% c("RFD1","TMAX1","TMIN1","TAMP1","SMO1")){
+      time_lag1 <- as.numeric(sub('.*\\_', '', expl_vars_to_test))
+      time_lag2 <- as.numeric(stringr::str_match(expl_vars_to_test, '([^_]+)(?:_[^_]+){1}$')[,2])
+      diff_lag <- time_lag1 - time_lag2
+      expl_vars_to_test <- expl_vars_to_test[which(diff_lag>=5)]
+    }
+    
+    th_modcomp <- fun_feature_forward_selection(stat_method = "glmm",
+                                                mod = mod, 
+                                                type = "model_comparison",
+                                                expl_vars_to_test = expl_vars_to_test, 
+                                                expl_vars_to_keep = cols_to_keep, 
+                                                logtransform_resp_var = logtransform_resp_var)
+    th_modcomp$var <- time_vars[i]
+    
+    modcomp <- rbind(modcomp, th_modcomp)
+  }
+  
+  return(modcomp)
 }
