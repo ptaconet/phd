@@ -111,11 +111,11 @@ fun_ccm_select_lags <- function(ccm_corrmat, col_to_look, var){
 # expl_vars_to_keep = NULL
 # expl_vars_to_test = colnames(df[which(grepl("RFD1",colnames(df)))])
 
-fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, mod = NULL, type, df = th_trmetrics_entomo_postedecapture, expl_vars_to_keep = NULL, expl_vars_to_test, cross_validation_type = NULL, logtransform_resp_var = FALSE){
+fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, mod = NULL, type, df, expl_vars_to_keep = NULL, expl_vars_to_test, cross_validation_type = NULL, logtransform_resp_var = FALSE){
   
   
   if(logtransform_resp_var == TRUE){
-    th_trmetrics_entomo_postedecapture$resp_var <- log(th_trmetrics_entomo_postedecapture$resp_var)
+    df$resp_var <- log(df$resp_var)
   }
   
   # spearman coeff
@@ -144,14 +144,31 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
       df <- cbind(df[,c("resp_var","codevillage","pointdecapture")],to_scale)
       start <- 4 + length(expl_vars_to_keep)
       expl_vars_to_keep <- paste(expl_vars_to_keep,collapse = "*")
+      plan(multiprocess)
+      options(future.globals.maxSize= 20000*1024^2)
       if(mod == "presence"){
         glm_base <- glmmTMB(as.formula(paste0("resp_var ~ ",expl_vars_to_keep," + (1|codevillage/pointdecapture)")), data = df, family = binomial(link = "logit"))
-        mod_comp <- future_map_dfr(colnames(df[start:ncol(df)]), function(x) anova(glmmTMB(as.formula(paste0("resp_var ~ ",expl_vars_to_keep,"*",.x," + (1|codevillage/pointdecapture)")), data = df, family = binomial(link = "logit")), glm_base))
+        func <- function(x){
+          ret <- anova(glmmTMB(as.formula(paste0("resp_var ~ ",expl_vars_to_keep,"*",x," + (1|codevillage/pointdecapture)")), data = df, family = binomial(link = "logit")), glm_base)
+          return(ret)
+        }
+        possible_anova <- possibly(func, otherwise = NA_real_)
+        mod_comp <- future_map(colnames(df[start:ncol(df)]), possible_anova)
       } else if (mod == "abundance"){
         glm_base <- glmmTMB(as.formula(paste0("resp_var ~ ",expl_vars_to_keep," + (1|codevillage/pointdecapture)")), data = df, family = truncated_nbinom2)
-        mod_comp <- future_map(colnames(df[start:ncol(df)]), ~anova(glmmTMB(as.formula(paste0("resp_var ~ ",expl_vars_to_keep,"*",.x,"  + (1|codevillage/pointdecapture)")), data = df, family = truncated_nbinom2), glm_base))
+          func <- function(x){
+            ret <- anova(glmmTMB(as.formula(paste0("resp_var ~ ",expl_vars_to_keep,"*",x,"  + (1|codevillage/pointdecapture)")), data = df, family = truncated_nbinom2), glm_base)
+            return(ret)
+          }
+          possible_anova <- possibly(func, otherwise = NA_real_)
+          mod_comp <- future_map(colnames(df[start:ncol(df)]), possible_anova)
       }
       
+      na_indices <- which(is.na(mod_comp))
+      if(length(na_indices) > 0){
+        mod_comp <- mod_comp[-na_indices]
+        expl_vars_to_test <- expl_vars_to_test[-na_indices]
+      }
       aic_glm_base <- mod_comp[[1]]$AIC[1]
       AIC <- mod_comp %>% map(~pluck(.,"AIC")[2])
       pval <- mod_comp %>% map(~pluck(.,"Pr(>Chisq)")[2])
@@ -209,7 +226,7 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
       met = "AUC"
     }
     
-    if(type == "univariate_selection"){
+    if(type == "model_comparison"){
       
       mod_base <- caret::train(form = as.formula(paste0("resp_var ~ ",paste(expl_vars_to_keep,collapse="+"))), data = df, method="ranger", tuneLength = 5, trControl=tr, metric = met)
       
@@ -521,29 +538,29 @@ load_spatiotemporal_data <- function(vars, buffers, lag_time_window, summarize_d
 load_spatial_data <- function(code_pays){
   
   # extract ligth from satellite data
-  LIG <- dbReadTable(react_gpkg, 'env_spatiotemporal') %>% dplyr::select(-fid) %>% mutate(date = as.Date(date)) %>% dplyr::rename(idpointdecapture = id) %>% filter(var == "LIG30", lag_n == 3) %>% dplyr::select(idpointdecapture,buffer,val,var)
+  LIG <- dbReadTable(react_gpkg, 'env_spatiotemporal') %>% dplyr::select(-fid) %>% mutate(date = as.Date(date)) %>% dplyr::rename(idpointdecapture = id) %>% filter(var == "LIG30", lag_n == 3, buffer >= 500) %>% dplyr::select(idpointdecapture,buffer,val,var)
   
   # spatial-only explanatory variables
-  env_spatial <- dbReadTable(react_gpkg,'env_spatial') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id)
+  env_spatial <- dbReadTable(react_gpkg,'env_spatial') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id) %>% filter(buffer >= 500)
   
   # non-spatial explanatory variables
   env_static <- dbReadTable(react_gpkg, 'env_static') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id)
   
   # variables for the night of catch
-  env_nightcatch <-  dbReadTable(react_gpkg, 'env_nightcatch') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id)
+  env_nightcatch <- dbReadTable(react_gpkg, 'env_nightcatch') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id)
   
   # variables for the night of catch at the postedecapture level
   env_nightcatch_postedecapture <- dbReadTable(react_gpkg,"env_nightcatch_postedecapture") %>% dplyr::select(-fid)
   
   # landcover variables
-  env_landcover <-  dbReadTable(react_gpkg, 'env_landcover') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id) %>% filter(buffer > 250, !(metric %in% c("ed","np")))
+  env_landcover <-  dbReadTable(react_gpkg, 'env_landcover') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id) %>% filter(buffer >= 500, !(metric %in% c("ed","np")))
   
   metrics_defs <- landscapemetrics::list_lsm() # list of landscape metrics
   
   if(code_pays == "BF"){
-    lid <-  c(1,2,3,4,5,11,12)
+    lid <-  c(2,3,4,5,11,12)
   } else if (code_pays == "CI"){
-    lid <-  c(6,7,8,9,10,11,12)
+    lid <-  c(7,8,9,10,11,12)
     
   }
   
@@ -594,30 +611,106 @@ load_csh_sp_coord <- function(){
 }
 
 
-fun_ffs_tempvar <- function(time_vars, cols_to_keep, logtransform_resp_var){
+fun_ffs_tempvar <- function(df, model_type, mod, time_vars, cols_to_keep){
   
   modcomp <- data.frame(name = character(), res = numeric(), diff_res_w_basemod = numeric(), var = character())
   
   for(i in 1:length(time_vars)){
     cat('calculating column to keep for temporal variable ',time_vars[i],"\n")
-    expl_vars_to_test =  colnames(th_trmetrics_entomo_postedecapture[which(grepl(time_vars[i],colnames(th_trmetrics_entomo_postedecapture)))])
+    expl_vars_to_test =  colnames(df[which(grepl(time_vars[i],colnames(df)))])
     if(time_vars[i] %in% c("RFD1","TMAX1","TMIN1","TAMP1","SMO1")){
       time_lag1 <- as.numeric(sub('.*\\_', '', expl_vars_to_test))
       time_lag2 <- as.numeric(stringr::str_match(expl_vars_to_test, '([^_]+)(?:_[^_]+){1}$')[,2])
       diff_lag <- time_lag1 - time_lag2
-      expl_vars_to_test <- expl_vars_to_test[which(diff_lag>=5)]
+      
+      if(time_vars[i] %in% c("RFD1")){
+        expl_vars_to_test <- expl_vars_to_test[which(diff_lag>=5)]
+      }
+      if(time_vars[i] %in% c("TMAX1","TMIN1","TAMP1","SMO1")){
+        expl_vars_to_test <- expl_vars_to_test[which(diff_lag>=7)]
+      }
+      
     }
     
-    th_modcomp <- fun_feature_forward_selection(stat_method = "glmm",
+    # remove colinear variables
+    ind_to_rm <- NULL
+    for(i in 1:length(expl_vars_to_test)){
+      for(j in 1:length(cols_to_keep)){
+        m <- cor(df[,expl_vars_to_test[i]],df[,cols_to_keep[j]], method = "pearson", use = "na.or.complete")
+        if(abs(m) > 0.7){
+          ind_to_rm <- c(ind_to_rm, i)
+          }
+      }
+    }
+    if(!is.null(ind_to_rm)){
+      expl_vars_to_test <- expl_vars_to_test[-unique(ind_to_rm)]
+    }
+    
+    if(model_type == "rf" & mod == "abundance"){
+      logtransform_resp_var = TRUE
+    } else {
+      logtransform_resp_var = FALSE
+    }
+    
+    if(model_type == "rf"){
+      cols_to_keep <- c(cols_to_keep,"X_32630", "Y_32630")
+      cross_validation_type <- "temporal"
+    } else {
+      cross_validation_type <- NULL
+    }
+    
+    if(length(expl_vars_to_test) > 0){
+      th_modcomp <- fun_feature_forward_selection(df = df, 
+                                                stat_method = model_type,
                                                 mod = mod, 
                                                 type = "model_comparison",
                                                 expl_vars_to_test = expl_vars_to_test, 
                                                 expl_vars_to_keep = cols_to_keep, 
-                                                logtransform_resp_var = logtransform_resp_var)
+                                                logtransform_resp_var = logtransform_resp_var,
+                                                cross_validation_type = cross_validation_type
+                                                )
     th_modcomp$var <- time_vars[i]
     
     modcomp <- rbind(modcomp, th_modcomp)
+    }
   }
   
   return(modcomp)
+}
+
+
+fun_glmm_cross_validation <- function(indices_cv, th_mod, mod, df, ind_vars_to_center){
+
+  df <- df %>% dplyr::select(c("resp_var","codevillage","pointdecapture","int_ext","VCM",ind_vars_to_center))
+    
+  df$pred <- NA
+  
+  for (i in 1:length(indices_cv$index)){
+    df_train <- df[indices_cv$index[[i]],]
+    df_test <- df[indices_cv$indexOut[[i]],]
+    
+    # here, scale the numerical explanatory variables for train and test datasets
+    df_train <- df_train %>% mutate_at(ind_vars_to_center, ~scale(., center = TRUE, scale = FALSE))
+    df_test <- df_test %>% mutate_at(ind_vars_to_center, ~scale(., center = TRUE, scale = FALSE))
+    
+    if(mod == "abundance"){
+      th_mod_th_it <- glmmTMB(formula(th_mod), data = df_train, family = truncated_nbinom2)
+      preds_th_it <- predict(th_mod_th_it, newdata = df_test, type = "response", allow.new.levels=TRUE)
+    } else if  (mod == "presence"){
+      th_mod_th_it <- glmmTMB(formula(th_mod), data = df_train, family = binomial(link = "logit"))
+      preds_th_it <- predict(th_mod_th_it, newdata = df_test, type = "response", allow.new.levels=TRUE)
+    }
+    
+    df$pred[indices_cv$indexOut[[i]]] <- preds_th_it # fill in df with predictions out of CV
+    
+  }
+  
+  if(mod == "abundance"){
+    mean_metric <- cor(df$pred, df$resp_var)^2
+  } else if (mod == "presence"){
+    mean_metric <- mltools::auc_roc(df$pred, df$resp_var)  
+  }
+  
+  return(list(mean_metric = mean_metric, df_cv = df))
+  
 }
