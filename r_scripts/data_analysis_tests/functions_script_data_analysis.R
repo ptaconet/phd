@@ -80,7 +80,7 @@ fun_ccm_select_lags <- function(ccm_corrmat, col_to_look, var){
   
   if(!all(is.na(ccm_corrmat$correlation))){
     ccm_corrmat <- ccm_corrmat %>% filter(!is.na(correlation))
-    if(var %in% c("TMAX1","TMIN1","TAMP1","SMO1","RFD1_F","RFD1_L")){ # daily resolution data
+    if(var %in% c("TMAX1","TMIN1","TAMP1","SMO1","RFD1F","RFD1L")){ # daily resolution data
       ccm_corrmat <- ccm_corrmat %>% filter(diff_lag>=8)
     }
     val <- as.numeric(ccm_corrmat[which.max(abs(ccm_corrmat$abs_corr)),col_to_look])
@@ -141,23 +141,26 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
     if(type == "model_comparison"){
       to_scale <- df[,c(expl_vars_to_keep,expl_vars_to_test)]
       to_scale <- as.data.frame(scale(to_scale))
-      df <- cbind(df[,c("resp_var","codevillage","pointdecapture")],to_scale)
+      
+      pointdecapture2 <- as.data.frame( as.factor(paste0(df$codevillage,df$pointdecapture)))
+      colnames(pointdecapture2) = "pointdecapture2"
+      df <- cbind(df[,c("resp_var","codevillage")],pointdecapture2,to_scale)
       start <- 4 + length(expl_vars_to_keep)
       expl_vars_to_keep <- paste(expl_vars_to_keep,collapse = "*")
       plan(multiprocess)
       options(future.globals.maxSize= 20000*1024^2)
-      if(mod == "presence"){
-        glm_base <- glmmTMB(as.formula(paste0("resp_var ~ ",expl_vars_to_keep," + (1|codevillage/pointdecapture)")), data = df, family = binomial(link = "logit"))
+      if(mod %in% c("physiological_resistance_kdrw","exophagy","late_prec_aggressiveness","presence")){
+        glm_base <- glmmTMB(as.formula(paste0("resp_var ~ ",expl_vars_to_keep," + (1|codevillage/pointdecapture2)")), data = df, family = binomial(link = "logit"))
         func <- function(x){
-          ret <- anova(glmmTMB(as.formula(paste0("resp_var ~ ",expl_vars_to_keep,"*",x," + (1|codevillage/pointdecapture)")), data = df, family = binomial(link = "logit")), glm_base)
+          ret <- anova(glmmTMB(as.formula(paste0("resp_var ~ ",expl_vars_to_keep,"*",x," + (1|codevillage/pointdecapture2)")), data = df, family = binomial(link = "logit")), glm_base)
           return(ret)
         }
         possible_anova <- possibly(func, otherwise = NA_real_)
         mod_comp <- future_map(colnames(df[start:ncol(df)]), possible_anova)
       } else if (mod == "abundance"){
-        glm_base <- glmmTMB(as.formula(paste0("resp_var ~ ",expl_vars_to_keep," + (1|codevillage/pointdecapture)")), data = df, family = truncated_nbinom2)
+        glm_base <- glmmTMB(as.formula(paste0("resp_var ~ ",expl_vars_to_keep," + (1|codevillage/pointdecapture2)")), data = df, family = truncated_nbinom2)
           func <- function(x){
-            ret <- anova(glmmTMB(as.formula(paste0("resp_var ~ ",expl_vars_to_keep,"*",x,"  + (1|codevillage/pointdecapture)")), data = df, family = truncated_nbinom2), glm_base)
+            ret <- anova(glmmTMB(as.formula(paste0("resp_var ~ ",expl_vars_to_keep,"*",x,"  + (1|codevillage/pointdecapture2)")), data = df, family = truncated_nbinom2), glm_base)
             return(ret)
           }
           possible_anova <- possibly(func, otherwise = NA_real_)
@@ -180,11 +183,15 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
       return(mod_comp)
       
     } else if(type == "univariate_selection"){
-      df <- df[,c(resp_var_colname,"codevillage","pointdecapture",expl_vars_to_test)]
-      if(mod == "presence"){
-        pvals <- future_map_dfr(colnames(df[4:ncol(df)]), ~Anova(glmmTMB(as.formula(paste0("resp_var ~ ",.x," + (1|codevillage/pointdecapture)")), data = df, family = binomial(link = "logit")))[3])
+      to_scale <- df[,c(expl_vars_to_test)]
+      to_scale <- as.data.frame(scale(to_scale))
+      pointdecapture2 <- as.data.frame( as.factor(paste0(df$codevillage,df$pointdecapture)))
+      colnames(pointdecapture2) = "pointdecapture2"
+      df <- cbind(df[,c("resp_var","codevillage")],pointdecapture2,to_scale)
+      if(mod %in% c("physiological_resistance_kdrw","exophagy","late_prec_aggressiveness","presence")){
+        pvals <- future_map_dfr(colnames(df[4:ncol(df)]), ~Anova(glmmTMB(as.formula(paste0("resp_var ~ ",.x," + (1|codevillage/pointdecapture2)")), data = df, family = binomial(link = "logit")))[3])
       } else if (mod == "abundance"){
-        pvals <- future_map_dfr(colnames(df[4:ncol(df)]), ~Anova(glmmTMB(as.formula(paste0("resp_var ~ ",.x," + (1|codevillage/pointdecapture)")), data = df, family = truncated_nbinom2))[3])
+        pvals <- future_map_dfr(colnames(df[4:ncol(df)]), ~Anova(glmmTMB(as.formula(paste0("resp_var ~ ",.x," + (1|codevillage/pointdecapture2)")), data = df, family = truncated_nbinom2))[3])
       }
       
       pvals <- as.data.frame(pvals)
@@ -212,7 +219,7 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
                       index = indices$index, 
                       indexOut = indices$indexOut)
       met = "Rsquared"
-    } else if (mod == "presence"){
+    } else if (mod %in% c("physiological_resistance_kdrw","exophagy","late_prec_aggressiveness","presence")){
       tr = trainControl(method="cv",
                         index = indices$index, 
                         indexOut = indices$indexOut,
@@ -236,7 +243,7 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
       if(mod == "abundance"){
         #qual_basemod <- min(mod_base$results$RMSE)
         qual_basemod <- max(mod_base$results$Rsquared)
-      } else if (mod == "presence"){
+      } else if (mod %in% c("physiological_resistance_kdrw","exophagy","late_prec_aggressiveness","presence")){
         qual_basemod <- max(mod_base$results$AUC)
       }
       
@@ -247,7 +254,7 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
         if(mod == "abundance"){
           #ret <- min(model$results$RMSE)
           ret <- max(model$results$Rsquared)
-        } else if (mod == "presence"){
+        } else if (mod %in% c("physiological_resistance_kdrw","exophagy","late_prec_aggressiveness","presence")){
           ret <- max(model$results$AUC)
         }
         return(ret)
@@ -273,12 +280,12 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
 #### plots
 
 # function to plot the CCM (simple plot : only the CCM)
-fun_ccm_plot <- function(correlation_df, max_or_min, metric_name){
+fun_ccm_plot <- function(correlation_df, max_or_min, metric_name, var, filter_lags_ndays = 0){
   
   if(max_or_min=="max"){
-    abs_corr <- correlation_df %>% filter(abs_corr == max(abs_corr, na.rm = T))
+    abs_corr <- correlation_df %>% filter(diff_lag >= filter_lags_ndays) %>% filter(abs_corr == max(abs_corr, na.rm = T))
   } else if (max_or_min=="min"){
-    abs_corr <- correlation_df %>% filter(abs_corr == min(abs_corr, na.rm = T))
+    abs_corr <- correlation_df %>% filter(diff_lag >= filter_lags_ndays) %>% filter(abs_corr == min(abs_corr, na.rm = T))
   }
   
   if(nrow(correlation_df)>10){
@@ -302,7 +309,7 @@ fun_ccm_plot <- function(correlation_df, max_or_min, metric_name){
           axis.title = element_text(size = 8)
     ) +
     #ggtitle(paste0("CCM for : area = ",country," ; variable = ",var," ; buffer = ",buffer," m")) +
-    #ggtitle(paste0(country," - CCM for buffer " ,buffer," m")) +
+    ggtitle(var) +
     annotate("text", size = 3,x = min(correlation_df$time_lag_1), y = max(correlation_df$time_lag_2), vjust = "inward", hjust = "inward", label = paste0("r(0,0) = ", round(correlation_df$correlation[1],3),"\nr(",abs_corr$time_lag_1,",",abs_corr$time_lag_2,") = ",round(abs_corr$correlation,3))) +
     coord_fixed()
   
@@ -319,67 +326,167 @@ fun_ccm_plot <- function(correlation_df, max_or_min, metric_name){
 }
 
 # function to plot the time series of the response variable and the explanatory variable
-fun_spatiotemparal_plots <- function(th_trmetrics_entomo_postedecapture,expl_var, code_pays, response_var){
+fun_spatiotemparal_plots <- function(th_trmetrics_entomo_postedecapture, mod, expl_var, codepays){
   
-  th_pred_var <- prediction_vars %>% filter(code==expl_var)
+  th_pred_var <- prediction_vars %>% filter(code == expl_var)
   
-  mean_date_by_mission <- entomo_csh_metadata_l1 %>%
-    group_by(codepays,nummission) %>%
-    summarise(date = mean(as.Date(date_capture))) %>%
-    as_tibble()
-  
-  th_timeseries_expl_bf <- env_spatiotemporal %>%
-    left_join(th_trmetrics_entomo_postedecapture) %>%
-    filter(var == expl_var, codepays == code_pays) %>%
-    #filter(buffer==2000) %>%
-    group_by(date, buffer) %>%
-    summarise(val = mean(val, na.rm = T)) %>%
-    as_tibble() %>%
-    mutate(date = as.Date(date))
-  
+  entomo_csh_metadata_l1_bis <- entomo_csh_metadata_l1 %>%
+    mutate(idpointdecapture = substr(idpointdecapture,1,4))
   
   th_timeseries_resp_bf <- th_trmetrics_entomo_postedecapture %>%
-    left_join(entomo_csh_metadata_l1[c("idpointdecapture","codepays","date_capture","nummission")]) %>%
-    left_join(mean_date_by_mission %>% filter(codepays==code_pays), by = "nummission")
+    mutate(date = as.Date(mean_date_mission, origin = "1970-01-01"))
   
-  scaleFactor_bf <- max(th_timeseries_expl_bf$val, na.rm = T) / max(th_timeseries_resp_bf$resp_var, na.rm = T)
+  env_spatiotemporal <- dbReadTable(react_gpkg, 'env_spatiotemporal') %>% 
+    dplyr::select(-fid) %>% 
+    mutate(date = as.Date(date)) %>% 
+    dplyr::rename(idpointdecapture = id) %>% 
+    filter(var %in% expl_var, buffer == 2000) %>% 
+    left_join(entomo_csh_metadata_l1_bis) %>% 
+    filter(codepays == code_pays) %>%
+    group_by(date, codevillage) %>%
+    summarise(val = mean(val, na.rm = T)) %>%
+    as_tibble() %>%
+    full_join(th_timeseries_resp_bf %>% dplyr::select(codevillage,date,resp_var))
   
-  th_timeplot_bf <-  ggplot() + 
-    geom_line(aes(x = th_timeseries_expl_bf$date, y = th_timeseries_expl_bf$val, color = th_timeseries_expl_bf$buffer), size = 0.5, show.legend = FALSE) +
-    geom_boxplot(aes(x = th_timeseries_resp_bf$date, y = th_timeseries_resp_bf$resp_var * scaleFactor_bf, group = th_timeseries_resp_bf$date), show.legend = FALSE, outlier.shape=NA) + 
-    geom_jitter(aes(x = th_timeseries_resp_bf$date, y = th_timeseries_resp_bf$resp_var * scaleFactor_bf, group = th_timeseries_resp_bf$date), position=position_jitter(2), cex=0.3) + 
-    #geom_flat_violin(aes(x = th_timeseries_resp_bf$date, y = th_timeseries_resp_bf$ma_an * scaleFactor_bf, group = th_timeseries_resp_bf$date), position = position_nudge(x = .25, y = -1), adjust =2, trim = TRUE)+
-    scale_y_continuous(name = paste0(th_pred_var$short_name," (",th_pred_var$unit,")"), sec.axis = sec_axis(~./scaleFactor_bf, name = paste0(response_var," (positive counts only)"))) +
-    scale_x_date(name = "date",date_labels = "%m/%Y", date_breaks = "2 months") +
-    theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
-    theme_minimal(base_size = 10) +
-    ggtitle("BF")
+
+  if(mod == "abundance"){
+    
+    # plot by village
+    scaleFactor_bf <- max(env_spatiotemporal$val, na.rm = T) / max(env_spatiotemporal$resp_var, na.rm = T)
+
+    th_timeplot_bf <-  ggplot(env_spatiotemporal) + 
+      geom_line(aes(x = date, y = val), size = 0.5, show.legend = FALSE, color='steelblue') +
+      geom_boxplot(aes(x = date, y = resp_var * scaleFactor_bf, group = date), show.legend = FALSE, outlier.shape=NA, size = 1.5) + 
+      geom_jitter(aes(x = date, y = resp_var * scaleFactor_bf, group = date), position=position_jitter(3), cex=0.2) + 
+      scale_y_continuous(name = paste0(th_pred_var$short_name," (",th_pred_var$unit,")"), sec.axis = sec_axis(~./scaleFactor_bf, name = "human biting rate (positive counts only)")) +
+      scale_x_date(name = "date",date_labels = "%m/%Y", date_breaks = "20 months") +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      ggtitle(th_pred_var$long_name) +
+      facet_wrap(.~codevillage)
+  
+    # plot for whole area
+    env_spatiotemporal2 <- env_spatiotemporal %>%
+      filter(!is.na(resp_var))
+    
+    env_spatiotemporal3 <- env_spatiotemporal %>%
+      dplyr::select(-resp_var) %>%
+      unique() %>%
+      group_by(date) %>%
+      summarise(val = mean(val))
+    
+    scaleFactor_bf <- max(env_spatiotemporal3$val, na.rm = T) / max(env_spatiotemporal2$resp_var, na.rm = T)
+    
+    th_timeplot_wholearea <-  ggplot() + 
+      geom_line(aes(x = env_spatiotemporal3$date, y = env_spatiotemporal3$val), size = 0.5, show.legend = FALSE, color='steelblue') +
+      geom_boxplot(aes(x = env_spatiotemporal2$date, y = env_spatiotemporal2$resp_var * scaleFactor_bf, group = env_spatiotemporal2$date), show.legend = FALSE, outlier.shape=NA) + 
+      geom_jitter(aes(x = env_spatiotemporal2$date, y = env_spatiotemporal2$resp_var * scaleFactor_bf, group = env_spatiotemporal2$date), position=position_jitter(3), cex=0.2) + 
+      scale_y_continuous(name = paste0(th_pred_var$short_name," (",th_pred_var$unit,")"), sec.axis = sec_axis(~./scaleFactor_bf, name = "human biting rate (positive counts only)")) +
+      scale_x_date(name = "date",date_labels = "%m/%Y", date_breaks = "2 months") +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      theme_minimal(base_size = 10) +
+      ggtitle(th_pred_var$long_name)
+    
+  
+  } else if (mod == "presence"){
+    
+    env_spatiotemporal <- env_spatiotemporal %>%
+      mutate(bites = ifelse(resp_var == 1, "aa_presence", "absence")) %>%
+      mutate(number = ifelse(is.na(resp_var), 0, 1))
+    
+    env_spatiotemporal <- env_spatiotemporal[rep(seq_len(nrow(env_spatiotemporal)), 10), ]
+    
+    scaleFactor_bf <- max(env_spatiotemporal$val, na.rm = T) / 8
+
+    th_timeplot_bf <- ggplot(env_spatiotemporal) + 
+      geom_line(aes(x = date, y = val), size = 0.5, show.legend = FALSE, color='steelblue') +
+      geom_histogram(aes(x = date, fill = bites), position = position_stack(reverse = TRUE), alpha = 0.8, na.rm = TRUE, size = 2) +
+      scale_color_manual(values=c("#00BFC4", "#F8766D", "#00BFC4")) + 
+      scale_fill_manual(values=c("#00BFC4", "#F8766D", "#00BFC4")) + 
+      labs(fill = "Biting status") +
+      scale_y_continuous(limits = c(0,max(env_spatiotemporal$val, na.rm = T)), name = paste0(th_pred_var$short_name," (",th_pred_var$unit,")"), sec.axis = sec_axis(~./scaleFactor_bf, name = "Number of sampling sites", labels = c("2","4","6","8",""))) +
+      scale_x_date(name = "date",date_labels = "%m/%Y", date_breaks = "20 months") +
+      #theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      #theme_minimal(base_size = 10) + 
+      ggtitle(th_pred_var$long_name) + 
+      facet_wrap(.~codevillage)
+    
+
+    # plot for whole area
+    th_timeseries_resp_bf <- th_timeseries_resp_bf %>%
+           mutate(bites = ifelse(resp_var == 1, "presence", "absence")) %>%
+           mutate(n = 1) %>%
+           filter(bites == "presence")
+    
+    env_spatiotemporal3 <- env_spatiotemporal %>%
+      dplyr::select(-resp_var) %>%
+      unique() %>%
+      group_by(date) %>%
+      summarise(val = mean(val))
+    
+     scale <- th_timeseries_resp_bf %>% 
+         group_by(nummission, bites) %>%
+       summarise(tot = sum(n))    
+     
+     scaleFactor_bf <- max(env_spatiotemporal3$val, na.rm = T) / max(scale$tot, na.rm = T)
+
+     th_timeseries_resp_bf <- th_timeseries_resp_bf %>%
+      group_by(date, bites) %>%
+      summarise(val = sum(n)) %>%
+       as_tibble()
+
+     
+     th_timeplot_wholearea <- NULL
+    # df_to_plot <- env_spatiotemporal3 %>% left_join(th_timeseries_resp_bf)
+    # 
+    # th_timeplot_bf <- ggplot() + 
+    #   geom_line(aes(x = env_spatiotemporal3$date, y = env_spatiotemporal3$val), size = 0.5, show.legend = FALSE, color='steelblue') +
+    #   geom_bar(aes(x = th_timeseries_resp_bf$date, y = th_timeseries_resp_bf$val, fill = th_timeseries_resp_bf$bites), position = 'dodge', stat = 'identity', alpha = 0.8, na.rm = TRUE, size = 2) +
+    #   labs(fill = "Biting status") +
+    #   scale_y_continuous(name = paste0(th_pred_var$short_name," (",th_pred_var$unit,")"), sec.axis = sec_axis(~./scaleFactor_bf, name = "Number of sites with presence of bites (>= 1 bite) ")) +
+    #   scale_x_date(name = "date",date_labels = "%m/%Y", date_breaks = "2 months") +
+    #   theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+    #   theme_minimal(base_size = 10) + 
+    #   ggtitle(th_pred_var$long_name)
+    # 
+    # 
+    #     th_timeplot_bf <- ggplot() + 
+    #       geom_line(aes(x = env_spatiotemporal3$date, y = env_spatiotemporal3$val), size = 0.5, show.legend = FALSE, color='steelblue') +
+    #       geom_bar(aes(x = th_timeseries_resp_bf$date, y = th_timeseries_resp_bf$val, fill = th_timeseries_resp_bf$bites), position = 'dodge', stat = 'identity', alpha = 0.8, na.rm = TRUE, size = 2) +
+    #       labs(fill = "Biting status") +
+    #   scale_y_continuous(name = paste0(th_pred_var$short_name," (",th_pred_var$unit,")"), sec.axis = sec_axis(~./scaleFactor_bf, name = "Number of sites with presence of bites (>= 1 bite) ")) +
+    #   scale_x_date(name = "date",date_labels = "%m/%Y", date_breaks = "2 months") +
+    #   theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+    #   theme_minimal(base_size = 10) + 
+    #   ggtitle(th_pred_var$long_name)
+
+  }
   
   
-  
-  th_env_spatiotemporal2 <- th_env_spatiotemporal %>% filter(var == expl_var) %>% 
-    ungroup() %>% 
-    arrange(desc(abs(ccm_maxcorr_vcor))) %>% 
-    slice(1L)
+  # th_env_spatiotemporal2 <- th_env_spatiotemporal %>% filter(var == expl_var) %>% 
+  #   ungroup() %>% 
+  #   arrange(desc(abs(ccm_maxcorr_vcor))) %>% 
+  #   slice(1L)
   # th_patchwork_bf <- th_env_spatiotemporal$ccm_plot_sup0[[1]]
   # if(nrow(th_env_spatiotemporal)>1){
   #   for(j in 2:nrow(th_env_spatiotemporal)){
   #    th_patchwork_bf <- th_patchwork_bf + th_env_spatiotemporal$ccm_plot_sup0[[j]]
   #   }
   # }
-  th_ccm_bf <- th_env_spatiotemporal2$ccm_plot_sup0[[nrow(th_env_spatiotemporal2)]]
+  # th_ccm_bf <- th_env_spatiotemporal2$ccm_plot_sup0[[nrow(th_env_spatiotemporal2)]]
+  # 
+  # th_var_df <- th_env_spatiotemporal2$var_df[[nrow(th_env_spatiotemporal2)]]
+  # 
+  # th_var_plot_bf <- th_env_spatiotemporal2$predictive_df[[nrow(th_env_spatiotemporal2)]] %>%
+  #   right_join(th_timeseries_resp_bf, by = "idpointdecapture") %>%
+  #   dplyr::select(resp_var,!!th_var_df) %>%
+  #   set_names(c(response_var,th_pred_var$code))
+  # 
+  # th_plot_bf <- ggplot(th_var_plot_bf, aes_string(y=th_pred_var$code, x=response_var)) + geom_point(size = 1, alpha = 0.5) + theme_minimal(base_size = 9) + ggtitle(paste0(code_pays," - ",th_pred_var$short_name," for time lags (",th_env_spatiotemporal$ccm_maxcorr_lag1,",",th_env_spatiotemporal$ccm_maxcorr_lag2,") and buffer size ",th_env_spatiotemporal$buffer)) + ylab(paste0(th_pred_var$short_name," (",th_pred_var$unit,")"))
+  # 
+  # 
+  # return(list(plot1 = th_timeplot_bf, plot2 = th_plot_bf))
   
-  th_var_df <- th_env_spatiotemporal2$var_df[[nrow(th_env_spatiotemporal2)]]
-  
-  th_var_plot_bf <- th_env_spatiotemporal2$predictive_df[[nrow(th_env_spatiotemporal2)]] %>%
-    right_join(th_timeseries_resp_bf, by = "idpointdecapture") %>%
-    dplyr::select(resp_var,!!th_var_df) %>%
-    set_names(c(response_var,th_pred_var$code))
-  
-  th_plot_bf <- ggplot(th_var_plot_bf, aes_string(y=th_pred_var$code, x=response_var)) + geom_point(size = 1, alpha = 0.5) + theme_minimal(base_size = 9) + ggtitle(paste0(code_pays," - ",th_pred_var$short_name," for time lags (",th_env_spatiotemporal$ccm_maxcorr_lag1,",",th_env_spatiotemporal$ccm_maxcorr_lag2,") and buffer size ",th_env_spatiotemporal$buffer)) + ylab(paste0(th_pred_var$short_name," (",th_pred_var$unit,")"))
-  
-
-  return(list(plot1 = th_timeplot_bf, plot2 = th_plot_bf))
+  return(list(th_timeplot_village = th_timeplot_bf,th_timeplot_wholearea = th_timeplot_wholearea))
   
   # th_patchwork_timeseries <- th_timeplot_bf + th_timeplot_ci
   # th_patchwork_ccm <- th_ccm_bf + th_ccm_ci
@@ -479,6 +586,16 @@ load_spatiotemporal_data <- function(vars, buffers, lag_time_window, summarize_d
   
   fun_summarize_week <- function(var_to_summarize){
     
+    if(var_to_summarize=="RFD1F"){
+      env_spatiotemporal_summarize <- env_spatiotemporal %>%
+        filter(var==var_to_summarize) %>%
+        group_by(idpointdecapture,buffer,lag_n = lubridate::week(date)) %>%
+        summarise(val=sum(val, na.rm = T),date = min(date)) %>%
+        group_by(idpointdecapture,buffer) %>%
+        mutate(lag_n=seq(n()-1,0,-1)) %>%
+        mutate(var = gsub("1","7",var_to_summarize), lag_time = NA) %>%
+        as_tibble()
+    } else {
     env_spatiotemporal_summarize <- env_spatiotemporal %>%
       filter(var==var_to_summarize) %>%
       group_by(idpointdecapture,buffer,lag_n = lubridate::week(date)) %>%
@@ -487,7 +604,7 @@ load_spatiotemporal_data <- function(vars, buffers, lag_time_window, summarize_d
       mutate(lag_n=seq(n()-1,0,-1)) %>%
       mutate(var = gsub("1","7",var_to_summarize), lag_time = NA) %>%
       as_tibble()
-    
+    }
     return(env_spatiotemporal_summarize)
     
   }
@@ -495,9 +612,9 @@ load_spatiotemporal_data <- function(vars, buffers, lag_time_window, summarize_d
   env_spatiotemporal <- env_spatiotemporal %>%
     bind_rows(fun_summarize_week("TMAX1")) %>%
     bind_rows(fun_summarize_week("TMIN1")) %>%
-    bind_rows(fun_summarize_week("TAMP1")) %>%
-    bind_rows(fun_summarize_week("SMO1"))
-  
+    bind_rows(fun_summarize_week("SMO1")) %>%
+    bind_rows(fun_summarize_week("RFD1F"))
+    
   }
   
   # spatiotemporal
@@ -510,7 +627,7 @@ load_spatiotemporal_data <- function(vars, buffers, lag_time_window, summarize_d
     dplyr::select(-c(lag_time, date)) %>%
     group_by(type_group1, var, codepays, buffer) %>%
     tidyr::nest(predictive_df = c(idpointdecapture, lag_n , val)) %>%
-    mutate(fun_summarize_ccm = ifelse(var %in% c("RFD1_F","RFD1_L","RFD7_F","RFD7_L"), "sum", "mean")) %>%
+    mutate(fun_summarize_ccm = ifelse(var %in% c("RFD1F","RFD1L","RFD7_F","RFD7_L"), "sum", "mean")) %>%
     arrange(type_group1, var, codepays, as.numeric(buffer), fun_summarize_ccm) #%>%
   # filter(!(var %in% c("RFD1_L","TAMP7","TMAX7","TMIN7"))) %>%
   # filter(!(var %in% c("RFD1_F","SMO1","VEV8","VNV8","EVT8","TMAX1","TMIN1","TAMP1") && buffer %in% c("500","1000"))) %>%
@@ -535,45 +652,61 @@ load_spatiotemporal_data <- function(vars, buffers, lag_time_window, summarize_d
 
 
 
-load_spatial_data <- function(code_pays){
+load_spatial_data <- function(code_pays, landcover_layers_to_keep, mod, landcover_metrics_to_keep = NULL){
   
   # extract ligth from satellite data
   LIG <- dbReadTable(react_gpkg, 'env_spatiotemporal') %>% dplyr::select(-fid) %>% mutate(date = as.Date(date)) %>% dplyr::rename(idpointdecapture = id) %>% filter(var == "LIG30", lag_n == 3, buffer >= 500) %>% dplyr::select(idpointdecapture,buffer,val,var)
   
   # spatial-only explanatory variables
-  env_spatial <- dbReadTable(react_gpkg,'env_spatial') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id) %>% filter(buffer >= 500)
+  env_spatial <- dbReadTable(react_gpkg,'env_spatial') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id) %>% filter(buffer >= 500, var!="POH")
   
   # non-spatial explanatory variables
   env_static <- dbReadTable(react_gpkg, 'env_static') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id)
   
   # variables for the night of catch
-  env_nightcatch <- dbReadTable(react_gpkg, 'env_nightcatch') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id)
+  env_nightcatch <- dbReadTable(react_gpkg, 'env_nightcatch') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id) %>% dplyr::filter(var != "WDR")
   
   # variables for the night of catch at the postedecapture level
-  env_nightcatch_postedecapture <- dbReadTable(react_gpkg,"env_nightcatch_postedecapture") %>% dplyr::select(-fid)
+  if(mod %in% c("presence","abundance")){
+    env_nightcatch_postedecapture <- dbReadTable(react_gpkg,"env_nightcatch_postedecapture") %>% dplyr::select(-fid)
+    th_env_nightcatch_postedecapture <- env_nightcatch_postedecapture %>% pivot_wider(names_from = var, values_from = val) %>% mutate_all(~ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x))
+  } else if(mod %in% c("physiological_resistance_kdrw","exophagy","late_prec_aggressiveness")){
+    th_env_nightcatch_postedecapture <- read.csv("/home/ptaconet/Bureau/data_anglique.csv") %>%
+      dplyr::select(idpostedecapture,date_time,temperature_hygro,humidity_hygro,pointderosee_hygro,luminosite_hobo,pressure_baro) %>%
+      dplyr::rename(NMT = temperature_hygro, NMH = humidity_hygro, NDP = pointderosee_hygro, NML = luminosite_hobo, NMA = pressure_baro) %>%
+      mutate(date = as.Date(date_time), heuredecapture = hour(date_time)) %>%
+      dplyr::group_by(idpostedecapture,heuredecapture) %>%
+      dplyr::summarise(NMT = mean(NMT,na.rm = T), NMH = mean(NMH,na.rm = T), NDP=mean(NDP,na.rm = T), NML=mean(NML,na.rm = T), NMA=mean(NMA,na.rm = T)) %>%
+      as_tibble()
+  }
   
   # landcover variables
-  env_landcover <-  dbReadTable(react_gpkg, 'env_landcover') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id) %>% filter(buffer >= 500, !(metric %in% c("ed","np")))
+  env_landcover <-  dbReadTable(react_gpkg, 'env_landcover') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id) %>% filter(buffer >= 500, layer_id %in% landcover_layers_to_keep)
+  
+  if(!is.null(landcover_metrics_to_keep)){
+    env_landcover <- env_landcover %>% filter(metric %in% landcover_metrics_to_keep)
+  }
   
   metrics_defs <- landscapemetrics::list_lsm() # list of landscape metrics
   
+
   if(code_pays == "BF"){
-    lid <-  c(2,3,4,5,11,12)
+    lid <-  c(2,3,11,12)
   } else if (code_pays == "CI"){
-    lid <-  c(7,8,9,10,11,12)
-    
+    lid <-  c(7,8,11,12)
   }
   
   env_landcover <- env_landcover %>%
-    filter(layer_id %in% lid) %>%
     left_join(metrics_defs) %>%
     dplyr::select(-c(level,metric,name,type)) %>%
     pivot_wider(names_from = c(function_name,buffer,layer_id,pixval), values_from = val, names_sep = "_", values_fill = list(val = 0)) %>%
     mutate_all(funs(replace_na(.,0)))
 
   # all other data
-  env_spatial <- env_spatial %>%bind_rows(LIG) %>% pivot_wider(names_from = c("var","buffer"), values_from = val) %>% mutate_all(~ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x))
-  th_env_nightcatch_postedecapture <- env_nightcatch_postedecapture %>% pivot_wider(names_from = var, values_from = val) %>% mutate_all(~ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x))
+  env_spatial <- env_spatial %>% 
+    #bind_rows(LIG) %>% 
+    pivot_wider(names_from = c("var","buffer"), values_from = val) %>% 
+    mutate_all(~ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x))
   th_env_nightcatch  <- env_nightcatch %>% pivot_wider(names_from = var, values_from = val) %>% mutate_all(~ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x))
   th_env_static <- env_static %>% pivot_wider(names_from = var, values_from = val) %>% mutate_all(~ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x)) %>% mutate(VCT=as.numeric(VCT), WMD=as.numeric(WMD),BDE=as.numeric(BDE),VCP=ifelse(VCP=="TRUE",1,0))
   
@@ -582,12 +715,36 @@ load_spatial_data <- function(code_pays){
 }
   
 
+load_llinuse_data <- function(code_pays,entomo_csh_metadata_l1){
+  
+tab = dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
+  filter(codepays == code_pays) %>%
+  group_by(codevillage,dateenquete,dormirssmoust) %>%
+  summarise(n=n()) %>%
+  as_tibble() %>%
+  pivot_wider(names_from = dormirssmoust, values_from = n, values_fill = list(n = 0)) %>%
+  mutate(LUS = oui / (non + oui) * 100) %>%
+  mutate(dateenquete = as.Date(dateenquete)) %>%
+  dplyr::select(codevillage,dateenquete,LUS)
+
+t = entomo_csh_metadata_l1 %>%
+  mutate(date_capture = as.Date(date_capture)) %>%
+  left_join(tab, by = "codevillage") %>%
+  mutate(dateDiff = abs(date_capture - dateenquete)) %>%
+  group_by(codevillage, date_capture) %>%
+  filter(dateDiff == min(dateDiff)) %>%
+  as_tibble() %>%
+  dplyr::select(idpointdecapture,LUS)
+
+return(t)
+}
+
 load_csh_sp_coord <- function(){
   
   # spatial coordinates
   mean_coords_points_4326 = st_read(path_to_db, 'entomo_csh_metadata_l1', crs = 4326) %>%
-    group_by(codevillage,pointdecapture) %>%
-    summarise(X_4326=mean(X),Y_4326=mean(Y)) %>%
+    dplyr::group_by(codevillage,pointdecapture) %>%
+    dplyr::summarise(X_4326=mean(X),Y_4326=mean(Y)) %>%
     st_drop_geometry() %>%
     st_as_sf(coords = c("X_4326", "Y_4326"), crs = 4326)
   
@@ -596,8 +753,8 @@ load_csh_sp_coord <- function(){
   mean_coords_points_4326 = st_drop_geometry(mean_coords_points_4326) %>% as_tibble() %>% mutate(codevillage=as.character(codevillage), pointdecapture=as.character(pointdecapture))
   
   mean_coords_points_32630 = st_read(path_to_db, 'entomo_csh_metadata_l1', crs = 4326) %>%
-    group_by(codevillage,pointdecapture) %>%
-    summarise(X_32630=mean(X),Y_32630=mean(Y)) %>%
+    dplyr::group_by(codevillage,pointdecapture) %>%
+    dplyr::summarise(X_32630=mean(X),Y_32630=mean(Y)) %>%
     st_drop_geometry() %>%
     st_as_sf(coords = c("X_32630", "Y_32630"), crs = 4326) %>%
     st_transform(32630)
@@ -611,25 +768,34 @@ load_csh_sp_coord <- function(){
 }
 
 
-fun_ffs_tempvar <- function(df, model_type, mod, time_vars, cols_to_keep){
+fun_ffs_tempvar <- function(df, model_type, mod, time_vars, cols_to_keep, timevars_selection = "1day"){
   
   modcomp <- data.frame(name = character(), res = numeric(), diff_res_w_basemod = numeric(), var = character())
   
   for(i in 1:length(time_vars)){
     cat('calculating column to keep for temporal variable ',time_vars[i],"\n")
     expl_vars_to_test =  colnames(df[which(grepl(time_vars[i],colnames(df)))])
-    if(time_vars[i] %in% c("RFD1","TMAX1","TMIN1","TAMP1","SMO1")){
+    
+    if(timevars_selection == "7day"){
+      expl_vars_to_test <- c(paste0(time_vars[i],"_2000_0_7"),
+                             paste0(time_vars[i],"_2000_7_14"),
+                             paste0(time_vars[i],"_2000_14_21"),
+                             paste0(time_vars[i],"_2000_21_28"),
+                             paste0(time_vars[i],"_2000_0_14"),
+                             paste0(time_vars[i],"_2000_0_21"),
+                             paste0(time_vars[i],"_2000_0_28"),
+                             paste0(time_vars[i],"_2000_7_21"),
+                             paste0(time_vars[i],"_2000_7_28"),
+                             paste0(time_vars[i],"_2000_14_21"),
+                             paste0(time_vars[i],"_2000_14_28")
+      )
+    }
+    
+    if(grepl("1", time_vars[i])){
       time_lag1 <- as.numeric(sub('.*\\_', '', expl_vars_to_test))
       time_lag2 <- as.numeric(stringr::str_match(expl_vars_to_test, '([^_]+)(?:_[^_]+){1}$')[,2])
       diff_lag <- time_lag1 - time_lag2
-      
-      if(time_vars[i] %in% c("RFD1")){
-        expl_vars_to_test <- expl_vars_to_test[which(diff_lag>=5)]
-      }
-      if(time_vars[i] %in% c("TMAX1","TMIN1","TAMP1","SMO1")){
-        expl_vars_to_test <- expl_vars_to_test[which(diff_lag>=7)]
-      }
-      
+      ##########expl_vars_to_test <- expl_vars_to_test[which(diff_lag >= 4)]
     }
     
     # remove colinear variables
@@ -681,7 +847,7 @@ fun_ffs_tempvar <- function(df, model_type, mod, time_vars, cols_to_keep){
 
 fun_glmm_cross_validation <- function(indices_cv, th_mod, mod, df, ind_vars_to_center){
 
-  df <- df %>% dplyr::select(c("resp_var","codevillage","pointdecapture","int_ext","VCM",ind_vars_to_center))
+  df <- df %>% dplyr::select(c("resp_var","codevillage","pointdecapture2","int_ext","VCM",ind_vars_to_center))
     
   df$pred <- NA
   
@@ -696,7 +862,7 @@ fun_glmm_cross_validation <- function(indices_cv, th_mod, mod, df, ind_vars_to_c
     if(mod == "abundance"){
       th_mod_th_it <- glmmTMB(formula(th_mod), data = df_train, family = truncated_nbinom2)
       preds_th_it <- predict(th_mod_th_it, newdata = df_test, type = "response", allow.new.levels=TRUE)
-    } else if  (mod == "presence"){
+    } else if (mod %in% c("physiological_resistance_kdrw","exophagy","late_prec_aggressiveness","presence")){
       th_mod_th_it <- glmmTMB(formula(th_mod), data = df_train, family = binomial(link = "logit"))
       preds_th_it <- predict(th_mod_th_it, newdata = df_test, type = "response", allow.new.levels=TRUE)
     }
@@ -706,8 +872,8 @@ fun_glmm_cross_validation <- function(indices_cv, th_mod, mod, df, ind_vars_to_c
   }
   
   if(mod == "abundance"){
-    mean_metric <- cor(df$pred, df$resp_var)^2
-  } else if (mod == "presence"){
+    mean_metric <- cor(df$pred, df$resp_var, use = "na.or.complete")^2
+  } else if (mod %in% c("physiological_resistance_kdrw","exophagy","late_prec_aggressiveness","presence")){
     mean_metric <- mltools::auc_roc(df$pred, df$resp_var)  
   }
   
