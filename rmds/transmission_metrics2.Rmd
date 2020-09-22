@@ -1,0 +1,573 @@
+---
+title: "transmission_metrics2"
+author: "Paul Taconet"
+date: "20/09/2020"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      message = FALSE,
+                      warning = FALSE)
+
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file()) #set t
+```
+
+```{r packages}
+library(ggplot2)
+library(scales)
+library(sf)
+library(DBI)
+library(RSQLite)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(rlang)
+library(patchwork)
+library(plotly)
+library(htmlwidgets)
+#library(kable)
+library(kableExtra)
+library(mapview)
+library(stringr)
+library(emo)
+library(facetscales)
+```
+
+```{r db_connect}
+# connect to database
+code_pays = "BF"
+
+path_to_db <- "data/react_db/react_db.gpkg"
+react_gpkg <- DBI::dbConnect(RSQLite::SQLite(),dbname = path_to_db)
+
+periodes_interv <-  dbReadTable(react_gpkg, 'entomo_csh_metadata_l1')
+villages_intervs <-   dbReadTable(react_gpkg, 'recensement_villages_l1') 
+
+villages_missions_interv <- periodes_interv %>%
+  left_join(villages_intervs, by = "codevillage") %>%
+  dplyr::select(codevillage,intervention,nummission,period_interv) %>%
+  mutate(nummission = as.numeric(nummission))
+
+```
+
+## Map of sampled villages and dates of entomological missions
+
+
+
+## Presence / absence of bites
+
+
+```{r }
+
+df <-  dbReadTable(react_gpkg, 'entomo_idmoustiques_l0') %>%
+  filter(pcr_espece %in% c( "An.funestus_ss", "An.coluzzii", "An.gambiae_ss"), nummission<10, codepays == code_pays) %>%
+  dplyr::select(idpostedecapture,nummission,pcr_espece) %>%
+  unique() %>%
+  mutate(status = "presence") %>%
+  pivot_wider(names_from = pcr_espece,  values_from = status)
+
+entomo_csh_metadata_l1_ext <- dbReadTable(react_gpkg, 'entomo_csh_metadata_l1') %>% 
+  mutate(nummission = as.numeric(nummission)) %>%
+  filter(nummission<10, codepays == code_pays) %>%
+  dplyr::select(idpointdecapture, codevillage, nummission,date_capture, codepays, period_interv) %>%
+  mutate(nummission = as.numeric(nummission)) %>%
+  mutate(idpostedecapture = paste0(idpointdecapture,"e"))
+
+entomo_csh_metadata_l1_int <- entomo_csh_metadata_l1_ext %>% 
+  mutate(idpostedecapture = paste0(idpointdecapture,"i"))
+
+df_plot_presence <- rbind(entomo_csh_metadata_l1_ext,entomo_csh_metadata_l1_int) %>%
+  left_join(df) %>%
+  replace(is.na(.), "Absence") %>%
+  pivot_longer(c("An.funestus_ss","An.coluzzii","An.gambiae_ss"), names_to = "species", values_to = "biting_status")
+
+## nombre de sites avec présence de piqure par mission, tous villages 
+plot_presence_bymission <- ggplot(df_plot_presence, aes(x = as.factor(nummission), fill = biting_status)) + 
+    geom_histogram(stat="count") +
+    labs(fill = "Biting status", y ="number of sites sampled", x = "mission") +
+    theme(legend.position = "bottom") + 
+  facet_grid(.~species) +
+    labs(x = NULL) +
+    labs(y = NULL) +
+  ggtitle("by mission")
+
+## nombre de sites avec présence de piqure par village, toutes missions 
+plot_presence_byvillage <- ggplot(df_plot_presence, aes(x = as.factor(codevillage), fill = biting_status)) + 
+    geom_histogram(stat="count") +
+    labs(fill = "Biting status", y ="number of sites sampled", x = "mission") +
+    theme(legend.position = "bottom",axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
+  facet_grid(.~species) +
+    labs(x = NULL) +
+    labs(y = NULL) +
+  ggtitle("by village")
+
+
+
+## nombre de sites avec présence de piqure par mission, par espèce et par village
+plot_presence_byvillagemission_funestus <-  ggplot(df_plot_presence %>% filter(species=="An.funestus_ss"), aes(x = as.factor(nummission), fill = biting_status)) + 
+    geom_histogram(stat="count") +
+    labs(fill = "Biting status", y ="number of sites sampled", x = "mission") +
+    theme(legend.position = "bottom") + 
+  facet_wrap(.~codevillage) + 
+    labs(x = NULL) +
+    labs(y = NULL) +
+  ggtitle("by village and mission, An.funestus_ss")
+
+plot_presence_byvillagemission_coluzzi <-  ggplot(df_plot_presence %>% filter(species=="An.coluzzii"), aes(x = as.factor(nummission), fill = biting_status)) + 
+    geom_histogram(stat="count") +
+    labs(fill = "Biting status", y ="number of sites sampled", x = "mission") +
+    theme(legend.position = "bottom") + 
+  facet_wrap(.~codevillage) + 
+    labs(x = NULL) +
+    labs(y = NULL) +
+  ggtitle("by village and mission, An.coluzzii")
+
+plot_presence_byvillagemission_gambiae <-  ggplot(df_plot_presence %>% filter(species=="An.gambiae_ss"), aes(x = as.factor(nummission), fill = biting_status)) + 
+    geom_histogram(stat="count") +
+    labs(fill = "Biting status", y ="number of sites sampled", x = "mission") +
+    theme(legend.position = "bottom") + 
+  facet_wrap(.~codevillage) + 
+    labs(x = NULL) +
+    labs(y = NULL) +
+  ggtitle("by village and mission, An.gambiae_ss")
+
+(plot_presence_bymission + plot_presence_byvillage) / (plot_presence_byvillagemission_coluzzi + plot_presence_byvillagemission_funestus + plot_presence_byvillagemission_gambiae) + plot_annotation(title = 'Aggressiveness p.1', subtitle = "Indicator : number of sites sampled with presence / absence of bites")
+
+```
+
+
+## Abundance of bites
+
+```{r }
+
+df <-  dbReadTable(react_gpkg, 'entomo_idmoustiques_l0') %>%
+  filter(pcr_espece %in% c( "An.funestus_ss", "An.coluzzii", "An.gambiae_ss"), nummission<10, codepays == code_pays) %>%
+  group_by(idpostedecapture, pcr_espece, codevillage, nummission) %>%
+  summarise(n=n())
+
+stat_box_data <- function(y, upper_limit = max(df$n) * 1.15) {
+  return( 
+    data.frame(
+      y = 0.95 * upper_limit,
+      label = paste('n =', length(y), '\n')
+    )
+  )
+}
+
+## nombre de piqures par mission et par espèce (comptes positifs) 
+plot_abundance_bymission <- ggplot(df, aes(x = as.factor(nummission), y = n)) + 
+    geom_boxplot(outlier.shape=NA) +
+    geom_jitter(position=position_jitter(0.1), cex=0.4) + 
+    stat_summary(
+    fun.data = stat_box_data, 
+    geom = "text", 
+    hjust = 0.5,
+    vjust = 0.9,
+    size = 2.5
+  ) +
+  facet_wrap(.~pcr_espece) +
+    labs(x = NULL) +
+    labs(y = NULL) +
+  ggtitle("by mission")
+
+## nombre de piqures par village et par espèce (comptes positifs) 
+plot_abundance_byvillage <- ggplot(df, aes(x = as.factor(codevillage), y = n)) + 
+    geom_boxplot(outlier.shape=NA) +
+    geom_jitter(position=position_jitter(0.1), cex=0.4) + 
+  facet_wrap(.~pcr_espece) + 
+      theme(legend.position = "bottom",axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  labs(x = NULL) +
+    labs(y = NULL) +
+  ggtitle("by village")
+
+
+df2 <- df %>%
+  right_join(df_plot_presence %>% rename(pcr_espece = species)) %>%
+  mutate(n = ifelse(is.na(n),0,n)) %>%
+  group_by(pcr_espece,codevillage,nummission) %>%
+  summarise(n_tot=sum(n)) %>%
+  filter(n_tot == 0)
+
+df <- df %>%
+  full_join(df2) %>%
+  mutate(n = ifelse(is.na(n),0,n))
+
+## nombre de piqures par mission, par village et par espèce (comptes positifs) 
+plot_abundance_byvillagemission_funestus <- ggplot(df %>% filter(pcr_espece=="An.funestus_ss"), aes(x = as.factor(nummission), y = n)) + 
+    geom_boxplot(outlier.shape=NA) +
+    ylim(1,NA) +
+  facet_wrap(.~codevillage) + 
+    labs(x = NULL) +
+    labs(y = NULL) +
+  ggtitle("by village and mission, An.funestus_ss")
+
+plot_abundance_byvillagemission_coluzzi <- ggplot(df %>% filter(pcr_espece=="An.coluzzii"), aes(x = as.factor(nummission), y = n)) + 
+    geom_boxplot(outlier.shape=NA) +
+    ylim(1,NA) +
+  facet_wrap(.~codevillage) + 
+    labs(x = NULL) +
+    labs(y = NULL) +
+  ggtitle("by village and mission, An.coluzzii")
+
+plot_abundance_byvillagemission_gambiae <- ggplot(df %>% filter(pcr_espece=="An.gambiae_ss"), aes(x = as.factor(nummission), y = n)) + 
+    geom_boxplot(outlier.shape=NA) +
+    ylim(1,NA) +
+  facet_wrap(.~codevillage) + 
+    labs(x = NULL) +
+    labs(y = NULL) +
+  ggtitle("by village and mission, An.gambiae_ss")
+
+
+(plot_abundance_bymission + plot_abundance_byvillage) / (plot_abundance_byvillagemission_coluzzi +plot_abundance_byvillagemission_funestus +  plot_abundance_byvillagemission_gambiae) + plot_annotation(title = 'Aggressiveness p.2', subtitle = "Indicator : number of bites / night (positive counts only)")
+
+
+# plot_abundance_byvillage_allspecies <- ggplot(df, aes(x = as.factor(nummission), y = n, fill = pcr_espece)) + 
+#     geom_boxplot(outlier.shape=NA) +
+#   facet_wrap(.~codevillage)
+
+```
+
+
+## Behavioral resistance : Exophagy
+
+```{r }
+
+exo <- dbReadTable(react_gpkg, 'entomo_idmoustiques_l0') %>%
+  filter(codepays == "BF") %>%
+  filter(pcr_espece %in% c( "An.funestus_ss", "An.coluzzii", "An.gambiae_ss"), nummission <10) %>%
+  group_by(nummission, codepays, postedecapture,pcr_espece) %>%
+  summarise(n=n()) %>%
+  pivot_wider(names_from = postedecapture, values_from = n) %>%
+  mutate(tot = e+i) %>%
+  mutate(exophagy = e / tot * 100)
+
+## proportion des piqures en exterieur par mission et par espèce
+plot_exophagy_bymission <- ggplot(exo, aes(x=as.factor(nummission), y = exophagy)) + 
+  geom_bar(stat="identity") + 
+  facet_grid(~pcr_espece) + ylim(0, 100) + 
+  ylab("frequency of bites") +
+    labs(x = NULL) +
+    labs(y = NULL) +
+  ggtitle("by mission")
+
+## proportion des piqures en exterieur par village et par espèce
+exo2 <- dbReadTable(react_gpkg, 'entomo_idmoustiques_l0') %>%
+  filter(codepays == "BF") %>%
+  filter(pcr_espece %in% c( "An.funestus_ss", "An.coluzzii", "An.gambiae_ss"), nummission <10) %>%
+  group_by(codepays, codevillage, postedecapture,pcr_espece) %>%
+  summarise(n=n()) %>%
+  pivot_wider(names_from = postedecapture, values_from = n) %>%
+  mutate(tot = e+i) %>%
+  mutate(exophagy = e / tot * 100)
+
+plot_exophagy_byvillage <- ggplot(exo2, aes(x=as.factor(codevillage), y = exophagy)) + 
+  geom_bar(stat="identity") + 
+  facet_grid(~pcr_espece) + ylim(0, 100) + 
+  ylab("frequency of bites") + 
+    labs(x = NULL) +
+    labs(y = NULL) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("by village")
+
+
+
+
+exo_byvillage <- dbReadTable(react_gpkg, 'entomo_idmoustiques_l0') %>%
+  filter(codepays == "BF") %>%
+  filter(pcr_espece %in% c( "An.funestus_ss", "An.coluzzii", "An.gambiae_ss"), nummission <10) %>%
+  group_by(nummission, codepays, codevillage, postedecapture,pcr_espece) %>%
+  summarise(n=n()) %>%
+  pivot_wider(names_from = postedecapture, values_from = n) %>%
+  mutate_all(funs(replace_na(., 0))) %>%
+  mutate(tot = e+i) %>%
+  mutate(exophagy = e / tot * 100) %>%
+  full_join(df2) %>%
+  mutate(exophagy = ifelse(is.na(exophagy),0,exophagy))
+
+## proportion des piqures en exterieur par mission, par espèce et par village
+plot_exophagy_byvillagemission_funestus <- ggplot(exo_byvillage %>% filter(pcr_espece=="An.funestus_ss"), aes(x=as.factor(nummission), y = exophagy)) + 
+  geom_bar(stat="identity") + 
+  ylab("frequency of bites") +
+  facet_wrap(.~codevillage) + 
+    labs(x = NULL) +
+    labs(y = NULL) +
+  ggtitle("by village and mission, An.funestus_ss")
+
+plot_exophagy_byvillagemission_coluzzi <-  ggplot(exo_byvillage %>% filter(pcr_espece=="An.coluzzii"), aes(x=as.factor(nummission), y = exophagy)) + 
+  geom_bar(stat="identity") + 
+  ylab("frequency of bites") +
+  facet_wrap(.~codevillage) + 
+    labs(x = NULL) +
+    labs(y = NULL) +
+  ggtitle("by village and mission, An.coluzzii")
+  
+plot_exophagy_byvillagemission_gambiae <-  ggplot(exo_byvillage %>% filter(pcr_espece=="An.gambiae_ss"), aes(x=as.factor(nummission), y = exophagy)) + 
+  geom_bar(stat="identity") + 
+  ylab("frequency of bites") +
+  facet_wrap(.~codevillage) + 
+    labs(x = NULL) +
+    labs(y = NULL) +
+  ggtitle("by village and mission, An.gambiae_ss")
+
+(plot_exophagy_bymission + plot_exophagy_byvillage) / ( plot_exophagy_byvillagemission_coluzzi + plot_exophagy_byvillagemission_funestus +plot_exophagy_byvillagemission_gambiae) + plot_annotation(title = "Behavioral resistance / exophagy",  subtitle = "Indicator : proportion of bites occurring outside")
+
+```
+
+
+## Bahavioral resistance : number of bites by hour, precocious and late aggressiveness
+
+```{r }
+
+## nombre moyen de piqures par heure / par mission  (linegraph) TODO
+bites_by_hour <- dbReadTable(react_gpkg, 'entomo_idmoustiques_l0') %>%
+  filter(codepays == "BF") %>%
+  filter(pcr_espece %in% c("An.funestus_ss", "An.coluzzii", "An.gambiae_ss"), nummission <10) %>%
+  left_join(villages_missions_interv) %>%
+  group_by(codevillage, nummission, heuredecapture,pcr_espece, period_interv) %>%
+  summarise(n=n())
+
+bites_by_hour$heuredecapture <- factor(bites_by_hour$heuredecapture, levels = c("17","18","19","20","21","22","23","0","1","2","3","4","5","6","7","8"))
+
+
+
+plot_bites_by_hour <- ggplot(bites_by_hour %>% filter(pcr_espece=="An.funestus_ss"), aes(x=heuredecapture, y = n, group = period_interv, colour = as.factor(period_interv))) + 
+  geom_line() + 
+  facet_wrap(.~codevillage)
+
+
+
+
+## heure médiane de piqure par mission (boxplot) TODO
+bites_by_hour <- dbReadTable(react_gpkg, 'entomo_idmoustiques_l0') %>%
+  filter(codepays == "BF") %>%
+  filter(pcr_espece %in% c("An.funestus_ss", "An.coluzzii", "An.gambiae_ss"), nummission <10) %>%
+  left_join(villages_missions_interv) %>%
+  left_join(periodes_interv %>% dplyr::select(idpointdecapture, date_capture)) %>%
+  mutate(date_capture = lubridate::ymd(date_capture))
+
+
+
+
+## proportion des piqures avant 20h le soir et après 6h le matin par mission (barplot)
+late_prec_agg_byvillagemission <- dbReadTable(react_gpkg, 'entomo_idmoustiques_l0') %>%
+  filter(codepays == "BF") %>%
+  filter(pcr_espece %in% c("An.funestus_ss", "An.coluzzii", "An.gambiae_ss"), nummission <10) %>%
+  left_join(villages_missions_interv) %>%
+  mutate(late_prec_aggre = ifelse(as.numeric(heuredecapture) >= 6 & as.numeric(heuredecapture) <= 20,"late_or_precocious","normal")) %>%
+  group_by(codevillage, nummission, pcr_espece, late_prec_aggre) %>%
+  summarise(n=n()) %>%
+  pivot_wider(names_from = late_prec_aggre, values_from = n, values_fill = list(n = 0) ) %>%
+  mutate(perc_late_or_precocious =  late_or_precocious / (late_or_precocious + normal) * 100)
+
+late_prec_agg_bymission <- late_prec_agg_byvillagemission %>%
+  group_by(nummission, pcr_espece) %>%
+  summarise(normal = sum(normal), late_or_precocious = sum(late_or_precocious)) %>%
+  mutate(perc_late_or_precocious =  late_or_precocious / (late_or_precocious + normal) * 100)
+
+late_prec_agg_byvillage <- late_prec_agg_byvillagemission %>%
+  group_by(codevillage, pcr_espece) %>%
+  summarise(normal = sum(normal), late_or_precocious = sum(late_or_precocious)) %>%
+  mutate(perc_late_or_precocious =  late_or_precocious / (late_or_precocious + normal) * 100)
+
+# par village, toutes missions
+plot_lateprecagg_byvillage <- ggplot(late_prec_agg_byvillage, aes(x=as.factor(codevillage), y = perc_late_or_precocious)) + 
+  geom_bar(stat="identity") + 
+  ylab("frequency of bites") +
+  facet_wrap(.~pcr_espece) +
+  ggtitle("by village") + 
+    labs(x = NULL) +
+    labs(y = NULL) +
+  theme(legend.position = "bottom",axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+# par mission, tous villages
+plot_lateprecagg_bymission <- ggplot(late_prec_agg_bymission, aes(x=as.factor(nummission), y = perc_late_or_precocious)) + 
+  geom_bar(stat="identity") + 
+  ylab("frequency of bites") +
+  facet_wrap(.~pcr_espece) +
+  ggtitle("by mission") + 
+    labs(x = NULL) +
+    labs(y = NULL) +
+  ylim(0,100)
+
+# par village et par mission
+plot_lateprecagg_byvillagemission_funestus <- ggplot(late_prec_agg_byvillagemission %>% filter(pcr_espece=="An.funestus_ss"), aes(x=as.factor(nummission), y = perc_late_or_precocious)) + 
+  geom_bar(stat="identity") + 
+  ylab("frequency of bites") +
+  facet_wrap(.~codevillage) + 
+    labs(x = NULL) +
+    labs(y = NULL) +
+  ggtitle("by village and mission, An.funestus_ss")
+
+plot_lateprecagg_byvillagemission_coluzzi <- ggplot(late_prec_agg_byvillagemission %>% filter(pcr_espece=="An.coluzzii"), aes(x=as.factor(nummission), y = perc_late_or_precocious)) + 
+  geom_bar(stat="identity") + 
+  ylab("frequency of bites") +
+  facet_wrap(.~codevillage) + 
+    labs(x = NULL) +
+    labs(y = NULL) +
+  ggtitle("by village and mission, An.coluzzii")
+
+plot_lateprecagg_byvillagemission_gambiae <- ggplot(late_prec_agg_byvillagemission %>% filter(pcr_espece=="An.gambiae_ss"), aes(x=as.factor(nummission), y = perc_late_or_precocious)) + 
+  geom_bar(stat="identity") + 
+  ylab("frequency of bites") +
+  facet_wrap(.~codevillage) + 
+    labs(x = NULL) +
+    labs(y = NULL) +
+  ggtitle("by village and mission, An.gambiae_ss")
+
+(plot_lateprecagg_bymission + plot_lateprecagg_byvillage) /  ( plot_lateprecagg_byvillagemission_coluzzi + plot_lateprecagg_byvillagemission_funestus + plot_lateprecagg_byvillagemission_gambiae) + plot_annotation(title = "Behavioral resistance / late or precocious aggressiveness", subtitle = 'Indicator : proportion of bites occurring before 8 p.m. or after 6 a.m.')
+```
+
+
+## Physiological resistance : frequencies of kdr allel 
+
+```{r }
+## frequence allelique de chaque gène de résistance
+kdrw_bymission_allvillages <- dbReadTable(react_gpkg, 'entomo_idmoustiques_l0') %>%
+  filter(codepays == "BF") %>%
+  filter(pcr_espece %in% c("An.coluzzii", "An.gambiae_ss"), nummission <10) %>%
+  left_join(villages_missions_interv) %>%
+  group_by(nummission, pcr_espece, kdrw) %>%
+  summarise(n=n()) %>%
+  as_tibble() %>%
+  filter(!is.na(kdrw)) %>%
+  pivot_wider(names_from = kdrw, values_from = n, values_fill = list(n = 0) ) %>%
+  mutate(freq_allel = 100* (2*RR + RS) / (2*(RR+RS+SS)))
+
+kdrw_byvillage_allmissions <- dbReadTable(react_gpkg, 'entomo_idmoustiques_l0') %>%
+  filter(codepays == "BF") %>%
+  filter(pcr_espece %in% c("An.coluzzii", "An.gambiae_ss"), nummission <10) %>%
+  left_join(villages_missions_interv) %>%
+  group_by(codevillage, pcr_espece, kdrw) %>%
+  summarise(n=n()) %>%
+  as_tibble() %>%
+  filter(!is.na(kdrw)) %>%
+  pivot_wider(names_from = kdrw, values_from = n, values_fill = list(n = 0) ) %>%
+  mutate(freq_allel = 100* (2*RR + RS) / (2*(RR+RS+SS)))
+
+
+kdrw_byvillage <- dbReadTable(react_gpkg, 'entomo_idmoustiques_l0') %>%
+  filter(codepays == "BF") %>%
+  filter(pcr_espece %in% c("An.coluzzii", "An.gambiae_ss"), nummission <10) %>%
+  left_join(villages_missions_interv) %>%
+  group_by(codevillage, nummission, pcr_espece, kdrw) %>%
+  summarise(n=n()) %>%
+  as_tibble() %>%
+  filter(!is.na(kdrw)) %>%
+  pivot_wider(names_from = kdrw, values_from = n, values_fill = list(n = 0) ) %>%
+  mutate(freq_allel = 100* (2*RR + RS) / (2*(RR+RS+SS)))
+
+# par village, toutes missions
+plot_kdrw_byvillage <- ggplot(kdrw_byvillage_allmissions, aes(x=as.factor(codevillage), y = freq_allel)) + 
+  geom_bar(stat="identity") + 
+  ylab("frequency of bites") +
+  facet_wrap(.~pcr_espece) +
+  ggtitle("by village") +
+    labs(x = NULL) +
+    labs(y = NULL) +
+  ylim(0,100) + 
+  theme(legend.position = "bottom",axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) 
+
+
+# par mission, tous villages
+plot_kdrw_bymission <- ggplot(kdrw_bymission_allvillages, aes(x=as.factor(nummission), y = freq_allel)) + 
+  geom_bar(stat="identity") + 
+  ylab("frequency of bites") +
+  facet_wrap(.~pcr_espece) +
+    labs(x = NULL) +
+    labs(y = NULL) +
+    ylim(0,100) + 
+  ggtitle("by mission")
+
+# par village et par mission
+plot_kdrw_byvillagemission_coluzzi <- ggplot(kdrw_byvillage %>% filter(pcr_espece=="An.coluzzii"), aes(x=as.factor(nummission), y = freq_allel)) + 
+  geom_bar(stat="identity") + 
+  ylab("frequency of bites") +
+  facet_wrap(.~codevillage) + 
+    labs(x = NULL) +
+    labs(y = NULL) +
+    ylim(0,100) + 
+  ggtitle("by village and mission, An.coluzzii")
+
+plot_kdrw_byvillagemission_gambiae <- ggplot(kdrw_byvillage %>% filter(pcr_espece=="An.gambiae_ss"), aes(x=as.factor(nummission), y = freq_allel)) + 
+  geom_bar(stat="identity") + 
+  ylab("frequency of bites") +
+  facet_wrap(.~codevillage) + 
+    labs(x = NULL) +
+    labs(y = NULL) +
+    ylim(0,100) + 
+  ggtitle("by village and mission, An.gambiae_ss")
+
+(plot_kdrw_bymission + plot_kdrw_byvillage) / (plot_kdrw_byvillagemission_coluzzi + plot_kdrw_byvillagemission_gambiae) + plot_annotation(title = "Physiological resistance", subtitle = 'Indicator : allelic frequency of the kdrw mutation')
+
+```
+
+
+## LAV
+
+
+## LLIN use
+
+
+## rainfall
+```{r }
+
+vars = c("RFD1F","TMAX1","TMIN1","SMO1","VNV8","EVT8")
+
+env_spatiotemporal <- dbReadTable(react_gpkg, 'env_spatiotemporal') %>% 
+  dplyr::select(-fid) %>% 
+  mutate(date = as.Date(date)) %>% 
+  dplyr::rename(idpointdecapture = id) %>% 
+  filter(var %in% vars, buffer==2000) %>%
+  mutate( week = lubridate::week(date), year = lubridate::year(date), month = lubridate::month(date)) %>%
+  left_join(periodes_interv) %>%
+  filter(codepays == "BF", as.numeric(nummission)<10) %>%
+  mutate(date = as.Date(paste0(year,"-",week,"-",month), format = "%Y-%U-%u"))
+
+rfd <- env_spatiotemporal %>%
+  filter(var == "RFD1F", !is.na(date)) %>%
+  group_by(var, codevillage, lag_time, nummission, date) %>%
+  summarise(val = mean(val,na.rm = TRUE)) %>%
+  as_tibble() %>%
+  group_by(codevillage, date, var) %>%
+  summarise(val=sum(val))
+
+oth <- env_spatiotemporal %>%
+  filter(var != "RFD1F") %>%
+  group_by(var, codevillage, date) %>%
+  summarise(val=mean(val, na.rm = T))
+
+env_spatiotemporal <- rbind(rfd,oth)
+              
+mean_date_by_mission <- periodes_interv %>%
+  mutate(nummission = as.numeric(nummission)) %>%
+  filter(codepays == "BF", nummission < 10) %>%
+  mutate(date_capture = as.Date(date_capture)) %>%
+  group_by(nummission) %>%
+  summarise(date=mean(date_capture))
+  
+
+plot_rfd_byvillagemission <- ggplot(env_spatiotemporal , aes(x=date, y = val, fill = codevillage)) + 
+  geom_line(size = 0.2) + 
+  scale_x_date() +
+  facet_wrap(.~var, scales = "free") +
+  geom_vline(data = mean_date_by_mission, aes(xintercept = date, color = "red"),linetype=2, size = 0.5)
+
+
+```
+
+
+## land cover
+```{r }
+
+
+
+
+```
+
+
+
+
