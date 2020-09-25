@@ -75,7 +75,8 @@ fun_workflow_model <- function(response_var,
                                intervention, 
                                predictive_type, 
                                timevars_selection = "1day", 
-                               lag_time_window = c(0,30)){
+                               lag_time_window = c(0,60),
+                               buffer_sizes = c(2000)){
   
 cat("Executing workflow for parameters : ", response_var, code_pays, mod, model_type, intervention, predictive_type,"\n")
   
@@ -83,7 +84,7 @@ cat("Executing workflow for parameters : ", response_var, code_pays, mod, model_
 
 # load spatiotemporal data
 env_spatiotemporal <- load_spatiotemporal_data(vars = c("RFD1F","TMIN1","TMAX1"), 
-                         buffers = c(2000),
+                         buffers = buffer_sizes,
                          lag_time_window = lag_time_window,
                          summarize_days_to_week = FALSE,
                          code_pays = code_pays,
@@ -94,16 +95,16 @@ if(predictive_type == "notroi"){
   landcover_layers_to_keep <- c(11,12)
 } else {
   if(code_pays == "BF"){
-    landcover_layers_to_keep <- c(4)
+    landcover_layers_to_keep <- c(3,4,5)
   } else if (code_pays == "CI"){
-    landcover_layers_to_keep <- c(9)
+    landcover_layers_to_keep <- c(8,9,10)
   }
 }
 
 landcover_metrics_to_keep <- NULL
 landcover_metrics_to_keep <- "pland"
 
-env_spatial_all <- load_spatial_data(code_pays, landcover_layers_to_keep, mod, landcover_metrics_to_keep)
+env_spatial_all <- load_spatial_data(code_pays, landcover_layers_to_keep, mod, landcover_metrics_to_keep, buffer_sizes)
 env_landcover <- env_spatial_all[[1]]
 env_spatial <- env_spatial_all[[2]]
 th_env_nightcatch_postedecapture <- env_spatial_all[[3]]
@@ -117,8 +118,8 @@ mean_coords_points_4326 <- spatial_coordinates[[1]]
 mean_coords_points_32630 <- spatial_coordinates[[2]]
 rm(spatial_coordinates)
 
-# load llin use data
-llinuse <- load_llinuse_data(code_pays,entomo_csh_metadata_l1)
+# load human beahviour use data
+hum_behav <- load_hmnbehav_data(code_pays,entomo_csh_metadata_l1)
 
 # load response variable
 if(mod %in% c("presence","abundance")){
@@ -130,7 +131,7 @@ if(mod %in% c("presence","abundance")){
     mutate(heuredecapture = NA)
 
   th_trmetrics_entomo_postedecapture$resp_var <- th_trmetrics_entomo_postedecapture[,response_var]
-} else if(mod %in% c("physiological_resistance_kdrw","exophagy","late_prec_aggressiveness")){
+} else if(mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","late_prec_aggressiveness")){
   
   if(response_var == "ma_funestus_ss"){
     response_var <- "An.funestus_ss"
@@ -157,7 +158,12 @@ if(mod %in% c("presence","abundance")){
     
   } else if (mod=="physiological_resistance_kdrw"){
     th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>%
-      mutate(resp_var = ifelse(kdrw %in% c("RR","RS"),1,0))
+      mutate(resp_var = ifelse(kdrw == "RR",1,0)) %>%
+      mutate(resp_var = ifelse(kdrw == "RS",0.5,resp_var))
+  } else if (mod=="physiological_resistance_kdre"){
+    th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>%
+      mutate(resp_var = ifelse(kdre == "RR",1,0)) %>%
+      mutate(resp_var = ifelse(kdre == "RS",0.5,resp_var))
   }
   
 }
@@ -195,7 +201,7 @@ th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>%
   left_join(th_env_nightcatch) %>%
   left_join(th_env_static) %>%
   left_join(env_landcover) %>%
-  left_join(llinuse) %>%
+  left_join(hum_behav) %>%
   mutate_all(funs(ifelse(is.na(.), mean(., na.rm = TRUE), .)))
 th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture[, colSums(is.na(th_trmetrics_entomo_postedecapture)) != nrow(th_trmetrics_entomo_postedecapture)]
 
@@ -213,19 +219,37 @@ for(i in 1:length(time_vars)){
 
   cat("Calculating CCM for variable ",time_vars[i],"\n")
   expl_vars_to_test =  colnames(th_trmetrics_entomo_postedecapture[which(grepl(time_vars[i],colnames(th_trmetrics_entomo_postedecapture)))])
-  
+    
   if(timevars_selection == "7day"){
+    if(mod %in% c("presence","abundance")){
     expl_vars_to_test <- c(paste0(time_vars[i],"_2000_0_7"),
                            paste0(time_vars[i],"_2000_7_14"),
                            paste0(time_vars[i],"_2000_14_21"),
                            paste0(time_vars[i],"_2000_21_28"),
+                           paste0(time_vars[i],"_2000_28_35"),
+                           paste0(time_vars[i],"_2000_35_42"),
                            paste0(time_vars[i],"_2000_0_14"),
                            paste0(time_vars[i],"_2000_0_21"),
                            paste0(time_vars[i],"_2000_0_28"),
+                           paste0(time_vars[i],"_2000_0_35"),
+                           paste0(time_vars[i],"_2000_0_42"),
                            paste0(time_vars[i],"_2000_7_21"),
                            paste0(time_vars[i],"_2000_7_28"),
-                           paste0(time_vars[i],"_2000_14_28")
+                           paste0(time_vars[i],"_2000_7_35"),
+                           paste0(time_vars[i],"_2000_7_42"),
+                           paste0(time_vars[i],"_2000_14_28"),
+                           paste0(time_vars[i],"_2000_14_35"),
+                           paste0(time_vars[i],"_2000_14_42"),
+                           paste0(time_vars[i],"_2000_21_35"),
+                           paste0(time_vars[i],"_2000_21_42"),
+                           paste0(time_vars[i],"_2000_28_42")
                            )
+    } else {
+      expl_vars_to_test <- c(paste0(time_vars[i],"_2000_0_31"),
+                             paste0(time_vars[i],"_2000_31_60"),
+                             paste0(time_vars[i],"_2000_0_60")
+      )
+    }
   }
   
   corr <- fun_feature_forward_selection(
@@ -262,7 +286,7 @@ for(i in 1:length(time_vars)){
   #   corr <- corr %>% filter(diff_lag >= 4)
   # }
 
-  corr <- corr %>% filter(!is.na(correlation), pval <= 0.2, abs_corr > 0.2)
+  corr <- corr %>% filter(!is.na(correlation), pval <= 0.05, abs_corr >= 0.2)
 
   if(nrow(corr) > 0){
     col_to_keep <- corr$name[which.max(abs(corr$abs_corr))]
@@ -300,6 +324,11 @@ for(i in 1:length(time_vars)){
     dplyr::select(-c(name1,buffer,lag1,lag2,var)) %>%
     mutate(type = "Climate")
 
+  df_temporal <- df_temporal_corr
+  
+  }
+
+if(nrow(df_temporal_corr) > 1){
 #best_time_var <- as.character(df_temporal_corr$name[which.max(abs(df_temporal_corr$correlation))])
 
 cols_to_keep_best_time_var <- as.character(df_temporal_corr$name[which.max(abs(df_temporal_corr$correlation))])
@@ -356,13 +385,22 @@ corr_env_spatial <- NULL
 corr_env_nightcatch <- NULL
 corr_env_nightcatch_postedecapture <- NULL
 corr_env_static <- NULL
-corr_env_llinuse <- NULL
+corr_env_hum_behav <- NULL
 
 ## filter landcover variables with spearman coefficient 
 lco_metadata <- dbReadTable(react_gpkg, 'lco_metadata') # table containing pixel value and label for each land cover map
 metrics_defs <- landscapemetrics::list_lsm() # list of landscape metrics
 
 expl_vars_to_test =  colnames(th_trmetrics_entomo_postedecapture[which(grepl("lsm",colnames(th_trmetrics_entomo_postedecapture)))])
+
+if(model_type=="glmm"){
+  if(code_pays=="BF"){
+    expl_vars_to_test =  colnames(th_trmetrics_entomo_postedecapture[which(grepl("lsm_c_pland_2000_3",colnames(th_trmetrics_entomo_postedecapture)))])
+  } else if(code_pays=="CI"){
+    expl_vars_to_test =  colnames(th_trmetrics_entomo_postedecapture[which(grepl("lsm_c_pland_2000_8",colnames(th_trmetrics_entomo_postedecapture)))])
+  }
+}
+
 expl_vars_to_test_lcid <- as.numeric(word(gsub("_"," ",expl_vars_to_test),5))
 expl_vars_to_test_buffer <- as.numeric(word(gsub("_"," ",expl_vars_to_test),4))
 
@@ -374,14 +412,14 @@ corr_lsm1 <- fun_feature_forward_selection(
   type = "univariate_selection", 
   expl_vars_to_test = expl_vars_to_test)
 
-corr_lsm1 <- corr_lsm1 %>% filter(abs_corr > 0.2, pval <= 0.2)
+corr_lsm1 <- corr_lsm1 %>% filter(abs_corr >= 0.2, pval <= 0.2)
 
 var_to_remove <- NULL
 
 if(nrow(corr_lsm1) > 1){
   
   m <- th_trmetrics_entomo_postedecapture[,corr_lsm1$name] %>%
-    cor(.,method = "spearman", use = "na.or.complete")
+    cor(.,method = "pearson", use = "na.or.complete")
   index <- which(abs(m) > .7 & abs(m) < 1,arr.ind = T) 
   p <- cbind.data.frame(stock1 = rownames(m)[index[,1]], stock2 = colnames(m)[index[,2]])
   
@@ -598,12 +636,14 @@ df_corr_univ <- rbind(df_temporal_corr,corr_lsm_univ, corr_env_spatial, corr_env
 df_corr_univ$name <- as.character(df_corr_univ$name)
 
 ## multicollinearity
+var_to_remove <- NULL
+p <- NULL
+if(nrow(df_corr)>1){
 m <- th_trmetrics_entomo_postedecapture[,df_corr$name] %>%
   cor(.,method = "pearson", use = "na.or.complete")
 index <- which(abs(m) > .7 & abs(m) < 1,arr.ind = T) 
 p <- cbind.data.frame(stock1 = rownames(m)[index[,1]], stock2 = colnames(m)[index[,2]])
 
-var_to_remove <- NULL
 
 if(nrow(p)>0){
   
@@ -643,6 +683,7 @@ var_to_remove <- unique(var_to_remove)
 
 }
 
+}
 df_corr_multiv <- df_corr %>% 
   dplyr::filter(!(name %in% var_to_remove))
 
@@ -679,7 +720,7 @@ if(model_type == "glmm"){
         glmmTMB::glmmTMB(formule, data = ., family = truncated_nbinom2) %>% # fit the model
       Anova() %>% # test the significance of the variable
       nth(3) # get the p-value
-    } else if (mod %in% c("presence","abundance", "late_prec_aggressiveness", "exophagy", "physiological_resistance_kdrw")){
+    } else if (mod %in% c("presence","abundance", "late_prec_aggressiveness", "exophagy", "physiological_resistance_kdrw", "physiological_resistance_kdre")){
       res <- data %>%
         glmmTMB::glmmTMB(formule, data = ., family = binomial(link = "logit")) %>% # fit the model
         Anova() %>% # test the significance of the variable
@@ -691,9 +732,9 @@ if(model_type == "glmm"){
   # fill with the results (i.e the p_value from the model test )
   possible_p_value <- possibly(p_value, otherwise = NA_real_)
   
-  results <- results %>%
-    mutate(pvalue = map_dbl(ind_vars, ~possible_p_value(dep_var, ., th_trmetrics_entomo_postedecapture_mod1))) %>%
-    filter(pvalue <= 0.25)
+  #results <- results %>%
+    #mutate(pvalue = map_dbl(ind_vars, ~possible_p_value(dep_var, ., th_trmetrics_entomo_postedecapture_mod1))) #%>%
+    #filter(pvalue <= 0.25)
   
   var_to_keep <- c(results$ind_vars,"int_ext","VCM")
   
@@ -703,12 +744,37 @@ if(model_type == "glmm"){
   
   form <- as.formula(paste("resp_var ~ ",paste(var_to_keep, collapse = "+")))
   
-  th_trmetrics_entomo_postedecapture_mod2 <- th_trmetrics_entomo_postedecapture %>% mutate_at(results$ind_vars, ~scale(., center = TRUE, scale = FALSE)) %>% dplyr::select(c("resp_var","codevillage","pointdecapture2",var_to_keep))
+  var_to_force <- c("VCM","LUS","RFH","WSP","NMA","NMT","NMH")
+  
+  if(mod %in% c("presence","abundance")){
+    if(code_pays == "BF"){
+     var_to_force <- c(var_to_force, "lsm_c_pland_2000_3_4","lsm_c_pland_2000_5_19","lsm_c_pland_2000_5_22","lsm_c_pland_2000_3_12") #foret_ripicole, prairie_marecageuse, marais, eaux_dormantes
+    } else if(code_pays == "CI"){
+      #var_to_force <- c(var_to_force, ) 
+    }
+  } else if (mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre")){
+    if(code_pays == "BF"){
+      var_to_force <- c(var_to_force, "lsm_c_pland_2000_4_16","lsm_c_pland_2000_4_11","lsm_c_pland_2000_4_1") # coton, riz, cultures irriguées
+    } else if(code_pays == "CI"){
+      #var_to_force <- c(var_to_force, )
+    } 
+  }
+ 
+
+  ## multicollinearity ??
+  
+  
+  form_forc <- as.formula(paste(" ~", paste(var_to_force, collapse = "+"), "+ (1|codevillage/pointdecapture2)"))
+  var_to_keep <- setdiff(var_to_keep,var_to_force)
+  
+  th_trmetrics_entomo_postedecapture_mod2 <- th_trmetrics_entomo_postedecapture %>% mutate_at(results$ind_vars, ~scale(., center = TRUE, scale = FALSE)) %>% dplyr::select(c("resp_var","codevillage","pointdecapture2",var_to_force,var_to_keep))
   
   if(mod == "abundance"){
-    th_mod <- buildglmmTMB(form, include = ~ VCM + (1|codevillage/pointdecapture2), data = th_trmetrics_entomo_postedecapture_mod2, family = truncated_nbinom2)
-  } else if (mod %in% c("presence","abundance", "late_prec_aggressiveness", "exophagy", "physiological_resistance_kdrw")){
-    th_mod <- buildglmmTMB(form, include = ~ VCM + (1|codevillage/pointdecapture2), data = th_trmetrics_entomo_postedecapture_mod2, family = binomial(link = "logit"))
+    th_mod1 <- buildglmmTMB(form, include = ~ (1|codevillage/pointdecapture2), data = th_trmetrics_entomo_postedecapture_mod2, family = truncated_nbinom2)
+    th_mod2 <- buildglmmTMB(form, include = form_forc, data = th_trmetrics_entomo_postedecapture_mod2, family = truncated_nbinom2)
+  } else if (mod %in% c("presence","abundance", "late_prec_aggressiveness", "exophagy", "physiological_resistance_kdrw","physiological_resistance_kdre")){
+    th_mod1 <- buildglmmTMB(form, include = ~ (1|codevillage/pointdecapture2), data = th_trmetrics_entomo_postedecapture_mod2, family = binomial(link = "logit"))
+    th_mod2 <- buildglmmTMB(form, include = form_forc, data = th_trmetrics_entomo_postedecapture_mod2, family = binomial(link = "logit"))
   }
   
   
@@ -716,11 +782,11 @@ if(model_type == "glmm"){
   # if(intervention == "all"){
      
      # leave-one-village-out : predict on a new village but on known missions
-  #   cv_llo <- fun_glmm_cross_validation(indices_spatial, th_mod, mod, th_trmetrics_entomo_postedecapture, results$ind_vars)
+  #   cv_llo <- fun_glmm_cross_validation(indices_spatial, th_mod1, mod, th_trmetrics_entomo_postedecapture, results$ind_vars)
   #    leave-one-mission-out : predict on known villages but on unknown missions
-    # cv_lto <- fun_glmm_cross_validation(indices_temporal, th_mod, mod, th_trmetrics_entomo_postedecapture, results$ind_vars)
+    # cv_lto <- fun_glmm_cross_validation(indices_temporal, th_mod1, mod, th_trmetrics_entomo_postedecapture, results$ind_vars)
   #   # leave-one-village-and-mission-out : predict on unknown villages and on unknown missions
-  #   cv_llto <- fun_glmm_cross_validation(indices_spatiotemporal, th_mod, mod, th_trmetrics_entomo_postedecapture, results$ind_vars)
+  #   cv_llto <- fun_glmm_cross_validation(indices_spatiotemporal, th_mod1, mod, th_trmetrics_entomo_postedecapture, results$ind_vars)
   # 
   # } else {
   #   cv_llo <- cv_lto <- cv_llto <- NA
@@ -755,7 +821,7 @@ if(model_type == "rf"){
     th_trmetrics_entomo_postedecapture_mod1 <- th_trmetrics_entomo_postedecapture
     th_trmetrics_entomo_postedecapture_mod1$resp_var <- log(th_trmetrics_entomo_postedecapture_mod1$resp_var)
     
-  } else if (mod == "presence"){
+  } else if (mod %in% c("presence","abundance", "late_prec_aggressiveness", "exophagy", "physiological_resistance_kdrw","physiological_resistance_kdre")){
     tr_spatial = trainControl(method="cv",
                               index = indices_spatial$index, 
                               indexOut = indices_spatial$indexOut,
@@ -812,7 +878,7 @@ if(model_type == "rf"){
     dplyr::select(codevillage,nummission,idpointdecapture,int_ext,resp_var,X_4326,Y_4326,mean_date_mission) %>%
     mutate(mean_date_mission = as.Date(mean_date_mission, origin = "1970-01-01"))
   
-  return(list(df = th_trmetrics_entomo_postedecapture, ccm_plots = ccm_plots, ts_plots = ts_plots, df_corr_univ = df_corr_univ, df_corr_multiv = df_corr_multiv, correlated_variables = p, model = th_mod, cv_lto = cv_lto))
+  return(list(df = th_trmetrics_entomo_postedecapture, ccm_plots = ccm_plots, ts_plots = ts_plots, df_corr_univ = df_corr_univ, df_corr_multiv = df_corr_multiv, correlated_variables = p, model = th_mod1, model_forced = th_mod2, cv_lto = cv_lto))
               #, cv_llo = cv_llo, cv_lto = cv_lto, cv_llto = cv_llto
               
 
@@ -828,19 +894,22 @@ df_input_params_glmm <- df_input_params_glmm %>%
   add_row(response_var = "ma_funestus_ss", code_pays = "BF", mod = "abundance", model_type = "glmm", intervention = "all", predictive_type = "roi_villages", timevars_selection = "7day") %>%
   add_row(response_var = "ma_funestus_ss", code_pays = "BF", mod = "late_prec_aggressiveness", model_type = "glmm", intervention = "all", predictive_type = "roi_villages", timevars_selection = "7day") %>%
   add_row(response_var = "ma_funestus_ss", code_pays = "BF", mod = "exophagy", model_type = "glmm", intervention = "all", predictive_type = "roi_villages", timevars_selection = "7day") %>%
-  add_row(response_var = "ma_funestus_ss", code_pays = "BF", mod = "physiological_resistance_kdrw", model_type = "glmm", intervention = "all", predictive_type = "roi_villages", timevars_selection = "7day") %>%
+  #add_row(response_var = "ma_funestus_ss", code_pays = "BF", mod = "physiological_resistance_kdrw","physiological_resistance_kdre", model_type = "glmm", intervention = "all", predictive_type = "roi_villages", timevars_selection = "7day") %>%
+  #add_row(response_var = "ma_funestus_ss", code_pays = "BF", mod = "physiological_resistance_kdre","physiological_resistance_kdre", model_type = "glmm", intervention = "all", predictive_type = "roi_villages", timevars_selection = "7day") %>%
   add_row(response_var = "ma_gambiae_ss", code_pays = "BF", mod = "presence", model_type = "glmm", intervention = "all", predictive_type = "roi_villages", timevars_selection = "7day") %>%
   add_row(response_var = "ma_gambiae_ss", code_pays = "BF", mod = "abundance", model_type = "glmm", intervention = "all", predictive_type = "roi_villages", timevars_selection = "7day") %>%
   add_row(response_var = "ma_gambiae_ss", code_pays = "BF", mod = "late_prec_aggressiveness", model_type = "glmm", intervention = "all", predictive_type = "roi_villages", timevars_selection = "7day") %>%
   add_row(response_var = "ma_gambiae_ss", code_pays = "BF", mod = "exophagy", model_type = "glmm", intervention = "all", predictive_type = "roi_villages", timevars_selection = "7day") %>%
   add_row(response_var = "ma_gambiae_ss", code_pays = "BF", mod = "physiological_resistance_kdrw", model_type = "glmm", intervention = "all", predictive_type = "roi_villages", timevars_selection = "7day") %>%
+  add_row(response_var = "ma_gambiae_ss", code_pays = "BF", mod = "physiological_resistance_kdre", model_type = "glmm", intervention = "all", predictive_type = "roi_villages", timevars_selection = "7day") %>%
   add_row(response_var = "ma_coluzzi", code_pays = "BF", mod = "presence", model_type = "glmm", intervention = "all", predictive_type = "roi_villages", timevars_selection = "7day") %>%
   add_row(response_var = "ma_coluzzi", code_pays = "BF", mod = "abundance", model_type = "glmm", intervention = "all", predictive_type = "roi_villages", timevars_selection = "7day") %>%
   add_row(response_var = "ma_coluzzi", code_pays = "BF", mod = "late_prec_aggressiveness", model_type = "glmm", intervention = "all", predictive_type = "roi_villages", timevars_selection = "7day") %>%
   add_row(response_var = "ma_coluzzi", code_pays = "BF", mod = "exophagy", model_type = "glmm", intervention = "all", predictive_type = "roi_villages", timevars_selection = "7day") %>%
-  add_row(response_var = "ma_coluzzi", code_pays = "BF", mod = "physiological_resistance_kdrw", model_type = "glmm", intervention = "all", predictive_type = "roi_villages", timevars_selection = "7day")
-  
-model_results <- df_input_params_glmm[1,] %>%
+  add_row(response_var = "ma_coluzzi", code_pays = "BF", mod = "physiological_resistance_kdrw", model_type = "glmm", intervention = "all", predictive_type = "roi_villages", timevars_selection = "7day") %>% 
+  add_row(response_var = "ma_coluzzi", code_pays = "BF", mod = "physiological_resistance_kdre", model_type = "glmm", intervention = "all", predictive_type = "roi_villages", timevars_selection = "7day")
+
+model_results <- df_input_params_glmm %>%
   mutate(results = pmap(list(response_var, code_pays, mod, model_type, intervention, predictive_type, timevars_selection), ~fun_workflow_model(..1,..2,..3,..4,..5,..6,..7)))
 
 
@@ -850,6 +919,7 @@ model_results <- model_results %>%
   mutate(df_corr_multiv = map(results, ~pluck(.,"df_corr_multiv"))) %>%
   mutate(correlated_variables = map(results, ~pluck(.,"correlated_variables"))) %>%
   mutate(model = map(results, ~pluck(.,"model"))) %>%
+  mutate(model_forced = map(results, ~pluck(.,"model_forced"))) %>%
   mutate(ccm_plots = map(results, ~pluck(.,"ccm_plots"))) %>%
   mutate(ts_plots = map(results, ~pluck(.,"ts_plots"))) %>%
   mutate(cv_lto = map(results, ~pluck(.,"cv_lto"))) %>%

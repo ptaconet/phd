@@ -149,7 +149,7 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
       expl_vars_to_keep <- paste(expl_vars_to_keep,collapse = "*")
       plan(multiprocess)
       options(future.globals.maxSize= 20000*1024^2)
-      if(mod %in% c("physiological_resistance_kdrw","exophagy","late_prec_aggressiveness","presence")){
+      if(mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","late_prec_aggressiveness","presence")){
         glm_base <- glmmTMB(as.formula(paste0("resp_var ~ ",expl_vars_to_keep," + (1|codevillage/pointdecapture2)")), data = df, family = binomial(link = "logit"))
         func <- function(x){
           ret <- anova(glmmTMB(as.formula(paste0("resp_var ~ ",expl_vars_to_keep,"*",x," + (1|codevillage/pointdecapture2)")), data = df, family = binomial(link = "logit")), glm_base)
@@ -188,7 +188,7 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
       pointdecapture2 <- as.data.frame( as.factor(paste0(df$codevillage,df$pointdecapture)))
       colnames(pointdecapture2) = "pointdecapture2"
       df <- cbind(df[,c("resp_var","codevillage")],pointdecapture2,to_scale)
-      if(mod %in% c("physiological_resistance_kdrw","exophagy","late_prec_aggressiveness","presence")){
+      if(mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","late_prec_aggressiveness","presence")){
         pvals <- future_map_dfr(colnames(df[4:ncol(df)]), ~Anova(glmmTMB(as.formula(paste0("resp_var ~ ",.x," + (1|codevillage/pointdecapture2)")), data = df, family = binomial(link = "logit")))[3])
       } else if (mod == "abundance"){
         pvals <- future_map_dfr(colnames(df[4:ncol(df)]), ~Anova(glmmTMB(as.formula(paste0("resp_var ~ ",.x," + (1|codevillage/pointdecapture2)")), data = df, family = truncated_nbinom2))[3])
@@ -219,7 +219,7 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
                       index = indices$index, 
                       indexOut = indices$indexOut)
       met = "Rsquared"
-    } else if (mod %in% c("physiological_resistance_kdrw","exophagy","late_prec_aggressiveness","presence")){
+    } else if (mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","late_prec_aggressiveness","presence")){
       tr = trainControl(method="cv",
                         index = indices$index, 
                         indexOut = indices$indexOut,
@@ -243,7 +243,7 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
       if(mod == "abundance"){
         #qual_basemod <- min(mod_base$results$RMSE)
         qual_basemod <- max(mod_base$results$Rsquared)
-      } else if (mod %in% c("physiological_resistance_kdrw","exophagy","late_prec_aggressiveness","presence")){
+      } else if (mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","late_prec_aggressiveness","presence")){
         qual_basemod <- max(mod_base$results$AUC)
       }
       
@@ -254,7 +254,7 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
         if(mod == "abundance"){
           #ret <- min(model$results$RMSE)
           ret <- max(model$results$Rsquared)
-        } else if (mod %in% c("physiological_resistance_kdrw","exophagy","late_prec_aggressiveness","presence")){
+        } else if (mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","late_prec_aggressiveness","presence")){
           ret <- max(model$results$AUC)
         }
         return(ret)
@@ -652,13 +652,13 @@ load_spatiotemporal_data <- function(vars, buffers, lag_time_window, summarize_d
 
 
 
-load_spatial_data <- function(code_pays, landcover_layers_to_keep, mod, landcover_metrics_to_keep = NULL){
+load_spatial_data <- function(code_pays, landcover_layers_to_keep, mod, landcover_metrics_to_keep = NULL, buffer_sizes){
   
   # extract ligth from satellite data
-  LIG <- dbReadTable(react_gpkg, 'env_spatiotemporal') %>% dplyr::select(-fid) %>% mutate(date = as.Date(date)) %>% dplyr::rename(idpointdecapture = id) %>% filter(var == "LIG30", lag_n == 3, buffer >= 500) %>% dplyr::select(idpointdecapture,buffer,val,var)
+  LIG <- dbReadTable(react_gpkg, 'env_spatiotemporal') %>% dplyr::select(-fid) %>% mutate(date = as.Date(date)) %>% dplyr::rename(idpointdecapture = id) %>% filter(var == "LIG30", lag_n == 3, buffer >= 500) %>% dplyr::select(idpointdecapture,buffer,val,var) %>% filter(buffer %in% buffer_sizes)
   
   # spatial-only explanatory variables
-  env_spatial <- dbReadTable(react_gpkg,'env_spatial') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id) %>% filter(buffer >= 500, var!="POH")
+  env_spatial <- dbReadTable(react_gpkg,'env_spatial') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id) %>% filter(buffer >= 500, var!="POH") %>% filter(buffer %in% buffer_sizes)
   
   # non-spatial explanatory variables
   env_static <- dbReadTable(react_gpkg, 'env_static') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id)
@@ -669,8 +669,16 @@ load_spatial_data <- function(code_pays, landcover_layers_to_keep, mod, landcove
   # variables for the night of catch at the postedecapture level
   if(mod %in% c("presence","abundance")){
     env_nightcatch_postedecapture <- dbReadTable(react_gpkg,"env_nightcatch_postedecapture") %>% dplyr::select(-fid)
+    NMA <-  read.csv("/home/ptaconet/Bureau/data_anglique.csv") %>%
+      dplyr::select(idpostedecapture, pressure_baro) %>%
+      group_by(idpostedecapture) %>%
+      summarise(val = mean(pressure_baro)) %>%
+      mutate(var="NMA")
+    
+    env_nightcatch_postedecapture <- rbind(env_nightcatch_postedecapture,NMA)
+    
     th_env_nightcatch_postedecapture <- env_nightcatch_postedecapture %>% pivot_wider(names_from = var, values_from = val) %>% mutate_all(~ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x))
-  } else if(mod %in% c("physiological_resistance_kdrw","exophagy","late_prec_aggressiveness")){
+  } else if(mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","late_prec_aggressiveness")){
     th_env_nightcatch_postedecapture <- read.csv("/home/ptaconet/Bureau/data_anglique.csv") %>%
       dplyr::select(idpostedecapture,date_time,temperature_hygro,humidity_hygro,pointderosee_hygro,luminosite_hobo,pressure_baro) %>%
       dplyr::rename(NMT = temperature_hygro, NMH = humidity_hygro, NDP = pointderosee_hygro, NML = luminosite_hobo, NMA = pressure_baro) %>%
@@ -681,7 +689,7 @@ load_spatial_data <- function(code_pays, landcover_layers_to_keep, mod, landcove
   }
   
   # landcover variables
-  env_landcover <-  dbReadTable(react_gpkg, 'env_landcover') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id) %>% filter(buffer >= 500, layer_id %in% landcover_layers_to_keep)
+  env_landcover <-  dbReadTable(react_gpkg, 'env_landcover') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id) %>% filter(buffer >= 500, layer_id %in% landcover_layers_to_keep) %>% filter(buffer %in% buffer_sizes)
   
   if(!is.null(landcover_metrics_to_keep)){
     env_landcover <- env_landcover %>% filter(metric %in% landcover_metrics_to_keep)
@@ -715,28 +723,55 @@ load_spatial_data <- function(code_pays, landcover_layers_to_keep, mod, landcove
 }
   
 
-load_llinuse_data <- function(code_pays,entomo_csh_metadata_l1){
+load_hmnbehav_data <- function(code_pays,entomo_csh_metadata_l1){
   
-tab = dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
+t = entomo_csh_metadata_l1 %>%
   filter(codepays == code_pays) %>%
-  group_by(codevillage,dateenquete,dormirssmoust) %>%
+    mutate(periode = ifelse(period_interv=="pre_intervention","preinterv","postinterv")) %>%
+    mutate(date_capture = as.Date(date_capture)) %>%
+    mutate(month = lubridate::month(date_capture)) %>%
+    mutate(saison = ifelse(month <= 4 | month >=11 , "seche","pluies")) %>%
+    dplyr::select(idpointdecapture,codevillage,periode,saison)
+  
+LUS = dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
+  filter(codepays == code_pays) %>%
+  group_by(codevillage,periode,saison,dormirssmoust) %>%
   summarise(n=n()) %>%
   as_tibble() %>%
   pivot_wider(names_from = dormirssmoust, values_from = n, values_fill = list(n = 0)) %>%
   mutate(LUS = oui / (non + oui) * 100) %>%
+  dplyr::select(codevillage,periode,saison,LUS)
+
+HBI <- dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
+  filter(codepays == code_pays) %>%
+  mutate(hintmaison = as.numeric(substr(hintmaison,1,2)),hsortiemaison=as.numeric(substr(hsortiemaison,1,2))) %>%
+  mutate(hintmaison = ifelse(hintmaison <=16, 19, hintmaison), hsortiemaison=ifelse(hsortiemaison>=11 | hsortiemaison<=3,6,hsortiemaison)) %>%
   mutate(dateenquete = as.Date(dateenquete)) %>%
-  dplyr::select(codevillage,dateenquete,LUS)
+  mutate(dateenquete2 = as.Date(dateenquete) + 1) %>%
+  mutate(date_int = lubridate::ymd_h(paste0(dateenquete," ",hintmaison))) %>%
+  mutate(date_sort = lubridate::ymd_h(paste0(dateenquete2," 0",hsortiemaison))) %>%
+  mutate(HBI = as.numeric(date_sort - date_int)) %>%
+  dplyr::select(codevillage,periode,saison,HBI)
 
-t = entomo_csh_metadata_l1 %>%
-  mutate(date_capture = as.Date(date_capture)) %>%
-  left_join(tab, by = "codevillage") %>%
-  mutate(dateDiff = abs(date_capture - dateenquete)) %>%
-  group_by(codevillage, date_capture) %>%
-  filter(dateDiff == min(dateDiff)) %>%
-  as_tibble() %>%
-  dplyr::select(idpointdecapture,LUS)
+HBB <- dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
+  filter(codepays == code_pays) %>%
+  mutate(hcoucher = as.numeric(substr(hcoucher,1,2)),hlever=as.numeric(substr(hlever,1,2))) %>%
+  mutate(hcoucher = ifelse(hcoucher <=17, 20, hcoucher), hlever=ifelse(hlever>=11 | hlever<=3,6,hlever)) %>%
+  mutate(dateenquete = as.Date(dateenquete)) %>%
+  mutate(dateenquete2 = as.Date(dateenquete) + 1) %>%
+  mutate(date_int = lubridate::ymd_h(paste0(dateenquete," ",hcoucher))) %>%
+  mutate(date_sort = lubridate::ymd_h(paste0(dateenquete2," 0",hlever))) %>%
+  mutate(HBB = as.numeric(date_sort - date_int)) %>%
+  mutate(HBB = ifelse(dormirssmoust == "non",0,HBB)) %>%
+  dplyr::select(codevillage,periode,saison,HBB)
 
-return(t)
+hum_behav <- t %>%
+  left_join(LUS) %>%
+  left_join(HBI) %>%
+  left_join(HBB) %>%
+  dplyr::select(idpointdecapture,LUS,HBI,HBB)
+
+return(hum_behav)
 }
 
 load_csh_sp_coord <- function(){
@@ -777,19 +812,36 @@ fun_ffs_tempvar <- function(df, model_type, mod, time_vars, cols_to_keep, timeva
     expl_vars_to_test =  colnames(df[which(grepl(time_vars[i],colnames(df)))])
     
     if(timevars_selection == "7day"){
-      expl_vars_to_test <- c(paste0(time_vars[i],"_2000_0_7"),
-                             paste0(time_vars[i],"_2000_7_14"),
-                             paste0(time_vars[i],"_2000_14_21"),
-                             paste0(time_vars[i],"_2000_21_28"),
-                             paste0(time_vars[i],"_2000_0_14"),
-                             paste0(time_vars[i],"_2000_0_21"),
-                             paste0(time_vars[i],"_2000_0_28"),
-                             paste0(time_vars[i],"_2000_7_21"),
-                             paste0(time_vars[i],"_2000_7_28"),
-                             paste0(time_vars[i],"_2000_14_21"),
-                             paste0(time_vars[i],"_2000_14_28")
-      )
-    }
+      if(mod %in% c("presence","abundance")){
+        expl_vars_to_test <- c(paste0(time_vars[i],"_2000_0_7"),
+                               paste0(time_vars[i],"_2000_7_14"),
+                               paste0(time_vars[i],"_2000_14_21"),
+                               paste0(time_vars[i],"_2000_21_28"),
+                               paste0(time_vars[i],"_2000_28_35"),
+                               paste0(time_vars[i],"_2000_35_42"),
+                               paste0(time_vars[i],"_2000_0_14"),
+                               paste0(time_vars[i],"_2000_0_21"),
+                               paste0(time_vars[i],"_2000_0_28"),
+                               paste0(time_vars[i],"_2000_0_35"),
+                               paste0(time_vars[i],"_2000_0_42"),
+                               paste0(time_vars[i],"_2000_7_21"),
+                               paste0(time_vars[i],"_2000_7_28"),
+                               paste0(time_vars[i],"_2000_7_35"),
+                               paste0(time_vars[i],"_2000_7_42"),
+                               paste0(time_vars[i],"_2000_14_28"),
+                               paste0(time_vars[i],"_2000_14_35"),
+                               paste0(time_vars[i],"_2000_14_42"),
+                               paste0(time_vars[i],"_2000_21_35"),
+                               paste0(time_vars[i],"_2000_21_42"),
+                               paste0(time_vars[i],"_2000_28_42")
+        )
+      } else {
+        expl_vars_to_test <- c(paste0(time_vars[i],"_2000_0_31"),
+                               paste0(time_vars[i],"_2000_31_60"),
+                               paste0(time_vars[i],"_2000_0_60")
+        )
+      }
+      }
     
     if(grepl("1", time_vars[i])){
       time_lag1 <- as.numeric(sub('.*\\_', '', expl_vars_to_test))
@@ -862,7 +914,7 @@ fun_glmm_cross_validation <- function(indices_cv, th_mod, mod, df, ind_vars_to_c
     if(mod == "abundance"){
       th_mod_th_it <- glmmTMB(formula(th_mod), data = df_train, family = truncated_nbinom2)
       preds_th_it <- predict(th_mod_th_it, newdata = df_test, type = "response", allow.new.levels=TRUE)
-    } else if (mod %in% c("physiological_resistance_kdrw","exophagy","late_prec_aggressiveness","presence")){
+    } else if (mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","late_prec_aggressiveness","presence")){
       th_mod_th_it <- glmmTMB(formula(th_mod), data = df_train, family = binomial(link = "logit"))
       preds_th_it <- predict(th_mod_th_it, newdata = df_test, type = "response", allow.new.levels=TRUE)
     }
@@ -873,7 +925,7 @@ fun_glmm_cross_validation <- function(indices_cv, th_mod, mod, df, ind_vars_to_c
   
   if(mod == "abundance"){
     mean_metric <- cor(df$pred, df$resp_var, use = "na.or.complete")^2
-  } else if (mod %in% c("physiological_resistance_kdrw","exophagy","late_prec_aggressiveness","presence")){
+  } else if (mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","late_prec_aggressiveness","presence")){
     mean_metric <- mltools::auc_roc(df$pred, df$resp_var)  
   }
   
