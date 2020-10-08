@@ -123,14 +123,16 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
     library(correlation)
     df <- df[,c("resp_var",spearman_factor,expl_vars_to_keep,expl_vars_to_test)]
     if(!is.null(spearman_factor)){ df[,spearman_factor] <- as.factor(df[,spearman_factor]) }
-    correlation <- sapply(df[,ifelse(!is.null(spearman_factor),3,2):(ncol(df))], function(x) correlation::correlation(cbind(as.data.frame(x),df[,c("resp_var",spearman_factor)]), method = "spearman", multilevel = ifelse(!is.null(spearman_factor),TRUE,FALSE)))
     
+    df$useless_col <-  sample(100, size = nrow(df), replace = TRUE)
+
+    correlation <- sapply(df[,ifelse(!is.null(spearman_factor),3,2):(ncol(df))], function(x) correlation::correlation(cbind(as.data.frame(x),df[,c("resp_var",spearman_factor)]), method = "spearman", multilevel = ifelse(!is.null(spearman_factor),TRUE,FALSE)))
     correlation <- as.data.frame(correlation)
     correlation_df <- as.data.frame(correlation["r",]) %>% pivot_longer(everything()) %>% mutate(correlation = as.numeric(value)) %>% dplyr::select(-value)
     correlation_pval_df <- as.data.frame(correlation["p",]) %>% pivot_longer(everything()) %>% mutate(pval = as.numeric(value)) %>% dplyr::select(-value)
     correlation_df <- left_join(correlation_df,correlation_pval_df, by="name")
     correlation_df$abs_corr <- abs(correlation_df$correlation)
-
+    correlation_df <- correlation_df %>% filter(name!="useless_col")
     return(correlation_df)
   }
   
@@ -149,7 +151,7 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
       expl_vars_to_keep <- paste(expl_vars_to_keep,collapse = "*")
       plan(multiprocess)
       options(future.globals.maxSize= 20000*1024^2)
-      if(mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","late_prec_aggressiveness","presence")){
+      if(mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","early_late_biting","presence")){
         glm_base <- glmmTMB(as.formula(paste0("resp_var ~ ",expl_vars_to_keep," + (1|codevillage/pointdecapture2)")), data = df, family = binomial(link = "logit"))
         func <- function(x){
           ret <- anova(glmmTMB(as.formula(paste0("resp_var ~ ",expl_vars_to_keep,"*",x," + (1|codevillage/pointdecapture2)")), data = df, family = binomial(link = "logit")), glm_base)
@@ -183,12 +185,13 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
       return(mod_comp)
       
     } else if(type == "univariate_selection"){
+     
       to_scale <- df[,c(expl_vars_to_test)]
       to_scale <- as.data.frame(scale(to_scale))
       pointdecapture2 <- as.data.frame( as.factor(paste0(df$codevillage,df$pointdecapture)))
       colnames(pointdecapture2) = "pointdecapture2"
       df <- cbind(df[,c("resp_var","codevillage")],pointdecapture2,to_scale)
-      if(mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","late_prec_aggressiveness","presence")){
+      if(mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","early_late_biting","presence")){
         pvals <- future_map_dfr(colnames(df[4:ncol(df)]), ~Anova(glmmTMB(as.formula(paste0("resp_var ~ ",.x," + (1|codevillage/pointdecapture2)")), data = df, family = binomial(link = "logit")))[3])
       } else if (mod == "abundance"){
         pvals <- future_map_dfr(colnames(df[4:ncol(df)]), ~Anova(glmmTMB(as.formula(paste0("resp_var ~ ",.x," + (1|codevillage/pointdecapture2)")), data = df, family = truncated_nbinom2))[3])
@@ -219,7 +222,7 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
                       index = indices$index, 
                       indexOut = indices$indexOut)
       met = "Rsquared"
-    } else if (mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","late_prec_aggressiveness","presence")){
+    } else if (mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","early_late_biting","presence")){
       tr = trainControl(method="cv",
                         index = indices$index, 
                         indexOut = indices$indexOut,
@@ -243,7 +246,7 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
       if(mod == "abundance"){
         #qual_basemod <- min(mod_base$results$RMSE)
         qual_basemod <- max(mod_base$results$Rsquared)
-      } else if (mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","late_prec_aggressiveness","presence")){
+      } else if (mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","early_late_biting","presence")){
         qual_basemod <- max(mod_base$results$AUC)
       }
       
@@ -254,7 +257,7 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
         if(mod == "abundance"){
           #ret <- min(model$results$RMSE)
           ret <- max(model$results$Rsquared)
-        } else if (mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","late_prec_aggressiveness","presence")){
+        } else if (mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","early_late_biting","presence")){
           ret <- max(model$results$AUC)
         }
         return(ret)
@@ -659,6 +662,8 @@ load_spatial_data <- function(code_pays, landcover_layers_to_keep, mod, landcove
   
   # spatial-only explanatory variables
   env_spatial <- dbReadTable(react_gpkg,'env_spatial') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id) %>% filter(buffer >= 500, var!="POH") %>% filter(buffer %in% buffer_sizes)
+  BCH_POP <- dbReadTable(react_gpkg,'env_spatial') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id) %>% filter(var %in% c("BCH","POP"), buffer==500) %>% mutate(buffer=2000)
+  env_spatial <- rbind(env_spatial,BCH_POP)
   
   # non-spatial explanatory variables
   env_static <- dbReadTable(react_gpkg, 'env_static') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id)
@@ -668,23 +673,37 @@ load_spatial_data <- function(code_pays, landcover_layers_to_keep, mod, landcove
   
   # variables for the night of catch at the postedecapture level
   if(mod %in% c("presence","abundance")){
-    env_nightcatch_postedecapture <- dbReadTable(react_gpkg,"env_nightcatch_postedecapture") %>% dplyr::select(-fid)
-    NMA <-  read.csv("/home/ptaconet/Bureau/data_anglique.csv") %>%
-      dplyr::select(idpostedecapture, pressure_baro) %>%
-      group_by(idpostedecapture) %>%
-      summarise(val = mean(pressure_baro)) %>%
-      mutate(var="NMA")
-    
-    env_nightcatch_postedecapture <- rbind(env_nightcatch_postedecapture,NMA)
-    
-    th_env_nightcatch_postedecapture <- env_nightcatch_postedecapture %>% pivot_wider(names_from = var, values_from = val) %>% mutate_all(~ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x))
-  } else if(mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","late_prec_aggressiveness")){
+    # env_nightcatch_postedecapture <- dbReadTable(react_gpkg,"env_nightcatch_postedecapture") %>% dplyr::select(-fid)
+    # NMA <-  read.csv("/home/ptaconet/Bureau/data_anglique.csv") %>%
+    #   dplyr::select(idpostedecapture, pressure_baro) %>%
+    #   group_by(idpostedecapture) %>%
+    #   summarise(val = mean(pressure_baro)) %>%
+    #   mutate(var="NMA")
+    # 
+    # env_nightcatch_postedecapture <- rbind(env_nightcatch_postedecapture,NMA)
+    # 
+    # th_env_nightcatch_postedecapture <- env_nightcatch_postedecapture %>% pivot_wider(names_from = var, values_from = val) %>% mutate_all(~ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x))
     th_env_nightcatch_postedecapture <- read.csv("/home/ptaconet/Bureau/data_anglique.csv") %>%
-      dplyr::select(idpostedecapture,date_time,temperature_hygro,humidity_hygro,pointderosee_hygro,luminosite_hobo,pressure_baro) %>%
-      dplyr::rename(NMT = temperature_hygro, NMH = humidity_hygro, NDP = pointderosee_hygro, NML = luminosite_hobo, NMA = pressure_baro) %>%
+      dplyr::select(idpostedecapture,date_time,temperature_baro,humidity_baro,pressure_baro) %>%
+      dplyr::rename(NMT = temperature_baro, NMH = humidity_baro, NMA = pressure_baro) %>%
+      mutate(date = as.Date(date_time), heuredecapture = hour(date_time)) %>%
+      dplyr::group_by(idpostedecapture) %>%
+      dplyr::summarise(NMT = mean(NMT,na.rm = T), NMH = mean(NMH,na.rm = T), NMA=mean(NMA,na.rm = T)) %>%
+      as_tibble()
+  } else if(mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","early_late_biting")){
+    # th_env_nightcatch_postedecapture <- read.csv("/home/ptaconet/Bureau/data_anglique.csv") %>%
+    #   dplyr::select(idpostedecapture,date_time,temperature_hygro,humidity_hygro,luminosite_hobo,pointderosee_hygro,pressure_baro) %>%
+    #   dplyr::rename(NMT = temperature_hygro, NMH = humidity_hygro, NDP = pointderosee_hygro, NML = luminosite_hobo, NMA = pressure_baro) %>%
+    #   mutate(date = as.Date(date_time), heuredecapture = hour(date_time)) %>%
+    #   dplyr::group_by(idpostedecapture,heuredecapture) %>%
+    #   dplyr::summarise(NMT = mean(NMT,na.rm = T), NMH = mean(NMH,na.rm = T), NDP=mean(NDP,na.rm = T), NML=mean(NML,na.rm = T), NMA=mean(NMA,na.rm = T)) %>%
+    #   as_tibble()
+    th_env_nightcatch_postedecapture <- read.csv("/home/ptaconet/Bureau/data_anglique.csv") %>%
+      dplyr::select(idpostedecapture,date_time,temperature_baro,humidity_baro,pressure_baro) %>%
+      dplyr::rename(NMT = temperature_baro, NMH = humidity_baro, NMA = pressure_baro) %>%
       mutate(date = as.Date(date_time), heuredecapture = hour(date_time)) %>%
       dplyr::group_by(idpostedecapture,heuredecapture) %>%
-      dplyr::summarise(NMT = mean(NMT,na.rm = T), NMH = mean(NMH,na.rm = T), NDP=mean(NDP,na.rm = T), NML=mean(NML,na.rm = T), NMA=mean(NMA,na.rm = T)) %>%
+      dplyr::summarise(NMT = mean(NMT,na.rm = T), NMH = mean(NMH,na.rm = T), NMA=mean(NMA,na.rm = T)) %>%
       as_tibble()
   }
   
@@ -736,42 +755,154 @@ t = entomo_csh_metadata_l1 %>%
 LUS = dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
   filter(codepays == code_pays) %>%
   group_by(codevillage,periode,saison,dormirssmoust) %>%
-  summarise(n=n()) %>%
+  dplyr::summarise(n=n()) %>%
   as_tibble() %>%
   pivot_wider(names_from = dormirssmoust, values_from = n, values_fill = list(n = 0)) %>%
   mutate(LUS = oui / (non + oui) * 100) %>%
   dplyr::select(codevillage,periode,saison,LUS)
 
-HBI <- dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
-  filter(codepays == code_pays) %>%
-  mutate(hintmaison = as.numeric(substr(hintmaison,1,2)),hsortiemaison=as.numeric(substr(hsortiemaison,1,2))) %>%
-  mutate(hintmaison = ifelse(hintmaison <=16, 19, hintmaison), hsortiemaison=ifelse(hsortiemaison>=11 | hsortiemaison<=3,6,hsortiemaison)) %>%
-  mutate(dateenquete = as.Date(dateenquete)) %>%
-  mutate(dateenquete2 = as.Date(dateenquete) + 1) %>%
-  mutate(date_int = lubridate::ymd_h(paste0(dateenquete," ",hintmaison))) %>%
-  mutate(date_sort = lubridate::ymd_h(paste0(dateenquete2," 0",hsortiemaison))) %>%
-  mutate(HBI = as.numeric(date_sort - date_int)) %>%
-  dplyr::select(codevillage,periode,saison,HBI)
+LUS <- t %>%
+  left_join(LUS)
 
-HBB <- dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
+pop <- dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
   filter(codepays == code_pays) %>%
-  mutate(hcoucher = as.numeric(substr(hcoucher,1,2)),hlever=as.numeric(substr(hlever,1,2))) %>%
-  mutate(hcoucher = ifelse(hcoucher <=17, 20, hcoucher), hlever=ifelse(hlever>=11 | hlever<=3,6,hlever)) %>%
-  mutate(dateenquete = as.Date(dateenquete)) %>%
-  mutate(dateenquete2 = as.Date(dateenquete) + 1) %>%
-  mutate(date_int = lubridate::ymd_h(paste0(dateenquete," ",hcoucher))) %>%
-  mutate(date_sort = lubridate::ymd_h(paste0(dateenquete2," 0",hlever))) %>%
-  mutate(HBB = as.numeric(date_sort - date_int)) %>%
-  mutate(HBB = ifelse(dormirssmoust == "non",0,HBB)) %>%
-  dplyr::select(codevillage,periode,saison,HBB)
+  dplyr::group_by(codevillage,periode,saison) %>%
+  dplyr::summarise(pop = n()) %>%
+  as_tibble()
+  
+
+
+HBI <- dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
+     filter(codepays == code_pays) %>%
+     mutate(hintmaison = as.numeric(substr(hintmaison,1,2)),hsortiemaison=as.numeric(substr(hsortiemaison,1,2))) %>%
+     mutate(hintmaison = ifelse(hintmaison <=16, 19, hintmaison), hsortiemaison=ifelse(hsortiemaison>=11 | hsortiemaison<=3,6,hsortiemaison))
+
+hintmaison <- HBI %>%
+  mutate(hintmaison = paste0("h_",hintmaison)) %>%
+  group_by(codevillage, hintmaison, periode, saison) %>%
+  dplyr::summarise(count = n()) %>%
+  as_tibble() %>%
+  pivot_wider(names_from = hintmaison, values_from = count, values_fill = list(count = 0)) %>%
+  mutate(h_18=h_17+h_18) %>%
+  mutate(h_19=h_18+h_19) %>%
+  mutate(h_20=h_19+h_20) %>%
+  mutate(h_21=h_20+h_21) %>%
+  mutate(h_22=h_21+h_22) %>%
+  mutate(h_23=h_22+h_23) %>%
+  pivot_longer(cols = starts_with("h_"), names_to = "hour", values_to = "pop_indoor") %>%
+  mutate(hour = as.numeric(gsub("h_","",hour)))
+
+hsortiemaison <- HBI %>%
+  mutate(hsortiemaison = paste0("h_",hsortiemaison)) %>%
+  group_by(codevillage, hsortiemaison, periode, saison) %>%
+  dplyr::summarise(count = n()) %>%
+  as_tibble() %>%
+  left_join(pop) %>%
+  pivot_wider(names_from = hsortiemaison, values_from = count, values_fill = list(count = 0)) %>%
+  mutate(h_h4=pop-(h_4)) %>%
+  mutate(h_h5=pop-(h_4+h_5)) %>%
+  mutate(h_h6=pop-(h_4+h_5+h_6)) %>%
+  mutate(h_h7=pop-(h_4+h_5+h_6+h_7)) %>%
+  mutate(h_h8=pop-(h_4+h_5+h_6+h_7+h_8)) %>%
+  mutate(h_h9=pop-(h_4+h_5+h_6+h_7+h_8+h_9)) %>%
+  dplyr::select(-c(h_4,h_5,h_6,h_7,h_8,h_9,pop)) %>%
+  pivot_longer(cols = starts_with("h_h"), names_to = "hour", values_to = "pop_indoor") %>%
+  mutate(hour = as.numeric(gsub("h_h","",hour)))
+
+
+ HBB <- dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
+   filter(codepays == code_pays) %>%
+   mutate(hcoucher = as.numeric(substr(hcoucher,1,2)),hlever=as.numeric(substr(hlever,1,2))) %>%
+   mutate(hcoucher = ifelse(hcoucher <=17, 20, hcoucher), hlever=ifelse(hlever>=11 | hlever<=3,6,hlever)) 
+
+ hcoucher <- HBB %>%
+   mutate(hcoucher = paste0("h_",hcoucher)) %>%
+   group_by(codevillage, hcoucher, periode, saison) %>%
+   dplyr::summarise(count = n()) %>%
+   as_tibble() %>%
+   pivot_wider(names_from = hcoucher, values_from = count, values_fill = list(count = 0)) %>%
+   mutate(h_19=h_18+h_19) %>%
+   mutate(h_20=h_19+h_20) %>%
+   mutate(h_21=h_20+h_21) %>%
+   mutate(h_22=h_21+h_22) %>%
+   mutate(h_23=h_22+h_23) %>%
+   pivot_longer(cols = starts_with("h_"), names_to = "hour", values_to = "pop_coucher") %>%
+   mutate(hour = as.numeric(gsub("h_","",hour)))
+ 
+ hlever <- HBB %>%
+   mutate(hlever = paste0("h_",hlever)) %>%
+   group_by(codevillage, hlever, periode, saison) %>%
+   dplyr::summarise(count = n()) %>%
+   as_tibble() %>%
+   left_join(pop) %>%
+   pivot_wider(names_from = hlever, values_from = count, values_fill = list(count = 0)) %>%
+   mutate(h_h4=pop-(h_4)) %>%
+   mutate(h_h5=pop-(h_4+h_5)) %>%
+   mutate(h_h6=pop-(h_4+h_5+h_6)) %>%
+   mutate(h_h7=pop-(h_4+h_5+h_6+h_7)) %>%
+   mutate(h_h8=pop-(h_4+h_5+h_6+h_7+h_8)) %>%
+   mutate(h_h9=pop-(h_4+h_5+h_6+h_7+h_8+h_9)) %>%
+   dplyr::select(-c(h_4,h_5,h_6,h_7,h_8,h_9,pop)) %>%
+   pivot_longer(cols = starts_with("h_h"), names_to = "hour", values_to = "pop_coucher") %>%
+   mutate(hour = as.numeric(gsub("h_h","",hour)))
+ 
+hours <- c(0:10,16:23)
+hours2 <- rep(hours,nrow(pop))
+
+pop <- pop %>% 
+  dplyr::slice(rep(1:n(), each = length(hours))) %>%
+  bind_cols(as.data.frame(hours2)) %>%
+  dplyr::rename(hour = hours2)
+
+
+HBI_HBB <- pop %>%
+  left_join(rbind(hintmaison,hsortiemaison)) %>%
+  left_join(rbind(hcoucher,hlever)) %>%
+  mutate(pop_indoor = ifelse(hour %in% c(0,1,2,3),pop,pop_indoor)) %>%
+  mutate(pop_indoor = ifelse(hour %in% c(10,16),0,pop_indoor)) %>%
+  mutate(pop_coucher = ifelse(hour %in% c(0,1,2,3),pop,pop_coucher)) %>%
+  mutate(pop_coucher = ifelse(hour %in% c(10,16,17),0,pop_coucher)) %>%
+  mutate(HBI = pop_indoor / pop * 100) %>%
+  mutate(HBB = pop_coucher / pop * 100) %>%
+  dplyr::rename(heuredecapture = hour) %>%
+  dplyr::select(codevillage, periode, saison, heuredecapture, HBI, HBB)
 
 hum_behav <- t %>%
-  left_join(LUS) %>%
-  left_join(HBI) %>%
-  left_join(HBB) %>%
-  dplyr::select(idpointdecapture,LUS,HBI,HBB)
+  left_join(HBI_HBB) %>%
+  dplyr::select(idpointdecapture,heuredecapture,HBI,HBB)
 
-return(hum_behav)
+# HBI <- dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
+#   filter(codepays == code_pays) %>%
+#   mutate(hintmaison = as.numeric(substr(hintmaison,1,2)),hsortiemaison=as.numeric(substr(hsortiemaison,1,2))) %>%
+#   mutate(hintmaison = ifelse(hintmaison <=16, 19, hintmaison), hsortiemaison=ifelse(hsortiemaison>=11 | hsortiemaison<=3,6,hsortiemaison)) %>%
+#   mutate(dateenquete = as.Date(dateenquete)) %>%
+#   mutate(dateenquete2 = as.Date(dateenquete) + 1) %>%
+#   mutate(date_int = lubridate::ymd_h(paste0(dateenquete," ",hintmaison))) %>%
+#   mutate(date_sort = lubridate::ymd_h(paste0(dateenquete2," 0",hsortiemaison))) %>%
+#   mutate(HBI = as.numeric(date_sort - date_int)) %>%
+#   dplyr::group_by(codevillage,periode,saison) %>%
+#   summarise(HBI = mean(HBI))
+
+# HBB <- dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
+#   filter(codepays == code_pays) %>%
+#   mutate(hcoucher = as.numeric(substr(hcoucher,1,2)),hlever=as.numeric(substr(hlever,1,2))) %>%
+#   mutate(hcoucher = ifelse(hcoucher <=17, 20, hcoucher), hlever=ifelse(hlever>=11 | hlever<=3,6,hlever)) %>%
+#   mutate(dateenquete = as.Date(dateenquete)) %>%
+#   mutate(dateenquete2 = as.Date(dateenquete) + 1) %>%
+#   mutate(date_int = lubridate::ymd_h(paste0(dateenquete," ",hcoucher))) %>%
+#   mutate(date_sort = lubridate::ymd_h(paste0(dateenquete2," 0",hlever))) %>%
+#   mutate(HBB = as.numeric(date_sort - date_int)) %>%
+#   mutate(HBB = ifelse(dormirssmoust == "non",0,HBB)) %>%
+#   dplyr::group_by(codevillage,periode,saison) %>%
+#   summarise(HBB = mean(HBB))
+
+# hum_behav <- t %>%
+#   left_join(LUS) %>%
+#   left_join(HBI) %>%
+#   left_join(HBB) %>%
+#   dplyr::select(idpointdecapture,LUS,HBI,HBB)
+
+return(list(LUS = LUS, hum_behav = hum_behav))
 }
 
 load_csh_sp_coord <- function(){
@@ -803,47 +934,31 @@ load_csh_sp_coord <- function(){
 }
 
 
-fun_ffs_tempvar <- function(df, model_type, mod, time_vars, cols_to_keep, timevars_selection = "1day"){
+fun_ffs_tempvar <- function(df, model_type, mod, spearman_factor, time_vars, cols_to_keep, timevars_selection = "1day"){
   
   modcomp <- data.frame(name = character(), res = numeric(), diff_res_w_basemod = numeric(), var = character())
   
-  for(i in 1:length(time_vars)){
-    cat('calculating column to keep for temporal variable ',time_vars[i],"\n")
-    expl_vars_to_test =  colnames(df[which(grepl(time_vars[i],colnames(df)))])
+  for(j in 1:length(time_vars)){
+    cat('calculating column to keep for temporal variable ',time_vars[j],"\n")
+    expl_vars_to_test =  colnames(df[which(grepl(time_vars[j],colnames(df)))])
     
     if(timevars_selection == "7day"){
-      if(mod %in% c("presence","abundance")){
-        expl_vars_to_test <- c(paste0(time_vars[i],"_2000_0_7"),
-                               paste0(time_vars[i],"_2000_7_14"),
-                               paste0(time_vars[i],"_2000_14_21"),
-                               paste0(time_vars[i],"_2000_21_28"),
-                               paste0(time_vars[i],"_2000_28_35"),
-                               paste0(time_vars[i],"_2000_35_42"),
-                               paste0(time_vars[i],"_2000_0_14"),
-                               paste0(time_vars[i],"_2000_0_21"),
-                               paste0(time_vars[i],"_2000_0_28"),
-                               paste0(time_vars[i],"_2000_0_35"),
-                               paste0(time_vars[i],"_2000_0_42"),
-                               paste0(time_vars[i],"_2000_7_21"),
-                               paste0(time_vars[i],"_2000_7_28"),
-                               paste0(time_vars[i],"_2000_7_35"),
-                               paste0(time_vars[i],"_2000_7_42"),
-                               paste0(time_vars[i],"_2000_14_28"),
-                               paste0(time_vars[i],"_2000_14_35"),
-                               paste0(time_vars[i],"_2000_14_42"),
-                               paste0(time_vars[i],"_2000_21_35"),
-                               paste0(time_vars[i],"_2000_21_42"),
-                               paste0(time_vars[i],"_2000_28_42")
-        )
-      } else {
-        expl_vars_to_test <- c(paste0(time_vars[i],"_2000_0_31"),
-                               paste0(time_vars[i],"_2000_31_60"),
-                               paste0(time_vars[i],"_2000_0_60")
-        )
-      }
+      # expl_vars_to_test <- c(paste0(time_vars[j],"_2000_0_7"),
+      #                        paste0(time_vars[j],"_2000_7_14"),
+      #                        paste0(time_vars[j],"_2000_14_21"),
+      #                        paste0(time_vars[j],"_2000_21_28"),
+      #                        paste0(time_vars[j],"_2000_0_14"),
+      #                        paste0(time_vars[j],"_2000_0_21"),
+      #                        paste0(time_vars[j],"_2000_0_28"),
+      #                        paste0(time_vars[j],"_2000_7_21"),
+      #                        paste0(time_vars[j],"_2000_7_28"),
+      #                        paste0(time_vars[j],"_2000_14_28")
+      # )
+      
+      expl_vars_to_test <- paste0(time_vars[j],"_2000_0_28")
       }
     
-    if(grepl("1", time_vars[i])){
+    if(grepl("1", time_vars[j])){
       time_lag1 <- as.numeric(sub('.*\\_', '', expl_vars_to_test))
       time_lag2 <- as.numeric(stringr::str_match(expl_vars_to_test, '([^_]+)(?:_[^_]+){1}$')[,2])
       diff_lag <- time_lag1 - time_lag2
@@ -853,8 +968,8 @@ fun_ffs_tempvar <- function(df, model_type, mod, time_vars, cols_to_keep, timeva
     # remove colinear variables
     ind_to_rm <- NULL
     for(i in 1:length(expl_vars_to_test)){
-      for(j in 1:length(cols_to_keep)){
-        m <- cor(df[,expl_vars_to_test[i]],df[,cols_to_keep[j]], method = "pearson", use = "na.or.complete")
+      for(k in 1:length(cols_to_keep)){
+        m <- cor(df[,expl_vars_to_test[i]],df[,cols_to_keep[k]], method = "pearson", use = "na.or.complete")
         if(abs(m) > 0.7){
           ind_to_rm <- c(ind_to_rm, i)
           }
@@ -877,17 +992,23 @@ fun_ffs_tempvar <- function(df, model_type, mod, time_vars, cols_to_keep, timeva
       cross_validation_type <- NULL
     }
     
+    cols_to_keep1 <- cols_to_keep
+    if(model_type == "spearman"){
+      cols_to_keep1 = NULL
+    }
+    
     if(length(expl_vars_to_test) > 0){
       th_modcomp <- fun_feature_forward_selection(df = df, 
                                                 stat_method = model_type,
                                                 mod = mod, 
+                                                spearman_factor = spearman_factor,
                                                 type = "model_comparison",
                                                 expl_vars_to_test = expl_vars_to_test, 
-                                                expl_vars_to_keep = cols_to_keep, 
+                                                expl_vars_to_keep = cols_to_keep1, 
                                                 logtransform_resp_var = logtransform_resp_var,
                                                 cross_validation_type = cross_validation_type
                                                 )
-    th_modcomp$var <- time_vars[i]
+    th_modcomp$var <- time_vars[j]
     
     modcomp <- rbind(modcomp, th_modcomp)
     }
@@ -899,7 +1020,7 @@ fun_ffs_tempvar <- function(df, model_type, mod, time_vars, cols_to_keep, timeva
 
 fun_glmm_cross_validation <- function(indices_cv, th_mod, mod, df, ind_vars_to_center){
 
-  df <- df %>% dplyr::select(c("resp_var","codevillage","pointdecapture2","int_ext","VCM",ind_vars_to_center))
+  #df <- df %>% dplyr::select(c("resp_var","codevillage","pointdecapture2","int_ext","VCM",ind_vars_to_center))
     
   df$pred <- NA
   
@@ -914,7 +1035,7 @@ fun_glmm_cross_validation <- function(indices_cv, th_mod, mod, df, ind_vars_to_c
     if(mod == "abundance"){
       th_mod_th_it <- glmmTMB(formula(th_mod), data = df_train, family = truncated_nbinom2)
       preds_th_it <- predict(th_mod_th_it, newdata = df_test, type = "response", allow.new.levels=TRUE)
-    } else if (mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","late_prec_aggressiveness","presence")){
+    } else if (mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","early_late_biting","presence")){
       th_mod_th_it <- glmmTMB(formula(th_mod), data = df_train, family = binomial(link = "logit"))
       preds_th_it <- predict(th_mod_th_it, newdata = df_test, type = "response", allow.new.levels=TRUE)
     }
@@ -924,11 +1045,296 @@ fun_glmm_cross_validation <- function(indices_cv, th_mod, mod, df, ind_vars_to_c
   }
   
   if(mod == "abundance"){
-    mean_metric <- cor(df$pred, df$resp_var, use = "na.or.complete")^2
-  } else if (mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","late_prec_aggressiveness","presence")){
+    mean_metric <- cor(df$pred, df$resp_var, use = "pairwise.complete.obs")^2
+  } else if (mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","early_late_biting","presence")){
     mean_metric <- mltools::auc_roc(df$pred, df$resp_var)  
   }
   
   return(list(mean_metric = mean_metric, df_cv = df))
+  
+}
+
+
+fun_multicollinearity_lsm <- function(df, vars_to_test){
+  
+  lco_metadata <- dbReadTable(react_gpkg, 'lco_metadata') # table containing pixel value and label for each land cover map
+  metrics_defs <- landscapemetrics::list_lsm() # list of landscape metrics
+  
+  var_to_remove <- NULL
+  vars_to_keep <- vars_to_test
+  p <- NULL
+  m <- df[,vars_to_test] %>%
+    cor(.,method = "pearson", use = "na.or.complete")
+  index <- which(abs(m) > .7 & abs(m) < 1,arr.ind = T) 
+  p <- cbind.data.frame(stock1 = rownames(m)[index[,1]], stock2 = colnames(m)[index[,2]])
+  
+  vars_to_test_df <- data.frame(vars_to_test)
+  colnames(vars_to_test_df) = "name"
+  
+    p <- p %>%
+      mutate(name1 = gsub("_"," ",stock1)) %>%
+      mutate(function_name1 = paste(word(name1,1),word(name1,2),word(name1,3),sep="_")) %>%
+      mutate(buffer1 = as.numeric(word(name1,4))) %>%
+      mutate(layer_id = as.numeric(word(name1,5))) %>%
+      mutate(pixval = as.numeric(word(name1,6))) %>%
+      left_join(vars_to_test_df %>% dplyr::select(name), by = c("stock1"="name")) %>%
+      left_join(lco_metadata %>% dplyr::select(pixval,pixlabel,layer_id,priority2)) %>%
+      dplyr::rename(priority = priority2) %>%
+      dplyr::rename(layer_id1 = layer_id, pixval1 = pixval, pixlabel1 = pixlabel, priority1 = priority) %>%
+      mutate(name2 = gsub("_"," ",stock2)) %>%
+      mutate(function_name2 = paste(word(name2,1),word(name2,2),word(name2,3),sep="_")) %>%
+      mutate(buffer2 = as.numeric(word(name2,4))) %>%
+      mutate(layer_id = as.numeric(word(name2,5))) %>%
+      mutate(pixval = as.numeric(word(name2,6))) %>%
+      left_join(vars_to_test_df %>% dplyr::select(name), by = c("stock2"="name")) %>%
+      left_join(lco_metadata %>% dplyr::select(pixval,pixlabel,layer_id,priority2)) %>%
+      dplyr::rename(priority = priority2) %>%
+      dplyr::rename(layer_id2 = layer_id, pixval2 = pixval, pixlabel2 = pixlabel, priority2 = priority) %>%
+      mutate(priority1 = ifelse(is.na(priority1),100,priority1)) %>%
+      mutate(priority2 = ifelse(is.na(priority2),100,priority2)) 
+    
+    if(nrow(p)>0){
+      
+      for(i in 1:nrow(p)){
+        if(p$priority1[i] < p$priority2[i]){
+          var_to_remove <- c(var_to_remove,p$stock2[i])
+        } else if (p$priority1[i] > p$priority2[i]) {
+          var_to_remove <- c(var_to_remove,p$stock1[i])
+        } else if (p$priority1[i] == p$priority2[i]) {  # case the lc class and the lc layer are the same
+          #if(p$correlation1[i] < p$correlation2[i]){
+          if(grepl("prd",p$name1[i])){
+            var_to_remove <- c(var_to_remove,p$stock2[i])
+          } else {
+            var_to_remove <- c(var_to_remove,p$stock1[i])
+          }
+        }
+      }
+      
+      var_to_remove <- unique(var_to_remove)
+      vars_to_keep <- setdiff(vars_to_test,var_to_remove)
+      
+    }
+  
+  
+  return(vars_to_keep)
+  
+  
+}
+  
+
+
+fun_multicollinearity <- function(df, vars_to_test){
+  
+  var_to_remove <- NULL
+  vars_to_keep <- vars_to_test
+  p <- NULL
+    m <- df[,vars_to_test] %>%
+      cor(.,method = "pearson", use = "na.or.complete")
+    index <- which(abs(m) > .7 & abs(m) < 1,arr.ind = T) 
+    p <- cbind.data.frame(stock1 = rownames(m)[index[,1]], stock2 = colnames(m)[index[,2]])
+    
+    if(nrow(p)>0){
+      
+      p <- p %>%
+        mutate(name1 = gsub("_"," ",stock1)) %>%
+        mutate(name1 = word(name1,1)) %>%
+        mutate(name2 = gsub("_"," ",stock2)) %>%
+        mutate(name2 = word(name2,1)) %>%
+        mutate(name1 = ifelse(name1 == "RFD1", "RFD1F", name1)) %>%
+        mutate(name2 = ifelse(name2 == "RFD1", "RFD1F", name2)) %>%
+        mutate(name1 = ifelse(name1 == "TMAX7", "TMAX1", name1)) %>%
+        mutate(name2 = ifelse(name2 == "TMAX7", "TMAX1", name2)) %>%
+        mutate(name1 = ifelse(name1 == "TMIN7", "TMIN1", name1)) %>%
+        mutate(name2 = ifelse(name2 == "TMIN7", "TMIN1", name2)) %>%
+        mutate(name1 = ifelse(name1 == "TAMP7", "TAMP1", name1)) %>%
+        mutate(name2 = ifelse(name2 == "TAMP7", "TAMP1", name2)) %>%
+        mutate(name1 = ifelse(name1 == "SMO7", "SMO1", name1)) %>%
+        mutate(name2 = ifelse(name2 == "SMO7", "SMO1", name2)) %>%
+        left_join(prediction_vars %>% dplyr::select(code,priority), by = c("name1"="code")) %>%
+        dplyr::rename(priority1 = priority) %>%
+        left_join(prediction_vars %>% dplyr::select(code,priority), by = c("name2"="code")) %>%
+        dplyr::rename(priority2 = priority) %>%
+        mutate(priority1 = ifelse(name1 == "lsm", 16, priority1)) %>%
+        mutate(priority2 = ifelse(name2 == "lsm", 16, priority2)) %>%
+        mutate(var_to_remove="")
+      
+      for(i in 1:nrow(p)){
+        if(p$priority1[i] < p$priority2[i]){
+          var_to_remove <- c(var_to_remove,as.character(p$stock2[i]))
+        } else if (p$priority1[i] > p$priority2[i]) {
+          var_to_remove <- c(var_to_remove,as.character(p$stock1[i]))
+        }
+        p$var_to_remove[i] <- var_to_remove
+      }
+      
+      var_to_remove <- unique(var_to_remove)
+      vars_to_keep <- setdiff(vars_to_test,var_to_remove)
+      
+    }
+    
+  
+    return(vars_to_keep)
+  
+}
+
+
+fun_compute_glmm <- function(df, predictors, predictors_forced = NULL, mod, cv_type = NULL){
+  
+  df <- df %>% dplyr::select(resp_var,codevillage,pointdecapture,predictors,predictors_forced) %>% mutate_if(is.character, as.factor)
+  df$pointdecapture2 <- as.factor(paste0(df$codevillage,df$pointdecapture))
+
+  form <- as.formula(paste("resp_var ~ ",paste(predictors, collapse = "+")))
+  
+  if(!is.null(predictors_forced)){
+    form_forc <- as.formula(paste(" ~", paste(predictors_forced, collapse = "+"), "+ (1|codevillage/pointdecapture2)"))
+  } else {
+    form_forc <- as.formula("~ (1|codevillage/pointdecapture2)")
+  }
+  
+  predictors_to_scale <- setdiff(c(predictors, predictors_forced), c("VCM","IEH","int_ext"))
+  df_mod <- df %>% mutate_at(predictors_to_scale, ~scale(., center = TRUE, scale = FALSE)) %>% dplyr::select(c("resp_var","codevillage","pointdecapture2",predictors,predictors_forced))
+  
+  if(mod == "abundance"){
+    th_mod <- buildglmmTMB(form, include = form_forc, data = df_mod, family = truncated_nbinom2)
+    #df_mod_results <- broom.mixed::tidy(th_mod@model, conf.int = TRUE)
+  } else if (mod %in% c("presence","abundance", "early_late_biting", "exophagy", "physiological_resistance_kdrw","physiological_resistance_kdre")){
+    th_mod <- buildglmmTMB(form, include = form_forc, data = df_mod, family = binomial(link = "logit"))
+    #df_mod_results <- broom.mixed::tidy(th_mod@model, conf.int = TRUE, exponentiate = TRUE)
+  }
+  
+  
+  if(is.null(cv_type)){
+    cv <- NULL
+  } else {
+   #leave-one-village-out : predict on a new village but on known missions
+   if(cv_type == "llo"){
+     cv <- fun_glmm_cross_validation(indices_spatial, th_mod, mod, df_mod, predictors)$mean_metric
+    } else if (cv_type == "lto"){
+      # leave-one-mission-out : predict on known villages but on unknown missions
+     cv <- fun_glmm_cross_validation(indices_temporal, th_mod, mod, df_mod, predictors)$mean_metric
+    } else if (cv_type == "llto"){
+     #  leave-one-village-and-mission-out : predict on unknown villages and on unknown missions
+    cv <- fun_glmm_cross_validation(indices_spatiotemporal, th_mod, mod, df_mod, predictors)$mean_metric
+    }
+  }
+  
+  return(list(model = th_mod, 
+              cv = cv
+              ))
+  
+}
+
+
+fun_compute_rf <- function(df, predictors, cv_type, mod){
+
+  ###### create indices for cross-validation
+  indices_spatial <- CAST::CreateSpacetimeFolds(df, spacevar = "codevillage", k = length(unique(df$codevillage)))
+  indices_temporal <- CAST::CreateSpacetimeFolds(df, timevar = "nummission", k = length(unique(df$nummission)))
+  indices_spatiotemporal <- CAST::CreateSpacetimeFolds(df, timevar = "nummission", spacevar = "codevillage", k = 3, seed = 10) # set seed for reproducibility as folds of spatiotemporal cv can change 
+  
+  df <- df %>% dplyr::select(resp_var,predictors) %>% mutate_if(is.character, as.factor)
+
+    if(mod == "abundance"){
+    tr = trainControl(method="cv")
+    tr_spatial = trainControl(method="cv",
+                              index = indices_spatial$index, 
+                              indexOut = indices_spatial$indexOut,
+                              savePredictions = 'final')
+    tr_temporal = trainControl(method="cv",
+                               index = indices_temporal$index, 
+                               indexOut = indices_temporal$indexOut,
+                               savePredictions = 'final')
+    tr_spatiotemporal = trainControl(method="cv",
+                                     index = indices_spatiotemporal$index, 
+                                     indexOut = indices_spatiotemporal$indexOut,
+                                     savePredictions = 'final')
+    
+    
+    met = "Rsquared"
+    
+    df$resp_var <- log(df$resp_var)
+    
+  } else if (mod %in% c("presence","abundance", "early_late_biting", "exophagy", "physiological_resistance_kdrw","physiological_resistance_kdre")){
+    tr = trainControl(method="cv",
+                              sampling = "up",
+                              summaryFunction = prSummary,
+                              classProbs = TRUE)
+    tr_spatial = trainControl(method="cv",
+                              index = indices_spatial$index, 
+                              indexOut = indices_spatial$indexOut,
+                              sampling = "up",
+                              summaryFunction = prSummary,
+                              classProbs = TRUE,
+                              savePredictions = 'final')
+    tr_temporal = trainControl(method="cv",
+                               index = indices_temporal$index, 
+                               indexOut = indices_temporal$indexOut,
+                               sampling = "up",
+                               summaryFunction = prSummary,
+                               classProbs = TRUE,
+                               savePredictions = 'final')
+    tr_spatiotemporal = trainControl(method="cv",
+                                     index = indices_spatiotemporal$index, 
+                                     indexOut = indices_spatiotemporal$indexOut,
+                                     sampling = "up",
+                                     summaryFunction = prSummary,
+                                     classProbs = TRUE,
+                                     savePredictions = 'final')
+    
+    met = "AUC"
+    
+    df$resp_var <- ifelse(df$resp_var==0,"Absence","Presence")
+    df$resp_var <- as.factor(df$resp_var)
+    
+    if(cv_type == "random"){
+      rfFuncs$summary <- prSummary
+      df <- DMwR::SMOTE(resp_var ~ ., df)
+    }
+    
+  }
+  
+  if(cv_type == "random"){
+   # th_mod <- caret::train(x = df[,predictors], y = df$resp_var, method = "rf", tuneLength = 5, trControl = tr, metric = met, importance = T, keep.forest=TRUE, keep.inbag=TRUE)
+    control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+    th_mod <- rfe(df[,predictors], df$resp_var, rfeControl=control, sizes = c(5,10,15,20,25,30,35,40), metric = met, keep.forest=TRUE, keep.inbag=TRUE)
+  } else if(cv_type == "llo"){
+    th_mod <- CAST::ffs(predictors = df[,predictors], response = df$resp_var, method = "rf", tuneLength = 5, trControl = tr_spatial, metric = met, importance = T)
+  } else if (cv_type == "lto"){
+    th_mod <- CAST::ffs(predictors = df[,predictors], response = df$resp_var, method = "rf", tuneLength = 5, trControl = tr_temporal, metric = met, importance = T)
+  } else if (cv_type == "llto"){
+    th_mod <- CAST::ffs(predictors = df[,predictors], response = df$resp_var, method = "rf", tuneLength = 5, trControl = tr_spatiotemporal, metric = met, importance = T)
+  }
+  
+  return(list(mod = th_mod, df_mod = df))
+  
+}
+
+
+
+## multicollinearity among predictors
+fun_multicol <- function(preds){
+  
+  predictors_numeric <- th_trmetrics_entomo_postedecapture %>%
+    dplyr::select(preds) %>%
+    dplyr::select_if(is.numeric)
+  predictors_numeric <- colnames(predictors_numeric)
+  predictors_character <- th_trmetrics_entomo_postedecapture %>%
+    dplyr::select(preds) %>%
+    dplyr::select_if(is.character)
+  predictors_character <- colnames(predictors_numeric)
+  
+  ## multicollinearity among predictors
+  lsm_vars <- predictors_numeric[grepl("lsm", predictors_numeric)]
+  other_sp_vars_num <- predictors_numeric[!grepl("lsm", predictors_numeric)]
+  if(length(lsm_vars) > 1){
+    lsm_vars <- fun_multicollinearity_lsm(th_trmetrics_entomo_postedecapture, lsm_vars)
+  } else if(length(lsm_vars) == 0){
+    lsm_vars = NULL
+ }
+  vars_multiv_num <- c(other_sp_vars_num, lsm_vars)
+  vars_multiv_num <- fun_multicollinearity(th_trmetrics_entomo_postedecapture, vars_multiv_num)
+  vars_multiv <- c(vars_multiv_num, predictors_character)
+  
+  return(vars_multiv)
   
 }
