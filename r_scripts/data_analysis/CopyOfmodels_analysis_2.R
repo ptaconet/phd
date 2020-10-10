@@ -35,7 +35,7 @@ fun_get_predictors_labels <- function(table = NULL, vector_predictors_name = NUL
   names(vector_predictors_lsm) <- "code"
   vector_predictors_lsm$code <- as.character(vector_predictors_lsm$code)
   vector_predictors_lsm <- vector_predictors_lsm %>%
-    dplyr::mutate(name1 = gsub("_"," ",code)) %>%
+      dplyr::mutate(name1 = gsub("_"," ",code)) %>%
     dplyr::mutate(function_name1 = paste(word(name1,1),word(name1,2),word(name1,3),sep="_")) %>%
     dplyr::mutate(buffer1 = as.numeric(word(name1,4))) %>%
     dplyr::mutate(layer_id = as.numeric(word(name1,5))) %>%
@@ -106,7 +106,7 @@ fun_plot_tile <- function(df, type, xvar = "species", yvar = "label", fillvar, m
 }
 
 
-fun_plot_pdp <- function(model, df, indicator, species){
+fun_plot_pdp <- function(model, df, indicator, species, quality){
 
   library(iml)
   #model=model_results$multiv_rf_dayscience[[1]]$mod$fit
@@ -114,38 +114,73 @@ fun_plot_pdp <- function(model, df, indicator, species){
   
   if(indicator != "abundance"){
   mod <- Predictor$new(model, data = df, class = "Presence")
+  metric <- "AUC"
   } else {
   mod <- Predictor$new(model, data = df)
+  metric <- "RMSE"
   }
-
+  
   # pdp for top 5 important variables
   imp <- randomForest::importance(model, scale = F, type = 1)
   imp <- as.data.frame(imp)
   imp$var <- rownames(imp)
   imp <- fun_get_predictors_labels(imp,"var")
-
-  p <- list()
+  colnames(imp)[ncol(imp)] <- "importance"
+  imp <- imp %>%
+    mutate(label = forcats::fct_reorder(label, importance)) %>%
+    arrange(-importance)
   
+  # variable importance plot
+  plot_imp <- ggplot(imp, aes(x = importance , y = label)) +
+    geom_bar(stat="identity") + 
+    theme_bw() + 
+    #theme(axis.text.x = element_text(angle=90, hjust=1)) +
+    ylab("") + 
+    ggtitle("Variable importance plot")
+    
+  # interactions for the most important variable
+  interact = Interaction$new(mod, grid.size = 50, feature = as.character(imp$var[1]))
+  
+  interact$results$feat <- word(gsub(":"," ",interact$results$.feature),1)
+  interact$results <- fun_get_predictors_labels(interact$results,"feat")
+  interact$results$.feature <- paste(interact$results$label,imp$label[1], sep = " : ")
+  interact$results <- interact$results %>% filter(!is.na(.feature))
+  plot_interactions <- plot(interact) +
+    scale_y_discrete("") + 
+    theme_bw() + 
+    ggtitle("Interaction strengths")
+  
+  # pdp 2 vars for the main interaction
+  pd = FeatureEffect$new(mod, c(as.character(imp$var[1]), as.character(imp$var[2])), method = "pdp") 
+  pdp_2vars <- plot(pd) + 
+    xlab(as.character(imp$label[1])) + 
+    ylab(as.character(imp$label[2]))  + 
+    theme_bw() + 
+    ggtitle("partial dependance plots (2 vars)")
+  
+  # partial dependance plot
+  pdps <- list()
+
   for(i in 1:5){
     pdp = FeatureEffect$new(mod, imp$var[i], method = "pdp")
-    
     if(indicator != "abundance"){
-    p[[i]] = pdp$plot() +
-      scale_y_continuous('Predicted prob. of presence', limits = c(0, 1)) +
+    pdps[[i]] = pdp$plot() +
+      scale_y_continuous('', limits = c(0, 1)) +
       xlab(paste0(imp$label[i], " (", imp$unit[i], ")")) +
       theme_bw()
     } else {
-      p[[i]] = pdp$plot() +
-        scale_y_continuous('Predicted abundance', limits = c(0, max(df$resp_var))) +
+      pdps[[i]] = pdp$plot() +
+        scale_y_continuous('', limits = c(0, max(df$resp_var))) +
         xlab(paste0(imp$label[i], " (", imp$unit[i], ")")) +
         theme_bw()
     }
   }
   
-  p <- wrap_plots(p)
-  p <- p + plot_annotation(title = paste0(species, " - ", indicator))
-  return(p)
+  pdps <- wrap_plots(pdps)
 
+  p_final <- (plot_imp  + pdps ) / (plot_interactions + pdp_2vars) + plot_annotation(title = paste0(species, " - ", indicator, " (",metric," = ",round(quality,2),")")) + plot_layout(guides = 'auto')
+
+  return(p_final)
 
 }
 
@@ -302,14 +337,14 @@ plots <- univ_spearmancorr %>%
   left_join(glmm_spearmanfilt_dayscience) %>%
   left_join(glmm_spearmanfilt_nightscience) %>%
   left_join(rf_dayscience) %>%
-  left_join(rf_dayscience)
+  left_join(rf_nightscience)
 
 
 # pdps
-pdps <- model_results %>%
-  mutate(plots_pdp_rf_dayscience = pmap(list(multiv_rf_dayscience, mod, response_var) , ~fun_plot_pdp(..1$mod$fit,..1$df_mod,..2,..3))) %>%
-  mutate(plots_pdp_rf_nightscience = pmap(list(multiv_rf_nightscience, mod, response_var) , ~fun_plot_pdp(..1$mod$fit,..1$df_mod,..2,..3))) %>%
-  dplyr::select(response_var,code_pays,mod,plots_pdp_rf_dayscience,plots_pdp_rf_nightscience)
+plots_interpret_rf <- model_results %>%
+  mutate(plots_rf_dayscience = furrr::future_pmap(list(multiv_rf_dayscience, mod, response_var, rf_dayscience_perf) , ~fun_plot_pdp(..1$mod$fit, ..1$df_mod, ..2, ..3, ..4))) #%>%
+  mutate(plots_rf_nightscience = furrr::future_pmap(list(multiv_rf_nightscience, mod, response_var, rf_nightscience_perf) , ~fun_plot_pdp(..1$mod$fit,..1$df_mod,..2,..3, ..4))) %>%
+  dplyr::select(response_var,code_pays,mod,plots_rf_dayscience,plots_rf_nightscience)
 
 
 
