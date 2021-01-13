@@ -180,6 +180,7 @@ data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(entomo_cfr_b
 
 # epidemio_xxx (toutes les tables épidémio)
 source("r_scripts/react_database/epidemio.R")
+act <- read.csv("data/react_db/miscellaneous_data/epidemio_active_l1.csv")
 act<-st_as_sf(act,coords =  c("X", "Y"), crs = 4326 )
 act<-cbind(act,st_coordinates(act))
 BF_act <- cbind(fid = 1:nrow(BF_act), BF_act)
@@ -405,7 +406,8 @@ st_write(lulc_zonal_stats_bf, path_to_gpkg_database, "lco_groundtruth_bf_zonalst
     setNames(c("pixval","lc_class")) %>%
     mutate(classif_name="ESACCI-LC-L4-LC10-Map-20m-P1Y-2016-v1.0") %>%
     mutate(classif_level=NA) %>%
-    mutate(path_to_raster="data/landcovers/ESACCI-LC/ESACCI-LC-L4-LC10-Map-20m-P1Y-2016-v1.0.tif")
+    mutate(path_to_raster="data/landcovers/ESACCI-LC/ESACCI-LC-L4-LC10-Map-20m-P1Y-2016-v1.0.tif") %>%
+    mutate(pixlabel_english = lc_class)
 
   ## ESA Globcover
   globcover<-gdalUtils::gdalinfo("data/landcovers/landcover_globcover_esa/W020N20_ProbaV_LC100_epoch2015_global_v2.0.1_discrete-classification_EPSG-4326.tif")[57:58] %>%
@@ -415,11 +417,12 @@ st_write(lulc_zonal_stats_bf, path_to_gpkg_database, "lco_groundtruth_bf_zonalst
   globcover_lc_pixval<-data.frame(pixval=globcover_pixval,lc_class=globcover_lc_class,stringsAsFactors = F) %>%
     mutate(classif_name="W020N20_ProbaV_LC100_epoch2015_global_v2.0.1") %>%
     mutate(classif_level=NA) %>%
-    mutate(path_to_raster="data/landcovers/landcover_globcover_esa/W020N20_ProbaV_LC100_epoch2015_global_v2.0.1_discrete-classification_EPSG-4326.tif")
+    mutate(path_to_raster="data/landcovers/landcover_globcover_esa/W020N20_ProbaV_LC100_epoch2015_global_v2.0.1_discrete-classification_EPSG-4326.tif") %>%
+    mutate(pixlabel_english = lc_class)
 
 
   LU_classes<-rbind(LU_classes_bf,LU_classes_civ,africa_lc_pixval,globcover_lc_pixval) %>%
-    setNames(c("pixval","pixlabel","classif_level","classif_label","classif_path"))
+    setNames(c("pixval","pixlabel","pixlabel_english","classif_level","classif_label","classif_path"))
 
    layer_id<-unique(LU_classes$classif_label) %>%
      as.data.frame(stringsAsFactors=F) %>%
@@ -433,12 +436,15 @@ st_write(lulc_zonal_stats_bf, path_to_gpkg_database, "lco_groundtruth_bf_zonalst
      left_join(lco_pix_priority)
    
   dbWriteTable(react_gpkg,"lco_metadata",LU_classes,overwrite=T)
+  dbWriteTable(react_gpkg_light,"lco_metadata",LU_classes,overwrite=T)
+  
   data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(LU_classes),table="lco_metadata"))
 
+  
     ## Built up surfaces
   #source("r_scripts/react_database/builtup.R)
   path_to_builtup_civ<-"data/korhogo/landcover_vhrs/classification/bati_raster.tif"
-  path_to_builtup_bf<-"data/diebougou/Classification/bati_raster.tif"
+  path_to_builtup_bf<-"data/diebougou/landcover_vhrs/classification/bati_raster.tif"
   gdal_translate(path_to_builtup_civ,path_to_gpkg_database,ot="Int16",of="GPKG",b=1,co=c("APPEND_SUBDATASET=YES","RASTER_TABLE=lco_builtup_ci")) # Tip : Setting Int16 as 'ot' value enables to store source NA as NA in output (and not 0)
   gdal_translate(path_to_builtup_bf,path_to_gpkg_database,ot="Int16",of="GPKG",b=1,co=c("APPEND_SUBDATASET=YES","RASTER_TABLE=lco_builtup_bf"))
 
@@ -463,7 +469,7 @@ st_write(lulc_zonal_stats_bf, path_to_gpkg_database, "lco_groundtruth_bf_zonalst
   path_to_civ_folder<-"data/korhogo"
 
   # timeseries
-  paths<-c("TMIN1","TMAX1","TAMP1","TMIN8","TMAX8","TAMP8","VNV8","VEV8","EVT8","SMO1","RFD1_F","RFD1_L","LIG30","DTL7","SPIs1","SPIs2")
+  paths<-c("TMIN1","TMAX1","TAMP1","TMIN8","TMAX8","TAMP8","VNV8","VEV8","EVT8","SMO1","RFD1F","RFD1L","LIG30","DTL7","SPIs1","SPIs2")
   path_to_bf_ts<-paste0(path_to_bf_folder,"/",paths,".csv")
   path_to_civ_ts<-paste0(path_to_civ_folder,"/",paths,".csv")
   path_to_ts<-c(path_to_bf_ts,path_to_civ_ts)
@@ -547,7 +553,7 @@ st_write(lulc_zonal_stats_bf, path_to_gpkg_database, "lco_groundtruth_bf_zonalst
   
   dbSendQuery(react_gpkg,"VACUUM") # It is very important to Vacuum. Not vacuuming may prevent the DB to be opened.
   dbDisconnect(react_gpkg)
-  dbSendQuery(react_gpkg_light,"VACUUM") # It is very important to Vacuum. Not vacuuming may prevent the DB to be opened.
+    dbSendQuery(react_gpkg_light,"VACUUM") # It is very important to Vacuum. Not vacuuming may prevent the DB to be opened.
   dbDisconnect(react_gpkg_light)
 
 

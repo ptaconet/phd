@@ -111,7 +111,7 @@ fun_ccm_select_lags <- function(ccm_corrmat, col_to_look, var){
 # expl_vars_to_keep = NULL
 # expl_vars_to_test = colnames(df[which(grepl("RFD1",colnames(df)))])
 
-fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, mod = NULL, type, df, expl_vars_to_keep = NULL, expl_vars_to_test, cross_validation_type = NULL, logtransform_resp_var = FALSE){
+fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, mod = NULL, type, df, expl_vars_to_keep = NULL, expl_vars_to_test, cross_validation_type = NULL, logtransform_resp_var = FALSE, tune_length = 5){
   
   
   if(logtransform_resp_var == TRUE){
@@ -126,13 +126,27 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
     
     df$useless_col <-  sample(100, size = nrow(df), replace = TRUE)
 
-    correlation <- sapply(df[,ifelse(!is.null(spearman_factor),3,2):(ncol(df))], function(x) correlation::correlation(cbind(as.data.frame(x),df[,c("resp_var",spearman_factor)]), method = "spearman", multilevel = ifelse(!is.null(spearman_factor),TRUE,FALSE)))
+    
+    correlation <- try(sapply(df[,ifelse(!is.null(spearman_factor),3,2):(ncol(df))], function(x) correlation::correlation(cbind(as.data.frame(x),df[,c("resp_var",spearman_factor)]), method = "spearman", multilevel = ifelse(!is.null(spearman_factor),TRUE,FALSE))))
+    
+    if(inherits(correlation, "try-error")){
+      correlation <- sapply(df[,ifelse(!is.null(spearman_factor),3,2):(ncol(df))], function(x) tryCatch(correlation::correlation(cbind(as.data.frame(x),df[,c("resp_var",spearman_factor)]), method = "spearman", multilevel = ifelse(!is.null(spearman_factor),TRUE,FALSE)), error=function(e) NULL))
+      correlation <- correlation[!sapply(correlation,is.null)]
+      cor_names <- names(correlation)
+      correlation_df <- do.call(rbind.data.frame, correlation)
+      correlation_df$correlation <- correlation_df$r
+      correlation_df$abs_corr <- abs(correlation_df$correlation)
+      correlation_df$name <- cor_names
+      } else {
+    
     correlation <- as.data.frame(correlation)
-    correlation_df <- as.data.frame(correlation["r",]) %>% pivot_longer(everything()) %>% mutate(correlation = as.numeric(value)) %>% dplyr::select(-value)
-    correlation_pval_df <- as.data.frame(correlation["p",]) %>% pivot_longer(everything()) %>% mutate(pval = as.numeric(value)) %>% dplyr::select(-value)
-    correlation_df <- left_join(correlation_df,correlation_pval_df, by="name")
+    correlation_df <- do.call(rbind.data.frame, correlation)
+    correlation_df$correlation <- correlation_df$r
     correlation_df$abs_corr <- abs(correlation_df$correlation)
+    correlation_df$name <- rownames(correlation_df)
     correlation_df <- correlation_df %>% filter(name!="useless_col")
+      }
+
     return(correlation_df)
   }
   
@@ -186,20 +200,37 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
       
     } else if(type == "univariate_selection"){
      
-      to_scale <- df[,c(expl_vars_to_test)]
-      to_scale <- as.data.frame(scale(to_scale))
+      vars_char <- df %>% dplyr::select(which(sapply(.,is.character))) %>% colnames() %>% intersect(expl_vars_to_test)
+      vars_char <- df %>% dplyr::select(vars_char)
+      vars_to_scale <- df %>% dplyr::select(which(sapply(.,is.numeric))) %>% colnames() %>% intersect(expl_vars_to_test)
+      
+      to_scale <- df[,c(vars_to_scale)]
+      to_scale <- as.data.frame(scale(to_scale, center = TRUE, scale = FALSE))
       pointdecapture2 <- as.data.frame( as.factor(paste0(df$codevillage,df$pointdecapture)))
       colnames(pointdecapture2) = "pointdecapture2"
-      df <- cbind(df[,c("resp_var","codevillage")],pointdecapture2,to_scale)
+      df <- cbind(df[,c("resp_var","codevillage","VCM","int_ext")],pointdecapture2,to_scale,vars_char)
       if(mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","early_late_biting","presence")){
-        pvals <- future_map_dfr(colnames(df[4:ncol(df)]), ~Anova(glmmTMB(as.formula(paste0("resp_var ~ ",.x," + (1|codevillage/pointdecapture2)")), data = df, family = binomial(link = "logit")))[3])
-      } else if (mod == "abundance"){
-        pvals <- future_map_dfr(colnames(df[4:ncol(df)]), ~Anova(glmmTMB(as.formula(paste0("resp_var ~ ",.x," + (1|codevillage/pointdecapture2)")), data = df, family = truncated_nbinom2))[3])
+        #pvals <- future_map_dfr(colnames(df[4:ncol(df)]), ~Anova(glmmTMB(as.formula(paste0("resp_var ~ ",.x," + (1|codevillage/pointdecapture2)")), data = df, family = binomial(link = "logit")))[3])
+        func <- function(x){
+          pval <- glmmTMB(as.formula(paste0("resp_var ~ ",x," + VCM + int_ext + (1|codevillage/pointdecapture2)")), data = df, family = binomial(link = "logit"))
+          return(pval)
+        }
+        } else if (mod == "abundance"){
+        #pvals <- future_map_dfr(colnames(df[4:ncol(df)]), ~Anova(glmmTMB(as.formula(paste0("resp_var ~ ",.x," + (1|codevillage/pointdecapture2)")), data = df, family = truncated_nbinom2))[3])
+          func <- function(x){
+            pval <- glmmTMB(as.formula(paste0("resp_var ~ ",x," + VCM + int_ext + (1|codevillage/pointdecapture2)")), data = df, family = truncated_nbinom2)
+            return(pval)
+          }
       }
       
-      pvals <- as.data.frame(pvals)
-      pvals$name <- expl_vars_to_test
-      colnames(pvals) <- c("pval","name")
+      possible_a <- possibly(func, otherwise = NULL)
+      pvals <- future_map(colnames(df[6:ncol(df)]), possible_a)
+      
+      names(pvals) <- colnames(df[6:ncol(df)])
+      
+      # pvals <- as.data.frame(pvals)
+      # pvals$name <- expl_vars_to_test
+      # colnames(pvals) <- c("pval","name")
 
       return(pvals)
     }
@@ -215,13 +246,15 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
       indices <- CreateSpacetimeFolds(df, spacevar = "codevillage", k = length(unique(df$codevillage))) 
     } else if (cross_validation_type == "temporal"){
       indices <- CreateSpacetimeFolds(df, timevar = "nummission", k = length(unique(df$nummission))) 
+    } else if (cross_validation_type == "spatiotemporal"){
+      indices <- CreateSpacetimeFolds(df, timevar = "nummission", spacevar = "codevillage", k = ifelse(mod=="abundance",3,4), seed = 10) # set seed for reproducibility as folds of spatiotemporal cv can change 
     }
     
     if(mod == "abundance"){
       tr = trainControl(method="cv",
                       index = indices$index, 
                       indexOut = indices$indexOut)
-      met = "Rsquared"
+      met = "RMSE"
     } else if (mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","early_late_biting","presence")){
       tr = trainControl(method="cv",
                         index = indices$index, 
@@ -234,41 +267,58 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
         mutate(resp_var = as.factor(resp_var))
       
       met = "AUC"
+    } else if(mod == "abundance_discrete"){
+      tr = trainControl(method="cv",
+                        index = indices$index, 
+                        indexOut = indices$indexOut)
+      met = "Accuracy"
+
     }
     
     if(type == "model_comparison"){
       
-      mod_base <- caret::train(form = as.formula(paste0("resp_var ~ ",paste(expl_vars_to_keep,collapse="+"))), data = df, method="ranger", tuneLength = 5, trControl=tr, metric = met)
+      mod_base <- caret::train(form = as.formula(paste0("resp_var ~ ",paste(expl_vars_to_keep,collapse="+"))), data = df, method="rf", tuneLength = tune_length, trControl=tr, metric = met)
       
       #predict(mod_base,type = "prob")
       #confusionMatrix(predict(mod_base), df$resp_var, positive = "Presence")
       
       if(mod == "abundance"){
-        #qual_basemod <- min(mod_base$results$RMSE)
-        qual_basemod <- max(mod_base$results$Rsquared)
+        qual_basemod <- min(mod_base$results$RMSE)
+        #qual_basemod <- max(mod_base$results$Rsquared)
       } else if (mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","early_late_biting","presence")){
         qual_basemod <- max(mod_base$results$AUC)
+      } else if(mod == "abundance_discrete"){
+        qual_basemod <- max(mod_base$results$Accuracy)
       }
+    } else if (type=="univariate_selection"){
+      qual_basemod <- 0
+    }
       
       fun_univ_rf <- function(predictors){
         predictors <- c(predictors,expl_vars_to_keep)
         predictors <- paste(predictors,collapse="+")
-        model <- caret::train(form = as.formula(paste0("resp_var ~ ",predictors)), data = df, method="ranger", tuneLength = 5, trControl=tr, metric = met)
+        model <- caret::train(form = as.formula(paste0("resp_var ~ ",predictors)), data = df, method="ranger", tuneLength = tune_length, trControl=tr, metric = met)
         if(mod == "abundance"){
-          #ret <- min(model$results$RMSE)
-          ret <- max(model$results$Rsquared)
+          ret <- min(model$results$RMSE)
+          #ret <- max(model$results$Rsquared)
         } else if (mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","early_late_biting","presence")){
           ret <- max(model$results$AUC)
+        } else if(mod == "abundance_discrete"){
+          ret <- max(model$results$Accuracy)
         }
         return(ret)
       }
       
       results <- future_map_dbl(expl_vars_to_test, ~fun_univ_rf(.x))
       results <- data.frame(name = expl_vars_to_test, res = results)
-      results$diff_res_w_basemod <- results$res - qual_basemod
+      if(mod == "abundance"){
+        results$diff_res_w_basemod <- qual_basemod - results$res 
+      } else {
+        results$diff_res_w_basemod <- results$res - qual_basemod
+      }
       
       return(results)
-    }
+    
     
     
   }
@@ -283,7 +333,7 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
 #### plots
 
 # function to plot the CCM (simple plot : only the CCM)
-fun_ccm_plot <- function(correlation_df, max_or_min, metric_name, var, filter_lags_ndays = 0){
+fun_ccm_plot <- function(correlation_df, max_or_min, metric_name, var, filter_lags_ndays = 0, mod = "presence"){
   
   if(max_or_min=="max"){
     abs_corr <- correlation_df %>% filter(diff_lag >= filter_lags_ndays) %>% filter(abs_corr == max(abs_corr, na.rm = T))
@@ -314,7 +364,9 @@ fun_ccm_plot <- function(correlation_df, max_or_min, metric_name, var, filter_la
     #ggtitle(paste0("CCM for : area = ",country," ; variable = ",var," ; buffer = ",buffer," m")) +
     ggtitle(var) +
     annotate("text", size = 3,x = min(correlation_df$time_lag_1), y = max(correlation_df$time_lag_2), vjust = "inward", hjust = "inward", label = paste0("r(0,0) = ", round(correlation_df$correlation[1],3),"\nr(",abs_corr$time_lag_1,",",abs_corr$time_lag_2,") = ",round(abs_corr$correlation,3))) +
-    coord_fixed()
+    coord_fixed() +
+    ylab(paste0("time lag 2 (",ifelse(grepl(1,correlation_df$name[1]),"days","weeks")," before the catch)")) +
+    xlab(paste0("time lag 1 (",ifelse(grepl(1,correlation_df$name[1]),"days","weeks")," before the catch)"))
   
   if(metric_name=="Spearman\ncorrelation"){
     ccm_plot <- ccm_plot + 
@@ -322,14 +374,20 @@ fun_ccm_plot <- function(correlation_df, max_or_min, metric_name, var, filter_la
   } else if(metric_name=="RMSE"){
     ccm_plot <- ccm_plot + 
      scale_fill_gradient(low = "red", high = "white", space = "Lab", name="RMSE") 
+  } else if(metric_name=="estimate"){
+    ccm_plot <- ccm_plot + 
+      scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = ifelse(mod == "abundance", 0, 1), limit = c(min(correlation_df$correlation), max(correlation_df$correlation)), space = "Lab", name = ifelse(mod == "abundance","DDR","ODR")) 
   }
   
   return(ccm_plot)
   
 }
 
+
+
+
 # function to plot the time series of the response variable and the explanatory variable
-fun_spatiotemparal_plots <- function(th_trmetrics_entomo_postedecapture, mod, expl_var, codepays){
+fun_spatiotemporal_plots <- function(th_trmetrics_entomo_postedecapture, mod, expl_var, codepays){
   
   th_pred_var <- prediction_vars %>% filter(code == expl_var)
   
@@ -355,17 +413,17 @@ fun_spatiotemparal_plots <- function(th_trmetrics_entomo_postedecapture, mod, ex
   if(mod == "abundance"){
     
     # plot by village
-    scaleFactor_bf <- max(env_spatiotemporal$val, na.rm = T) / max(env_spatiotemporal$resp_var, na.rm = T)
-
-    th_timeplot_bf <-  ggplot(env_spatiotemporal) + 
-      geom_line(aes(x = date, y = val), size = 0.5, show.legend = FALSE, color='steelblue') +
-      geom_boxplot(aes(x = date, y = resp_var * scaleFactor_bf, group = date), show.legend = FALSE, outlier.shape=NA, size = 1.5) + 
-      geom_jitter(aes(x = date, y = resp_var * scaleFactor_bf, group = date), position=position_jitter(3), cex=0.2) + 
-      scale_y_continuous(name = paste0(th_pred_var$short_name," (",th_pred_var$unit,")"), sec.axis = sec_axis(~./scaleFactor_bf, name = "human biting rate (positive counts only)")) +
-      scale_x_date(name = "date",date_labels = "%m/%Y", date_breaks = "20 months") +
-      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
-      ggtitle(th_pred_var$long_name) +
-      facet_wrap(.~codevillage)
+    # scaleFactor_bf <- max(env_spatiotemporal$val, na.rm = T) / max(env_spatiotemporal$resp_var, na.rm = T)
+    # 
+    # th_timeplot_bf <-  ggplot(env_spatiotemporal) + 
+    #   geom_line(aes(x = date, y = val), size = 0.5, show.legend = FALSE, color='steelblue') +
+    #   geom_boxplot(aes(x = date, y = resp_var * scaleFactor_bf, group = date), show.legend = FALSE, outlier.shape=NA, size = 1.5) + 
+    #   geom_jitter(aes(x = date, y = resp_var * scaleFactor_bf, group = date), position=position_jitter(3), cex=0.2) + 
+    #   scale_y_continuous(name = paste0(th_pred_var$short_name," (",th_pred_var$unit,")"), sec.axis = sec_axis(~./scaleFactor_bf, name = "human biting rate (positive counts only)")) +
+    #   scale_x_date(name = "date",date_labels = "%m/%Y", date_breaks = "20 months") +
+    #   theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+    #   ggtitle(th_pred_var$long_name) +
+    #   facet_wrap(.~codevillage)
   
     # plot for whole area
     env_spatiotemporal2 <- env_spatiotemporal %>%
@@ -375,7 +433,8 @@ fun_spatiotemparal_plots <- function(th_trmetrics_entomo_postedecapture, mod, ex
       dplyr::select(-resp_var) %>%
       unique() %>%
       group_by(date) %>%
-      summarise(val = mean(val))
+      summarise(val = mean(val)) %>%
+      filter(date > min(env_spatiotemporal2$date)-40, date < max(env_spatiotemporal2$date)+10 )
     
     scaleFactor_bf <- max(env_spatiotemporal3$val, na.rm = T) / max(env_spatiotemporal2$resp_var, na.rm = T)
     
@@ -392,26 +451,26 @@ fun_spatiotemparal_plots <- function(th_trmetrics_entomo_postedecapture, mod, ex
   
   } else if (mod == "presence"){
     
-    env_spatiotemporal <- env_spatiotemporal %>%
-      mutate(bites = ifelse(resp_var == 1, "aa_presence", "absence")) %>%
-      mutate(number = ifelse(is.na(resp_var), 0, 1))
-    
-    env_spatiotemporal <- env_spatiotemporal[rep(seq_len(nrow(env_spatiotemporal)), 10), ]
-    
-    scaleFactor_bf <- max(env_spatiotemporal$val, na.rm = T) / 8
-
-    th_timeplot_bf <- ggplot(env_spatiotemporal) + 
-      geom_line(aes(x = date, y = val), size = 0.5, show.legend = FALSE, color='steelblue') +
-      geom_histogram(aes(x = date, fill = bites), position = position_stack(reverse = TRUE), alpha = 0.8, na.rm = TRUE, size = 2) +
-      scale_color_manual(values=c("#00BFC4", "#F8766D", "#00BFC4")) + 
-      scale_fill_manual(values=c("#00BFC4", "#F8766D", "#00BFC4")) + 
-      labs(fill = "Biting status") +
-      scale_y_continuous(limits = c(0,max(env_spatiotemporal$val, na.rm = T)), name = paste0(th_pred_var$short_name," (",th_pred_var$unit,")"), sec.axis = sec_axis(~./scaleFactor_bf, name = "Number of sampling sites", labels = c("2","4","6","8",""))) +
-      scale_x_date(name = "date",date_labels = "%m/%Y", date_breaks = "20 months") +
-      #theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
-      #theme_minimal(base_size = 10) + 
-      ggtitle(th_pred_var$long_name) + 
-      facet_wrap(.~codevillage)
+    # env_spatiotemporal <- env_spatiotemporal %>%
+    #   mutate(bites = ifelse(resp_var == 1, "aa_presence", "absence")) %>%
+    #   mutate(number = ifelse(is.na(resp_var), 0, 1))
+    # 
+    # env_spatiotemporal <- env_spatiotemporal[rep(seq_len(nrow(env_spatiotemporal)), 10), ]
+    # 
+    # scaleFactor_bf <- max(env_spatiotemporal$val, na.rm = T) / 8
+    # 
+    # th_timeplot_bf <- ggplot(env_spatiotemporal) + 
+    #   geom_line(aes(x = date, y = val), size = 0.5, show.legend = FALSE, color='steelblue') +
+    #   geom_histogram(aes(x = date, fill = bites), position = position_stack(reverse = TRUE), alpha = 0.8, na.rm = TRUE, size = 2) +
+    #   scale_color_manual(values=c("#00BFC4", "#F8766D", "#00BFC4")) + 
+    #   scale_fill_manual(values=c("#00BFC4", "#F8766D", "#00BFC4")) + 
+    #   labs(fill = "Biting status") +
+    #   scale_y_continuous(limits = c(0,max(env_spatiotemporal$val, na.rm = T)), name = paste0(th_pred_var$short_name," (",th_pred_var$unit,")"), sec.axis = sec_axis(~./scaleFactor_bf, name = "Number of sampling sites", labels = c("2","4","6","8",""))) +
+    #   scale_x_date(name = "date",date_labels = "%m/%Y", date_breaks = "20 months") +
+    #   #theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+    #   #theme_minimal(base_size = 10) + 
+    #   ggtitle(th_pred_var$long_name) + 
+    #   facet_wrap(.~codevillage)
     
 
     # plot for whole area
@@ -424,43 +483,43 @@ fun_spatiotemparal_plots <- function(th_trmetrics_entomo_postedecapture, mod, ex
       dplyr::select(-resp_var) %>%
       unique() %>%
       group_by(date) %>%
-      summarise(val = mean(val))
+      summarise(val = mean(val)) %>%
+      filter(date > min(th_timeseries_resp_bf$date)-40, date < max(th_timeseries_resp_bf$date)+10 )
     
-     scale <- th_timeseries_resp_bf %>% 
-         group_by(nummission, bites) %>%
-       summarise(tot = sum(n))    
-     
-     scaleFactor_bf <- max(env_spatiotemporal3$val, na.rm = T) / max(scale$tot, na.rm = T)
+     # scale <- th_timeseries_resp_bf %>% 
+     #     group_by(nummission, bites) %>%
+     #   summarise(tot = sum(n))    
+     # 
+     # scaleFactor_bf <- max(env_spatiotemporal3$val, na.rm = T) / max(scale$tot, na.rm = T)
+    
+     scaleFactor_bf <- max(env_spatiotemporal3$val, na.rm = T) / 100
+    
 
      th_timeseries_resp_bf <- th_timeseries_resp_bf %>%
       group_by(date, bites) %>%
-      summarise(val = sum(n)) %>%
+      summarise(val = round(sum(n) / 216 * 100)) %>%  # 216 is for BF, to change for CI
        as_tibble()
 
      
-     th_timeplot_wholearea <- NULL
-    # df_to_plot <- env_spatiotemporal3 %>% left_join(th_timeseries_resp_bf)
-    # 
-    # th_timeplot_bf <- ggplot() + 
-    #   geom_line(aes(x = env_spatiotemporal3$date, y = env_spatiotemporal3$val), size = 0.5, show.legend = FALSE, color='steelblue') +
-    #   geom_bar(aes(x = th_timeseries_resp_bf$date, y = th_timeseries_resp_bf$val, fill = th_timeseries_resp_bf$bites), position = 'dodge', stat = 'identity', alpha = 0.8, na.rm = TRUE, size = 2) +
-    #   labs(fill = "Biting status") +
-    #   scale_y_continuous(name = paste0(th_pred_var$short_name," (",th_pred_var$unit,")"), sec.axis = sec_axis(~./scaleFactor_bf, name = "Number of sites with presence of bites (>= 1 bite) ")) +
-    #   scale_x_date(name = "date",date_labels = "%m/%Y", date_breaks = "2 months") +
-    #   theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
-    #   theme_minimal(base_size = 10) + 
-    #   ggtitle(th_pred_var$long_name)
-    # 
-    # 
-    #     th_timeplot_bf <- ggplot() + 
-    #       geom_line(aes(x = env_spatiotemporal3$date, y = env_spatiotemporal3$val), size = 0.5, show.legend = FALSE, color='steelblue') +
-    #       geom_bar(aes(x = th_timeseries_resp_bf$date, y = th_timeseries_resp_bf$val, fill = th_timeseries_resp_bf$bites), position = 'dodge', stat = 'identity', alpha = 0.8, na.rm = TRUE, size = 2) +
-    #       labs(fill = "Biting status") +
-    #   scale_y_continuous(name = paste0(th_pred_var$short_name," (",th_pred_var$unit,")"), sec.axis = sec_axis(~./scaleFactor_bf, name = "Number of sites with presence of bites (>= 1 bite) ")) +
-    #   scale_x_date(name = "date",date_labels = "%m/%Y", date_breaks = "2 months") +
-    #   theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
-    #   theme_minimal(base_size = 10) + 
-    #   ggtitle(th_pred_var$long_name)
+     th_timeplot_wholearea <- ggplot() +
+      geom_line(aes(x = env_spatiotemporal3$date, y = env_spatiotemporal3$val), size = 0.5, show.legend = FALSE, color='steelblue') +
+      geom_point(aes(x = th_timeseries_resp_bf$date, y = th_timeseries_resp_bf$val), size = 4) +
+      labs(fill = "Biting status") +
+      scale_y_continuous(name = paste0(th_pred_var$short_name," (",th_pred_var$unit,")"), sec.axis = sec_axis(~./scaleFactor_bf, name = "% of sites sampled with >= 1 bite(s)")) +
+      scale_x_date(name = "date",date_labels = "%m/%Y", date_breaks = "2 months") +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      theme_minimal(base_size = 10) +
+      ggtitle(th_pred_var$long_name)
+
+      #   th_timeplot_bf <- ggplot() +
+      #     geom_line(aes(x = env_spatiotemporal3$date, y = env_spatiotemporal3$val), size = 0.5, show.legend = FALSE, color='steelblue') +
+      #     geom_bar(aes(x = th_timeseries_resp_bf$date, y = th_timeseries_resp_bf$val, fill = th_timeseries_resp_bf$bites), position = 'dodge', stat = 'identity', alpha = 0.8, na.rm = TRUE, size = 2) +
+      #     labs(fill = "Biting status") +
+      # scale_y_continuous(name = paste0(th_pred_var$short_name," (",th_pred_var$unit,")"), sec.axis = sec_axis(~./scaleFactor_bf, name = "Number of sites with presence of bites (>= 1 bite) ")) +
+      # scale_x_date(name = "date",date_labels = "%m/%Y", date_breaks = "2 months") +
+      # theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      # theme_minimal(base_size = 10) +
+      # ggtitle(th_pred_var$long_name)
 
   }
   
@@ -489,7 +548,8 @@ fun_spatiotemparal_plots <- function(th_trmetrics_entomo_postedecapture, mod, ex
   # 
   # return(list(plot1 = th_timeplot_bf, plot2 = th_plot_bf))
   
-  return(list(th_timeplot_village = th_timeplot_bf,th_timeplot_wholearea = th_timeplot_wholearea))
+  #return(list(th_timeplot_village = th_timeplot_bf,th_timeplot_wholearea = th_timeplot_wholearea))
+  return(th_timeplot_wholearea)
   
   # th_patchwork_timeseries <- th_timeplot_bf + th_timeplot_ci
   # th_patchwork_ccm <- th_ccm_bf + th_ccm_ci
@@ -617,7 +677,7 @@ load_spatiotemporal_data <- function(vars, buffers, lag_time_window, summarize_d
     bind_rows(fun_summarize_week("TMIN1")) %>%
     bind_rows(fun_summarize_week("SMO1")) %>%
     bind_rows(fun_summarize_week("RFD1F"))
-    
+  
   }
   
   # spatiotemporal
@@ -627,26 +687,25 @@ load_spatiotemporal_data <- function(vars, buffers, lag_time_window, summarize_d
     left_join(prediction_vars[,c("code","type_group1","short_name","temporal_aggregation_days")], by = c("var" = "code"))
   
   env_spatiotemporal <- env_spatiotemporal %>%
+    filter(!is.na(buffer)) %>%
     dplyr::select(-c(lag_time, date)) %>%
     group_by(type_group1, var, codepays, buffer) %>%
     tidyr::nest(predictive_df = c(idpointdecapture, lag_n , val)) %>%
     mutate(fun_summarize_ccm = ifelse(var %in% c("RFD1F","RFD1L","RFD7_F","RFD7_L"), "sum", "mean")) %>%
-    arrange(type_group1, var, codepays, as.numeric(buffer), fun_summarize_ccm) #%>%
-  # filter(!(var %in% c("RFD1_L","TAMP7","TMAX7","TMIN7"))) %>%
-  # filter(!(var %in% c("RFD1_F","SMO1","VEV8","VNV8","EVT8","TMAX1","TMIN1","TAMP1") && buffer %in% c("500","1000"))) %>%
-  # filter(!(var %in% c("VNV30","VMV30","WNW30","WVV10","WVH10") && buffer %in% c("500","1000","2000")))
-  
+    arrange(type_group1, var, codepays, as.numeric(buffer), fun_summarize_ccm)
   
   env_spatiotemporal <- env_spatiotemporal %>% 
     mutate(predictive_df = pmap(list(predictive_df, var, buffer, fun_summarize_ccm), ~fun_ccm_df(..1, ..2, ..3, function_to_apply = ..4))) %>%
     filter(codepays==code_pays)
   
-    
   th_env_spatiotemporal <- env_spatiotemporal$predictive_df[[1]]
   
   for(i in 2:nrow(env_spatiotemporal)){
     th_env_spatiotemporal <- left_join(th_env_spatiotemporal,env_spatiotemporal$predictive_df[[i]])
   }
+  
+  
+  
   
   return(th_env_spatiotemporal)
   
@@ -661,8 +720,8 @@ load_spatial_data <- function(code_pays, landcover_layers_to_keep, mod, landcove
   LIG <- dbReadTable(react_gpkg, 'env_spatiotemporal') %>% dplyr::select(-fid) %>% mutate(date = as.Date(date)) %>% dplyr::rename(idpointdecapture = id) %>% filter(var == "LIG30", lag_n == 3, buffer >= 500) %>% dplyr::select(idpointdecapture,buffer,val,var) %>% filter(buffer %in% buffer_sizes)
   
   # spatial-only explanatory variables
-  env_spatial <- dbReadTable(react_gpkg,'env_spatial') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id) %>% filter(buffer >= 500, var!="POH") %>% filter(buffer %in% buffer_sizes)
-  BCH_POP <- dbReadTable(react_gpkg,'env_spatial') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id) %>% filter(var %in% c("BCH","POP"), buffer==500) %>% mutate(buffer=2000)
+  env_spatial <- dbReadTable(react_gpkg,'env_spatial') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id) %>% filter( var!="POH") %>% filter(buffer %in% buffer_sizes)
+  BCH_POP <- dbReadTable(react_gpkg,'env_spatial') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id) %>% filter(var %in% c("BCH","POP","POH"), buffer==500) %>% mutate(buffer=2000)
   env_spatial <- rbind(env_spatial,BCH_POP)
   
   # non-spatial explanatory variables
@@ -672,7 +731,7 @@ load_spatial_data <- function(code_pays, landcover_layers_to_keep, mod, landcove
   env_nightcatch <- dbReadTable(react_gpkg, 'env_nightcatch') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id) %>% dplyr::filter(var != "WDR")
   
   # variables for the night of catch at the postedecapture level
-  if(mod %in% c("presence","abundance")){
+  if(mod %in% c("presence","abundance","abundance_discrete","presence_abundance")){
     # env_nightcatch_postedecapture <- dbReadTable(react_gpkg,"env_nightcatch_postedecapture") %>% dplyr::select(-fid)
     # NMA <-  read.csv("/home/ptaconet/Bureau/data_anglique.csv") %>%
     #   dplyr::select(idpostedecapture, pressure_baro) %>%
@@ -686,18 +745,11 @@ load_spatial_data <- function(code_pays, landcover_layers_to_keep, mod, landcove
     th_env_nightcatch_postedecapture <- read.csv("/home/ptaconet/Bureau/data_anglique.csv") %>%
       dplyr::select(idpostedecapture,date_time,temperature_baro,humidity_baro,pressure_baro) %>%
       dplyr::rename(NMT = temperature_baro, NMH = humidity_baro, NMA = pressure_baro) %>%
-      mutate(date = as.Date(date_time), heuredecapture = hour(date_time)) %>%
+      mutate(date = as.Date(date_time), heuredecapture = lubridate::hour(date_time)) %>%
       dplyr::group_by(idpostedecapture) %>%
       dplyr::summarise(NMT = mean(NMT,na.rm = T), NMH = mean(NMH,na.rm = T), NMA=mean(NMA,na.rm = T)) %>%
       as_tibble()
-  } else if(mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","early_late_biting")){
-    # th_env_nightcatch_postedecapture <- read.csv("/home/ptaconet/Bureau/data_anglique.csv") %>%
-    #   dplyr::select(idpostedecapture,date_time,temperature_hygro,humidity_hygro,luminosite_hobo,pointderosee_hygro,pressure_baro) %>%
-    #   dplyr::rename(NMT = temperature_hygro, NMH = humidity_hygro, NDP = pointderosee_hygro, NML = luminosite_hobo, NMA = pressure_baro) %>%
-    #   mutate(date = as.Date(date_time), heuredecapture = hour(date_time)) %>%
-    #   dplyr::group_by(idpostedecapture,heuredecapture) %>%
-    #   dplyr::summarise(NMT = mean(NMT,na.rm = T), NMH = mean(NMH,na.rm = T), NDP=mean(NDP,na.rm = T), NML=mean(NML,na.rm = T), NMA=mean(NMA,na.rm = T)) %>%
-    #   as_tibble()
+  } else if(mod %in% c("exophagy","early_late_biting")){
     th_env_nightcatch_postedecapture <- read.csv("/home/ptaconet/Bureau/data_anglique.csv") %>%
       dplyr::select(idpostedecapture,date_time,temperature_baro,humidity_baro,pressure_baro) %>%
       dplyr::rename(NMT = temperature_baro, NMH = humidity_baro, NMA = pressure_baro) %>%
@@ -705,10 +757,18 @@ load_spatial_data <- function(code_pays, landcover_layers_to_keep, mod, landcove
       dplyr::group_by(idpostedecapture,heuredecapture) %>%
       dplyr::summarise(NMT = mean(NMT,na.rm = T), NMH = mean(NMH,na.rm = T), NMA=mean(NMA,na.rm = T)) %>%
       as_tibble()
-  }
+  } else if (mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre")){
+     th_env_nightcatch_postedecapture <- read.csv("/home/ptaconet/Bureau/data_anglique.csv") %>%
+       dplyr::select(idpostedecapture,date_time,temperature_hygro,humidity_hygro,luminosite_hobo,pointderosee_hygro,pressure_baro) %>%
+       dplyr::rename(NMT = temperature_hygro, NMH = humidity_hygro, NML = luminosite_hobo, NMA = pressure_baro) %>%
+       mutate(date = as.Date(date_time), heuredecapture = hour(date_time)) %>%
+       dplyr::group_by(idpostedecapture,heuredecapture) %>%
+       dplyr::summarise(NMT = mean(NMT,na.rm = T), NMH = mean(NMH,na.rm = T), NML=mean(NML,na.rm = T), NMA=mean(NMA,na.rm = T)) %>%
+       as_tibble()
+    }
   
   # landcover variables
-  env_landcover <-  dbReadTable(react_gpkg, 'env_landcover') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id) %>% filter(buffer >= 500, layer_id %in% landcover_layers_to_keep) %>% filter(buffer %in% buffer_sizes)
+  env_landcover <-  dbReadTable(react_gpkg, 'env_landcover') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id) %>% filter(layer_id %in% landcover_layers_to_keep) %>% filter(buffer %in% buffer_sizes)
   
   if(!is.null(landcover_metrics_to_keep)){
     env_landcover <- env_landcover %>% filter(metric %in% landcover_metrics_to_keep)
@@ -726,16 +786,17 @@ load_spatial_data <- function(code_pays, landcover_layers_to_keep, mod, landcove
   env_landcover <- env_landcover %>%
     left_join(metrics_defs) %>%
     dplyr::select(-c(level,metric,name,type)) %>%
-    pivot_wider(names_from = c(function_name,buffer,layer_id,pixval), values_from = val, names_sep = "_", values_fill = list(val = 0)) %>%
+    pivot_wider(names_from = c(function_name,buffer,layer_id,pixval), values_from = val, names_sep = "_", values_fill = list(val = 0), values_fn = list(val = mean)) %>%
     mutate_all(funs(replace_na(.,0)))
-
+  
+  
   # all other data
   env_spatial <- env_spatial %>% 
-    #bind_rows(LIG) %>% 
+    bind_rows(LIG) %>% 
     pivot_wider(names_from = c("var","buffer"), values_from = val) %>% 
     mutate_all(~ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x))
   th_env_nightcatch  <- env_nightcatch %>% pivot_wider(names_from = var, values_from = val) %>% mutate_all(~ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x))
-  th_env_static <- env_static %>% pivot_wider(names_from = var, values_from = val) %>% mutate_all(~ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x)) %>% mutate(VCT=as.numeric(VCT), WMD=as.numeric(WMD),BDE=as.numeric(BDE),VCP=ifelse(VCP=="TRUE",1,0))
+  th_env_static <- env_static %>% pivot_wider(names_from = var, values_from = val) %>% mutate(VCT=as.numeric(VCT), WMD=as.numeric(WMD),BDE=as.numeric(BDE),VCP=ifelse(VCP=="TRUE",1,0)) %>% mutate_all(~ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x))
   
   return(list(env_landcover, env_spatial, th_env_nightcatch_postedecapture, th_env_nightcatch, th_env_static))
   
@@ -753,6 +814,7 @@ t = entomo_csh_metadata_l1 %>%
     dplyr::select(idpointdecapture,codevillage,periode,saison)
   
 LUS = dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
+  dplyr::select(-geom) %>%
   filter(codepays == code_pays) %>%
   group_by(codevillage,periode,saison,dormirssmoust) %>%
   dplyr::summarise(n=n()) %>%
@@ -765,6 +827,7 @@ LUS <- t %>%
   left_join(LUS)
 
 pop <- dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
+  dplyr::select(-geom) %>%
   filter(codepays == code_pays) %>%
   dplyr::group_by(codevillage,periode,saison) %>%
   dplyr::summarise(pop = n()) %>%
@@ -773,6 +836,7 @@ pop <- dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>%
 
 
 HBI <- dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
+  dplyr::select(-geom) %>%
      filter(codepays == code_pays) %>%
      mutate(hintmaison = as.numeric(substr(hintmaison,1,2)),hsortiemaison=as.numeric(substr(hsortiemaison,1,2))) %>%
      mutate(hintmaison = ifelse(hintmaison <=16, 19, hintmaison), hsortiemaison=ifelse(hsortiemaison>=11 | hsortiemaison<=3,6,hsortiemaison))
@@ -811,6 +875,7 @@ hsortiemaison <- HBI %>%
 
 
  HBB <- dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
+   dplyr::select(-geom) %>%
    filter(codepays == code_pays) %>%
    mutate(hcoucher = as.numeric(substr(hcoucher,1,2)),hlever=as.numeric(substr(hlever,1,2))) %>%
    mutate(hcoucher = ifelse(hcoucher <=17, 20, hcoucher), hlever=ifelse(hlever>=11 | hlever<=3,6,hlever)) 
@@ -867,56 +932,57 @@ HBI_HBB <- pop %>%
   dplyr::rename(heuredecapture = hour) %>%
   dplyr::select(codevillage, periode, saison, heuredecapture, HBI, HBB)
 
-hum_behav <- t %>%
+hum_behav_4_exophagy <- t %>%
   left_join(HBI_HBB) %>%
   dplyr::select(idpointdecapture,heuredecapture,HBI,HBB)
 
-# HBI <- dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
-#   filter(codepays == code_pays) %>%
-#   mutate(hintmaison = as.numeric(substr(hintmaison,1,2)),hsortiemaison=as.numeric(substr(hsortiemaison,1,2))) %>%
-#   mutate(hintmaison = ifelse(hintmaison <=16, 19, hintmaison), hsortiemaison=ifelse(hsortiemaison>=11 | hsortiemaison<=3,6,hsortiemaison)) %>%
-#   mutate(dateenquete = as.Date(dateenquete)) %>%
-#   mutate(dateenquete2 = as.Date(dateenquete) + 1) %>%
-#   mutate(date_int = lubridate::ymd_h(paste0(dateenquete," ",hintmaison))) %>%
-#   mutate(date_sort = lubridate::ymd_h(paste0(dateenquete2," 0",hsortiemaison))) %>%
-#   mutate(HBI = as.numeric(date_sort - date_int)) %>%
-#   dplyr::group_by(codevillage,periode,saison) %>%
-#   summarise(HBI = mean(HBI))
+ HBI <- dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
+   dplyr::select(-geom) %>%
+   filter(codepays == code_pays) %>%
+   mutate(hintmaison = as.numeric(substr(hintmaison,1,2)),hsortiemaison=as.numeric(substr(hsortiemaison,1,2))) %>%
+   mutate(hintmaison = ifelse(hintmaison <=16, 19, hintmaison), hsortiemaison=ifelse(hsortiemaison>=11 | hsortiemaison<=3,6,hsortiemaison)) %>%
+   mutate(dateenquete = as.Date(dateenquete)) %>%
+   mutate(dateenquete2 = as.Date(dateenquete) + 1) %>%
+   mutate(date_int = lubridate::ymd_h(paste0(dateenquete," ",hintmaison))) %>%
+   mutate(date_sort = lubridate::ymd_h(paste0(dateenquete2," 0",hsortiemaison))) %>%
+   mutate(HBI = as.numeric(date_sort - date_int)) %>%
+   dplyr::group_by(codevillage,periode,saison) %>%
+   summarise(HBI = mean(HBI))
 
-# HBB <- dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
-#   filter(codepays == code_pays) %>%
-#   mutate(hcoucher = as.numeric(substr(hcoucher,1,2)),hlever=as.numeric(substr(hlever,1,2))) %>%
-#   mutate(hcoucher = ifelse(hcoucher <=17, 20, hcoucher), hlever=ifelse(hlever>=11 | hlever<=3,6,hlever)) %>%
-#   mutate(dateenquete = as.Date(dateenquete)) %>%
-#   mutate(dateenquete2 = as.Date(dateenquete) + 1) %>%
-#   mutate(date_int = lubridate::ymd_h(paste0(dateenquete," ",hcoucher))) %>%
-#   mutate(date_sort = lubridate::ymd_h(paste0(dateenquete2," 0",hlever))) %>%
-#   mutate(HBB = as.numeric(date_sort - date_int)) %>%
-#   mutate(HBB = ifelse(dormirssmoust == "non",0,HBB)) %>%
-#   dplyr::group_by(codevillage,periode,saison) %>%
-#   summarise(HBB = mean(HBB))
+ HBB <- dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
+   dplyr::select(-geom) %>%
+   filter(codepays == code_pays) %>%
+   mutate(hcoucher = as.numeric(substr(hcoucher,1,2)),hlever=as.numeric(substr(hlever,1,2))) %>%
+   mutate(hcoucher = ifelse(hcoucher <=17, 20, hcoucher), hlever=ifelse(hlever>=11 | hlever<=3,6,hlever)) %>%
+   mutate(dateenquete = as.Date(dateenquete)) %>%
+   mutate(dateenquete2 = as.Date(dateenquete) + 1) %>%
+   mutate(date_int = lubridate::ymd_h(paste0(dateenquete," ",hcoucher))) %>%
+   mutate(date_sort = lubridate::ymd_h(paste0(dateenquete2," 0",hlever))) %>%
+   mutate(HBB = as.numeric(date_sort - date_int)) %>%
+   mutate(HBB = ifelse(dormirssmoust == "non",0,HBB)) %>%
+   dplyr::group_by(codevillage,periode,saison) %>%
+   summarise(HBB = mean(HBB))
 
-# hum_behav <- t %>%
-#   left_join(LUS) %>%
-#   left_join(HBI) %>%
-#   left_join(HBB) %>%
-#   dplyr::select(idpointdecapture,LUS,HBI,HBB)
+ hum_behav_4_earlylatebiting <- t %>%
+   left_join(HBI) %>%
+   left_join(HBB) %>%
+   dplyr::select(idpointdecapture,HBI,HBB)
 
-return(list(LUS = LUS, hum_behav = hum_behav))
+return(list(LUS = LUS, hum_behav_4_exophagy = hum_behav_4_exophagy, hum_behav_4_earlylatebiting = hum_behav_4_earlylatebiting))
 }
 
 load_csh_sp_coord <- function(){
   
   # spatial coordinates
-  mean_coords_points_4326 = st_read(path_to_db, 'entomo_csh_metadata_l1', crs = 4326) %>%
+  mean_coords_points_4326 = sf::st_read(path_to_db, 'entomo_csh_metadata_l1', crs = 4326) %>%
     dplyr::group_by(codevillage,pointdecapture) %>%
     dplyr::summarise(X_4326=mean(X),Y_4326=mean(Y)) %>%
-    st_drop_geometry() %>%
-    st_as_sf(coords = c("X_4326", "Y_4326"), crs = 4326)
+    sf::st_drop_geometry() %>%
+    sf::st_as_sf(coords = c("X_4326", "Y_4326"), crs = 4326)
   
-  mean_coords_points_4326$X_4326 = as.numeric(st_coordinates(mean_coords_points_4326)[,1])
-  mean_coords_points_4326$Y_4326 = as.numeric(st_coordinates(mean_coords_points_4326)[,2])
-  mean_coords_points_4326 = st_drop_geometry(mean_coords_points_4326) %>% as_tibble() %>% mutate(codevillage=as.character(codevillage), pointdecapture=as.character(pointdecapture))
+  mean_coords_points_4326$X_4326 = as.numeric(sf::st_coordinates(mean_coords_points_4326)[,1])
+  mean_coords_points_4326$Y_4326 = as.numeric(sf::st_coordinates(mean_coords_points_4326)[,2])
+  mean_coords_points_4326 = sf::st_drop_geometry(mean_coords_points_4326) %>% as_tibble() %>% mutate(codevillage=as.character(codevillage), pointdecapture=as.character(pointdecapture))
   
   mean_coords_points_32630 = st_read(path_to_db, 'entomo_csh_metadata_l1', crs = 4326) %>%
     dplyr::group_by(codevillage,pointdecapture) %>%
@@ -934,30 +1000,13 @@ load_csh_sp_coord <- function(){
 }
 
 
-fun_ffs_tempvar <- function(df, model_type, mod, spearman_factor, time_vars, cols_to_keep, timevars_selection = "1day"){
+fun_ffs_tempvar <- function(df, model_type, mod, time_vars, cols_to_keep, spearman_factor = "codevillage", colnames_tempvar, tune_length = 5){
   
   modcomp <- data.frame(name = character(), res = numeric(), diff_res_w_basemod = numeric(), var = character())
   
   for(j in 1:length(time_vars)){
     cat('calculating column to keep for temporal variable ',time_vars[j],"\n")
-    expl_vars_to_test =  colnames(df[which(grepl(time_vars[j],colnames(df)))])
-    
-    if(timevars_selection == "7day"){
-      # expl_vars_to_test <- c(paste0(time_vars[j],"_2000_0_7"),
-      #                        paste0(time_vars[j],"_2000_7_14"),
-      #                        paste0(time_vars[j],"_2000_14_21"),
-      #                        paste0(time_vars[j],"_2000_21_28"),
-      #                        paste0(time_vars[j],"_2000_0_14"),
-      #                        paste0(time_vars[j],"_2000_0_21"),
-      #                        paste0(time_vars[j],"_2000_0_28"),
-      #                        paste0(time_vars[j],"_2000_7_21"),
-      #                        paste0(time_vars[j],"_2000_7_28"),
-      #                        paste0(time_vars[j],"_2000_14_28")
-      # )
-      
-      expl_vars_to_test <- paste0(time_vars[j],"_2000_0_28")
-      }
-    
+      expl_vars_to_test <- intersect(colnames_tempvar,colnames(df[which(grepl(time_vars[j],colnames(df)))]))
     if(grepl("1", time_vars[j])){
       time_lag1 <- as.numeric(sub('.*\\_', '', expl_vars_to_test))
       time_lag2 <- as.numeric(stringr::str_match(expl_vars_to_test, '([^_]+)(?:_[^_]+){1}$')[,2])
@@ -978,15 +1027,17 @@ fun_ffs_tempvar <- function(df, model_type, mod, spearman_factor, time_vars, col
     if(!is.null(ind_to_rm)){
       expl_vars_to_test <- expl_vars_to_test[-unique(ind_to_rm)]
     }
+  
     
     if(model_type == "rf" & mod == "abundance"){
-      logtransform_resp_var = TRUE
+      #logtransform_resp_var = TRUE
+      logtransform_resp_var = FALSE
     } else {
       logtransform_resp_var = FALSE
     }
     
     if(model_type == "rf"){
-      cols_to_keep <- c(cols_to_keep,"X_32630", "Y_32630")
+      cols_to_keep <- unique(c(cols_to_keep,"X_32630", "Y_32630"))
       cross_validation_type <- "temporal"
     } else {
       cross_validation_type <- NULL
@@ -1006,7 +1057,8 @@ fun_ffs_tempvar <- function(df, model_type, mod, spearman_factor, time_vars, col
                                                 expl_vars_to_test = expl_vars_to_test, 
                                                 expl_vars_to_keep = cols_to_keep1, 
                                                 logtransform_resp_var = logtransform_resp_var,
-                                                cross_validation_type = cross_validation_type
+                                                cross_validation_type = cross_validation_type, 
+                                                tune_length = tune_length
                                                 )
     th_modcomp$var <- time_vars[j]
     
@@ -1022,6 +1074,8 @@ fun_glmm_cross_validation <- function(indices_cv, th_mod, mod, df, ind_vars_to_c
 
   #df <- df %>% dplyr::select(c("resp_var","codevillage","pointdecapture2","int_ext","VCM",ind_vars_to_center))
     
+  #cv <- fun_glmm_cross_validation(indices_temporal, th_mod, mod, df, predictors_to_scale)
+  
   df$pred <- NA
   
   for (i in 1:length(indices_cv$index)){
@@ -1029,6 +1083,7 @@ fun_glmm_cross_validation <- function(indices_cv, th_mod, mod, df, ind_vars_to_c
     df_test <- df[indices_cv$indexOut[[i]],]
     
     # here, scale the numerical explanatory variables for train and test datasets
+
     df_train <- df_train %>% mutate_at(ind_vars_to_center, ~scale(., center = TRUE, scale = FALSE))
     df_test <- df_test %>% mutate_at(ind_vars_to_center, ~scale(., center = TRUE, scale = FALSE))
     
@@ -1044,14 +1099,19 @@ fun_glmm_cross_validation <- function(indices_cv, th_mod, mod, df, ind_vars_to_c
     
   }
   
+  df <- df %>% dplyr::select(resp_var,pred,codevillage,nummission,pointdecapture2,int_ext) %>% dplyr::rename(obs = resp_var)
+  
   if(mod == "abundance"){
-    mean_metric <- cor(df$pred, df$resp_var, use = "pairwise.complete.obs")^2
+    #mean_metric <- cor(df$pred, df$resp_var, use = "pairwise.complete.obs")^2
+    #mean_metric <- Metrics::rmse(df$obs,df$pred)
   } else if (mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","early_late_biting","presence")){
-    mean_metric <- mltools::auc_roc(df$pred, df$resp_var)  
+    #mean_metric <- mltools::auc_roc(df$pred, df$resp_var)  
+    #mean_metric <- Metrics::auc(df$obs,df$pred)
   }
   
-  return(list(mean_metric = mean_metric, df_cv = df))
   
+  #return(list(mean_metric = mean_metric, df_cv = df))
+  return(df)
 }
 
 
@@ -1065,7 +1125,7 @@ fun_multicollinearity_lsm <- function(df, vars_to_test){
   p <- NULL
   m <- df[,vars_to_test] %>%
     cor(.,method = "pearson", use = "na.or.complete")
-  index <- which(abs(m) > .7 & abs(m) < 1,arr.ind = T) 
+  index <- which(abs(m) > .8 & abs(m) < 1,arr.ind = T) 
   p <- cbind.data.frame(stock1 = rownames(m)[index[,1]], stock2 = colnames(m)[index[,2]])
   
   vars_to_test_df <- data.frame(vars_to_test)
@@ -1091,7 +1151,9 @@ fun_multicollinearity_lsm <- function(df, vars_to_test){
       dplyr::rename(priority = priority2) %>%
       dplyr::rename(layer_id2 = layer_id, pixval2 = pixval, pixlabel2 = pixlabel, priority2 = priority) %>%
       mutate(priority1 = ifelse(is.na(priority1),100,priority1)) %>%
-      mutate(priority2 = ifelse(is.na(priority2),100,priority2)) 
+      mutate(priority2 = ifelse(is.na(priority2),100,priority2)) %>%
+      mutate(stock1 = as.character(stock1)) %>%
+      mutate(stock2 = as.character(stock2))
     
     if(nrow(p)>0){
       
@@ -1102,13 +1164,18 @@ fun_multicollinearity_lsm <- function(df, vars_to_test){
           var_to_remove <- c(var_to_remove,p$stock1[i])
         } else if (p$priority1[i] == p$priority2[i]) {  # case the lc class and the lc layer are the same
           #if(p$correlation1[i] < p$correlation2[i]){
-          if(grepl("prd",p$name1[i])){
+          if(grepl("prd|shdi",p$name1[i])){
             var_to_remove <- c(var_to_remove,p$stock2[i])
+          } else if (p$buffer1 > p$buffer2) {
+            var_to_remove <- c(var_to_remove,p$stock2[i])
+          }  else if (p$buffer1 < p$buffer2) {
+            var_to_remove <- c(var_to_remove,p$stock1[i])
           } else {
             var_to_remove <- c(var_to_remove,p$stock1[i])
           }
         }
       }
+    
       
       var_to_remove <- unique(var_to_remove)
       vars_to_keep <- setdiff(vars_to_test,var_to_remove)
@@ -1130,7 +1197,7 @@ fun_multicollinearity <- function(df, vars_to_test){
   p <- NULL
     m <- df[,vars_to_test] %>%
       cor(.,method = "pearson", use = "na.or.complete")
-    index <- which(abs(m) > .7 & abs(m) < 1,arr.ind = T) 
+    index <- which(abs(m) > .8 & abs(m) < 1,arr.ind = T) 
     p <- cbind.data.frame(stock1 = rownames(m)[index[,1]], stock2 = colnames(m)[index[,2]])
     
     if(nrow(p)>0){
@@ -1159,12 +1226,20 @@ fun_multicollinearity <- function(df, vars_to_test){
         mutate(var_to_remove="")
       
       for(i in 1:nrow(p)){
-        if(p$priority1[i] < p$priority2[i]){
+        if(as.numeric(p$priority1[i]) < as.numeric(p$priority2[i])){
           var_to_remove <- c(var_to_remove,as.character(p$stock2[i]))
-        } else if (p$priority1[i] > p$priority2[i]) {
+        } else if (as.numeric(p$priority1[i]) > as.numeric(p$priority2[i])) {
           var_to_remove <- c(var_to_remove,as.character(p$stock1[i]))
+        } else if (as.numeric(p$priority1[i]) == as.numeric(p$priority2[i])) {
+          if (as.numeric(word(p$stock1[i],2,sep="_")) > as.numeric(word(p$stock2[i],2,sep="_"))){
+            var_to_remove <- c(var_to_remove,as.character(p$stock2[i]))
+          } else if (as.numeric(word(p$stock1[i],2,sep="_")) < as.numeric(word(p$stock2[i],2,sep="_"))){
+            var_to_remove <- c(var_to_remove,as.character(p$stock1[i]))
+          } else {
+          var_to_remove <- NA
+          }
         }
-        p$var_to_remove[i] <- var_to_remove
+        p$var_to_remove[i] <- NA
       }
       
       var_to_remove <- unique(var_to_remove)
@@ -1180,7 +1255,13 @@ fun_multicollinearity <- function(df, vars_to_test){
 
 fun_compute_glmm <- function(df, predictors, predictors_forced = NULL, mod, cv_type = NULL){
   
-  df <- df %>% dplyr::select(resp_var,codevillage,pointdecapture,predictors,predictors_forced) %>% mutate_if(is.character, as.factor)
+  ###### create indices for cross-validation
+  indices_spatial <- CAST::CreateSpacetimeFolds(df, spacevar = "codevillage", k = length(unique(df$codevillage)))
+  indices_temporal <- CAST::CreateSpacetimeFolds(df, timevar = "nummission", k = length(unique(df$nummission)))
+  indices_spatiotemporal <- CAST::CreateSpacetimeFolds(df, timevar = "nummission", spacevar = "codevillage", k = ifelse(mod=="abundance",3,4), seed = 10) # set seed for reproducibility as folds of spatiotemporal cv can change 
+
+  df <- df %>% mutate(int_ext = fct_relevel(int_ext,c("i","e")))
+  df <- df %>% dplyr::select(resp_var,codevillage,pointdecapture,int_ext,nummission,predictors,predictors_forced) %>% mutate_if(is.character, as.factor)
   df$pointdecapture2 <- as.factor(paste0(df$codevillage,df$pointdecapture))
 
   form <- as.formula(paste("resp_var ~ ",paste(predictors, collapse = "+")))
@@ -1191,7 +1272,7 @@ fun_compute_glmm <- function(df, predictors, predictors_forced = NULL, mod, cv_t
     form_forc <- as.formula("~ (1|codevillage/pointdecapture2)")
   }
   
-  predictors_to_scale <- setdiff(c(predictors, predictors_forced), c("VCM","IEH","int_ext"))
+  predictors_to_scale <- setdiff(c(predictors, predictors_forced), c("VCM","IEH","int_ext","still_water_presence","running_water_presence"))
   df_mod <- df %>% mutate_at(predictors_to_scale, ~scale(., center = TRUE, scale = FALSE)) %>% dplyr::select(c("resp_var","codevillage","pointdecapture2",predictors,predictors_forced))
   
   if(mod == "abundance"){
@@ -1202,39 +1283,44 @@ fun_compute_glmm <- function(df, predictors, predictors_forced = NULL, mod, cv_t
     #df_mod_results <- broom.mixed::tidy(th_mod@model, conf.int = TRUE, exponentiate = TRUE)
   }
   
+  df_cv_llo <- df_cv_lto <- df_cv_llto <- NULL
   
   if(is.null(cv_type)){
     cv <- NULL
   } else {
    #leave-one-village-out : predict on a new village but on known missions
-   if(cv_type == "llo"){
-     cv <- fun_glmm_cross_validation(indices_spatial, th_mod, mod, df_mod, predictors)$mean_metric
-    } else if (cv_type == "lto"){
+   if("llo" %in% cv_type){
+     df_cv_llo <- fun_glmm_cross_validation(indices_spatial, th_mod, mod, df, predictors_to_scale)
+    }
+    if ("lto" %in% cv_type){
       # leave-one-mission-out : predict on known villages but on unknown missions
-     cv <- fun_glmm_cross_validation(indices_temporal, th_mod, mod, df_mod, predictors)$mean_metric
-    } else if (cv_type == "llto"){
+      df_cv_lto <- fun_glmm_cross_validation(indices_temporal, th_mod, mod, df, predictors_to_scale)
+    }
+    if ("llto" %in% cv_type){
      #  leave-one-village-and-mission-out : predict on unknown villages and on unknown missions
-    cv <- fun_glmm_cross_validation(indices_spatiotemporal, th_mod, mod, df_mod, predictors)$mean_metric
+      df_cv_llto <- fun_glmm_cross_validation(indices_spatiotemporal, th_mod, mod, df, predictors_to_scale)
     }
   }
   
-  return(list(model = th_mod, 
-              cv = cv
+  return(list(mod = th_mod, 
+              df_cv_llo = df_cv_llo,
+              df_cv_lto = df_cv_lto,
+              df_cv_llto = df_cv_llto
               ))
   
 }
 
 
-fun_compute_rf <- function(df, predictors, cv_type, mod){
+fun_compute_rf <- function(df, predictors, cv_type, mod, featureselect){
 
   ###### create indices for cross-validation
   indices_spatial <- CAST::CreateSpacetimeFolds(df, spacevar = "codevillage", k = length(unique(df$codevillage)))
   indices_temporal <- CAST::CreateSpacetimeFolds(df, timevar = "nummission", k = length(unique(df$nummission)))
-  indices_spatiotemporal <- CAST::CreateSpacetimeFolds(df, timevar = "nummission", spacevar = "codevillage", k = 3, seed = 10) # set seed for reproducibility as folds of spatiotemporal cv can change 
+  indices_spatiotemporal <- CAST::CreateSpacetimeFolds(df, timevar = "nummission", spacevar = "codevillage", k = ifelse(mod=="abundance",3,4), seed = 10) # set seed for reproducibility as folds of spatiotemporal cv can change 
   
-  df <- df %>% dplyr::select(resp_var,predictors) %>% mutate_if(is.character, as.factor)
+  df <- df %>% dplyr::select(resp_var,predictors,codevillage,nummission,pointdecapture,int_ext) %>% mutate_if(is.character, as.factor)
 
-    if(mod == "abundance"){
+    if(mod %in% c("abundance","abundance_discrete")){
     tr = trainControl(method="cv")
     tr_spatial = trainControl(method="cv",
                               index = indices_spatial$index, 
@@ -1249,8 +1335,13 @@ fun_compute_rf <- function(df, predictors, cv_type, mod){
                                      indexOut = indices_spatiotemporal$indexOut,
                                      savePredictions = 'final')
     
-    
-    met = "Rsquared"
+   
+    if(mod == "abundance"){
+      met = "MAE"   # RMSE
+    } else {
+      met = "Accuracy"
+      df$resp_var <- as.factor(df$resp_var)
+    }
     
     df$resp_var <- log(df$resp_var)
     
@@ -1298,21 +1389,54 @@ fun_compute_rf <- function(df, predictors, cv_type, mod){
     control <- rfeControl(functions=rfFuncs, method="cv", number=10)
     th_mod <- rfe(df[,predictors], df$resp_var, rfeControl=control, sizes = c(5,10,15,20,25,30,35,40), metric = met, keep.forest=TRUE, keep.inbag=TRUE)
   } else if(cv_type == "llo"){
-    th_mod <- CAST::ffs(predictors = df[,predictors], response = df$resp_var, method = "rf", tuneLength = 5, trControl = tr_spatial, metric = met, importance = T)
+    
+    if(featureselect == TRUE){
+       th_mod <- CAST::ffs(predictors = df[,predictors], response = df$resp_var, method = "rf", tuneLength = 5, trControl = tr_spatial, metric = met, importance = T)
+     } else {
+       th_mod <- caret::train(x = df[,predictors], y = df$resp_var, method = "rf", tuneLength = 10, trControl = tr_spatial, metric = met, importance = T, keep.forest=TRUE, keep.inbag=TRUE)
+     }
+    
   } else if (cv_type == "lto"){
-    th_mod <- CAST::ffs(predictors = df[,predictors], response = df$resp_var, method = "rf", tuneLength = 5, trControl = tr_temporal, metric = met, importance = T)
+    
+    if(featureselect == TRUE){
+      th_mod <- CAST::ffs(predictors = df[,predictors], response = df$resp_var, method = "rf", tuneLength = 5, trControl = tr_temporal, metric = met, importance = T)
+    } else {
+      th_mod <- caret::train(x = df[,predictors], y = df$resp_var, method = "rf", tuneLength = 10, trControl = tr_temporal, metric = met, importance = T, keep.forest=TRUE, keep.inbag=TRUE)
+    }
+    
   } else if (cv_type == "llto"){
-    th_mod <- CAST::ffs(predictors = df[,predictors], response = df$resp_var, method = "rf", tuneLength = 5, trControl = tr_spatiotemporal, metric = met, importance = T)
+    
+    if(featureselect == TRUE){
+     th_mod <- CAST::ffs(predictors = df[,predictors], response = df$resp_var, method = "rf", tuneLength = 10, trControl = tr_spatiotemporal, metric = met, importance = T)
+    } else {
+      th_mod <- caret::train(x = df[,predictors], y = df$resp_var, method = "rf", tuneLength = 10, trControl = tr_spatiotemporal, metric = met, importance = T, keep.forest=TRUE, keep.inbag=TRUE)
+    }
+    
   }
   
-  return(list(mod = th_mod, df_mod = df))
+  df$rowIndex <- seq(1,nrow(df),1)
+  
+   if (mod %in% c("presence", "early_late_biting", "exophagy", "physiological_resistance_kdrw","physiological_resistance_kdre")){
+     df_cv <- th_mod$pred %>%
+       left_join(df) %>%
+       dplyr::select(pred,Presence,obs,codevillage,nummission,pointdecapture,int_ext) %>%
+       mutate(obs = ifelse(obs == "Absence",0,1)) %>%
+       dplyr::rename(pred_final = pred, pred = Presence)
+   } else {
+     df_cv <- th_mod$pred %>%
+       left_join(df) %>%
+       dplyr::select(pred,obs,codevillage,nummission,pointdecapture,int_ext)
+   }
+   
+
+  return(list(mod = th_mod, df_mod = df, df_cv = df_cv))
   
 }
 
 
 
 ## multicollinearity among predictors
-fun_multicol <- function(preds){
+fun_multicol <- function(th_trmetrics_entomo_postedecapture, preds){
   
   predictors_numeric <- th_trmetrics_entomo_postedecapture %>%
     dplyr::select(preds) %>%
@@ -1321,7 +1445,7 @@ fun_multicol <- function(preds){
   predictors_character <- th_trmetrics_entomo_postedecapture %>%
     dplyr::select(preds) %>%
     dplyr::select_if(is.character)
-  predictors_character <- colnames(predictors_numeric)
+  predictors_character <- colnames(predictors_character)
   
   ## multicollinearity among predictors
   lsm_vars <- predictors_numeric[grepl("lsm", predictors_numeric)]
@@ -1337,4 +1461,165 @@ fun_multicol <- function(preds){
   
   return(vars_multiv)
   
+}
+
+
+
+
+
+fun_get_temporal_preds_columns <- function(lag_time_start, lag_time_end, time_vars, temporal_agg_number_days, th_trmetrics_entomo_postedecapture, buffer_sizes){
+  
+ # temporal_agg_number_days = 7
+  
+  colnames_tot <- NULL
+  for(k in 1:length(time_vars)){
+    temp_res <-  regmatches(time_vars[k], gregexpr("[[:digit:]]+", time_vars[k]))
+    temp_res <-  as.numeric(unlist(temp_res))
+    step <- floor(temporal_agg_number_days/temp_res)
+    week <- seq(ceiling(lag_time_start/temp_res),ceiling(lag_time_end/temp_res), ifelse(step==0,1,step))
+    
+    lags_temporalpreds_tempres1 <- NULL
+    for(i in 1:length(week)){
+      for (j in (i+1):length(week)){
+        for(l in 1:length(buffer_sizes)){
+        lags_temporalpreds_tempres1 <- c(lags_temporalpreds_tempres1, paste0("_",buffer_sizes[l],"_",week[i],"_",week[j]))
+      }
+      }
+    }
+    lags_temporalpreds_tempres1 <- lags_temporalpreds_tempres1[1:(length(lags_temporalpreds_tempres1)-2)]
+    colnames_tempvar <- NULL
+    colnames_tempvar <- c(colnames_tempvar, paste0(time_vars[k],lags_temporalpreds_tempres1))
+    
+    colnames_tot <- c(colnames_tot,colnames_tempvar)
+  }
+  
+  return( colnames_tot )
+}
+
+
+
+fun_get_time_preds_rf <- function(df,colnames_tempvar,time_vars_rf,tune_length, mod){
+  
+  df_temporal <- NULL
+  
+  ### select the first temporal variable
+  for(i in 1:length(time_vars_rf)){
+    
+    cat("Calculating CCM for variable ",time_vars_rf[i],"\n")
+    
+    expl_vars_to_test <- intersect(colnames_tempvar, colnames(df[which(grepl(time_vars_rf[i],colnames(df)))]))
+    
+    
+    corr <- fun_feature_forward_selection(
+      df = df,
+      stat_method = "rf",
+      mod = mod,
+      type = "model_comparison",
+      expl_vars_to_keep = c("X_32630","Y_32630"),
+      expl_vars_to_test = expl_vars_to_test,
+      cross_validation_type = "temporal",
+      tune_length = tune_length)
+    
+    df_temporal <- rbind(df_temporal, corr)
+    
+  }
+  
+  cols_to_keep_timevar <- as.character(df_temporal$name[which.max(df_temporal$diff_res_w_basemod)])
+  
+  ### forward selection to select the next 2 temporal variables
+  # 2nd time var
+  
+  #ffs_temp_it2 <- fun_ffs_tempvar(df = df, model_type = "rf", mod, time_vars_rf, cols_to_keep_timevar, colnames_tempvar = colnames_tempvar, tune_length = tune_length)
+  
+  
+  time_vars_it2 <- setdiff(time_vars_rf, word(gsub("_"," ", cols_to_keep_timevar,1)))
+  ffs_temp_it2 <- fun_ffs_tempvar(df = df, model_type = "rf", mod, time_vars_it2, cols_to_keep_timevar, colnames_tempvar = colnames_tempvar, tune_length = tune_length)
+  
+  
+  if(max(ffs_temp_it2$diff_res_w_basemod) > 0){
+    cols_to_keep_timevar <- c(cols_to_keep_timevar, as.character(ffs_temp_it2$name[which.max(ffs_temp_it2$diff_res_w_basemod)]))
+  }
+  
+  # 3d time var
+   # if(length(cols_to_keep_timevar) > 1){
+   #   ffs_temp_it3 <- fun_ffs_tempvar(df = df, model_type = "rf", mod, time_vars_rf, cols_to_keep_timevar, colnames_tempvar = colnames_tempvar, tune_length = tune_length)
+   #   if(max(ffs_temp_it3$diff_res_w_basemod) > 0){
+   #    cols_to_keep_timevar <- c(cols_to_keep_timevar, as.character(ffs_temp_it3$name[which.max(ffs_temp_it3$diff_res_w_basemod)]))
+   #   }
+   # 
+   # }
+  
+  return(cols_to_keep_timevar)
+}
+
+
+
+annotation_compass <- function(label,
+                               position = c('N','NE','E','SE','S','SW','W','NW'),
+                               padding = grid::unit(c(0.5,0.5),"line"), ...){
+  position <- match.arg(position)
+  x <- switch (position,
+               N = 0.5,
+               NE = 1,
+               E = 1,
+               SE = 1,
+               S = 0.5, 
+               SW = 0,
+               W = 0, 
+               NW = 0
+  )
+  y <- switch (position,
+               N = 1,
+               NE = 1,
+               E = 0.5,
+               SE = 0,
+               S = 0, 
+               SW = 0,
+               W = 0.5, 
+               NW = 1
+  )
+  hjust <- switch (position,
+                   N = 0.5,
+                   NE = 1,
+                   E = 1,
+                   SE = 1,
+                   S = 0.5, 
+                   SW = 0,
+                   W = 0, 
+                   NW = 0
+  )
+  vjust <- switch (position,
+                   N = 1,
+                   NE = 1,
+                   E = 0.5,
+                   SE = 0,
+                   S = 0, 
+                   SW = 0,
+                   W = 0.5, 
+                   NW = 1
+  )
+  f1 <- switch (position,
+                N = 0,
+                NE = -1,
+                E = -1,
+                SE = -1,
+                S = 0, 
+                SW = 1,
+                W = 1, 
+                NW = 1
+  )
+  f2 <- switch (position,
+                N = -1,
+                NE = -1,
+                E = 0,
+                SE = 1,
+                S = 1, 
+                SW = 1,
+                W = 0, 
+                NW = -1
+  )
+  annotation_custom(grid::textGrob(label, 
+                                   x=grid::unit(x,"npc") + f1*padding[1] , 
+                                   y=grid::unit(y,"npc") + f2*padding[2],
+                                   hjust=hjust,vjust=vjust, ...))
 }

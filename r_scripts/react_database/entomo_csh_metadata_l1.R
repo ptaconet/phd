@@ -260,6 +260,18 @@ hlc_dates_loc_times<-rbind(coords_median_postecapture_bf,coords_median_postecapt
 hlc_dates_loc_times$quality_flag_dates<-"1"
 hlc_dates_loc_times <-hlc_dates_loc_times %>% dplyr::select(idpointdecapture,nummission,codevillage,pointdecapture,codepays,longitude,latitude,date_capture,date_heure_debut,date_heure_fin,quality_flag_position,quality_flag_dates,quality_flag_horaires) %>% arrange(codepays,idpointdecapture)
 
+
+hlc_dates_loc_times <- hlc_dates_loc_times %>% 
+  mutate(period_interv = case_when( codepays=="BF" & as.numeric(nummission) <= 3 ~ "pre_intervention",  
+                                    codepays=="BF" & as.numeric(nummission) > 3 ~ "post_intervention",
+                                    codepays=="CI" & as.numeric(nummission) <= 4 ~ "pre_intervention",  
+                                    codepays=="CI" & as.numeric(nummission) > 4 ~ "post_intervention")) %>%
+  mutate(season = case_when(codepays=="BF" & nummission %in% c("1","2","5","6","7") ~ "dry",
+                            codepays=="BF" & nummission %in% c("3","4","11","12","13","15") ~ "wet",
+                            codepays=="CI" & nummission %in% c("1","4","5","8") ~ "wet",
+                            codepays=="CI" & nummission %in% c("2","3","6","7") ~ "dry"))
+
+
 #### Vérification via qq graphiques
 #hlc_dates_loc_times$nummission<-as.numeric(hlc_dates_loc_times$nummission)
 #hlc_dates_loc_times$pointdecapture<-as.numeric(hlc_dates_loc_times$pointdecapture)

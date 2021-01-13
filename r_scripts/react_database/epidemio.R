@@ -17,8 +17,9 @@ BF_pas_df <- read_excel("data/react_db/miscellaneous_data/Data_epidemio/BF_suivi
 CI_pas_df <- read_excel("data/react_db/miscellaneous_data/Data_epidemio/CI_suivi_passif.xlsx", col_types = "text")
 
 # goutte épaisse
-BF_GE_df <-  read_tsv("data/react_db/miscellaneous_data/Data_epidemio/GE_BF_post.csv") %>% as.data.frame()
-CI_GE_df <-  read_tsv("data/react_db/miscellaneous_data/Data_epidemio/GE_CI_post.csv") %>% as.data.frame()
+GE_stats <- read_csv("data/react_db/miscellaneous_data/GE_stats_all.csv") 
+# BF_GE_df <-  read_tsv("data/react_db/miscellaneous_data/Data_epidemio/GE_BF_post.csv") %>% as.data.frame()
+# CI_GE_df <-  read_tsv("data/react_db/miscellaneous_data/Data_epidemio/GE_CI_post.csv") %>% as.data.frame()
 
 #interventions
 Intervention_df <- read.delim("data/react_db/miscellaneous_data/Data_epidemio/Intervention.txt")
@@ -264,60 +265,60 @@ pas <- pas %>% mutate(palu = ifelse(palusimple == "OUI" | palugrave == "OUI", TR
 
 
 
-###### Work on GE data ----
-BF_GE <- BF_GE_df
-CI_GE <- CI_GE_df
-
-# harmonise names
-match(names(BF_GE), names(CI_GE))
-match(names(CI_GE), names(BF_GE))
-names(BF_GE)[5] <- names(CI_GE)[5]
-names(BF_GE)[2] <- names(CI_GE)[2] <- "codenquete"
-
-# remplacer NA par zero quand utile
-BF_GE[, 9:20][is.na(BF_GE[, 9:20])] <- 0
-
-# recalculate dp (and code NA )
-BF_GE <- BF_GE %>% mutate(dp_pf = tropho_pf*8000 / nbredeleucocytes)
-BF_GE <- BF_GE %>% mutate(dp_pm = tropho_pm*8000 / nbredeleucocytes)
-BF_GE <- BF_GE %>% mutate(dp_po = tropho_po*8000 / nbredeleucocytes)
-
-# update columns (gameto_pX are number in BF and binomila in CI)
-# create new column for gameto number in BF
-BF_GE$gameto_pf_n <- BF_GE$gameto_pf
-BF_GE$gameto_pm_n <- BF_GE$gameto_pm
-BF_GE$gameto_po_n <- BF_GE$gameto_po
-
-# and convert to binomial data
-BF_GE$gameto_pf[BF_GE$gameto_pf > 0 ] <- 1
-BF_GE$gameto_pm[BF_GE$gameto_pm > 0 ] <- 1
-BF_GE$gameto_po[BF_GE$gameto_po > 0 ] <- 1
-BF_GE <- BF_GE %>% mutate_at(.vars=c(10,14,18), .funs=as.logical)
-
-
-
-# créer code village et menage
-BF_GE$codemenage <- str_sub(BF_GE$codeindividu,1,6)
-BF_GE$codevillage <- str_sub(BF_GE$codeindividu,1,3)
-
-#table(BF_GE$codevillage, BF_GE$codenquete)
-
-# créer code village (va etre modifié ulterieurement)
-CI_GE$codevillage <- str_sub(CI_GE$codeindividu,1,3)
-
-## update codevillage in CI
-# a parti de l'enquete 4, le code NAv correspond au nouveau village NAM (Namasselikaha)
-# a parti de l'enquete 4, le code KOL correspond au nouveau village BLA (Blahouara)
-# le code de KOU est modifié en KON pour éviter les homonymies avec le BF
-# le code de NAV est modifié en NAA pour éviter les homonymies avec le BF
-
-CI_GE$codeindividu <- with(CI_GE, if_else(str_detect(codeindividu, "NAA") & codenquete > 3, str_replace(codeindividu, "NAA", "NAM"), codeindividu))
-CI_GE$codeindividu <- with(CI_GE, if_else(str_detect(codeindividu, "KOL") & codenquete > 3, str_replace(codeindividu, "KOL", "BLA"), codeindividu))
-
-# updater code village et créer menage
-CI_GE$codemenage <- str_sub(CI_GE$codeindividu,1,6)
-CI_GE$codevillage <- str_sub(CI_GE$codeindividu,1,3)
-table(CI_GE$codevillage, CI_GE$codenquete)
+# ###### Work on GE data ----
+# BF_GE <- BF_GE_df
+# CI_GE <- CI_GE_df
+# 
+# # harmonise names
+# match(names(BF_GE), names(CI_GE))
+# match(names(CI_GE), names(BF_GE))
+# names(BF_GE)[5] <- names(CI_GE)[5]
+# names(BF_GE)[2] <- names(CI_GE)[2] <- "codenquete"
+# 
+# # remplacer NA par zero quand utile
+# BF_GE[, 9:20][is.na(BF_GE[, 9:20])] <- 0
+# 
+# # recalculate dp (and code NA )
+# BF_GE <- BF_GE %>% mutate(dp_pf = tropho_pf*8000 / nbredeleucocytes)
+# BF_GE <- BF_GE %>% mutate(dp_pm = tropho_pm*8000 / nbredeleucocytes)
+# BF_GE <- BF_GE %>% mutate(dp_po = tropho_po*8000 / nbredeleucocytes)
+# 
+# # update columns (gameto_pX are number in BF and binomila in CI)
+# # create new column for gameto number in BF
+# BF_GE$gameto_pf_n <- BF_GE$gameto_pf
+# BF_GE$gameto_pm_n <- BF_GE$gameto_pm
+# BF_GE$gameto_po_n <- BF_GE$gameto_po
+# 
+# # and convert to binomial data
+# BF_GE$gameto_pf[BF_GE$gameto_pf > 0 ] <- 1
+# BF_GE$gameto_pm[BF_GE$gameto_pm > 0 ] <- 1
+# BF_GE$gameto_po[BF_GE$gameto_po > 0 ] <- 1
+# BF_GE <- BF_GE %>% mutate_at(.vars=c(10,14,18), .funs=as.logical)
+# 
+# 
+# 
+# # créer code village et menage
+# BF_GE$codemenage <- str_sub(BF_GE$codeindividu,1,6)
+# BF_GE$codevillage <- str_sub(BF_GE$codeindividu,1,3)
+# 
+# #table(BF_GE$codevillage, BF_GE$codenquete)
+# 
+# # créer code village (va etre modifié ulterieurement)
+# CI_GE$codevillage <- str_sub(CI_GE$codeindividu,1,3)
+# 
+# ## update codevillage in CI
+# # a parti de l'enquete 4, le code NAv correspond au nouveau village NAM (Namasselikaha)
+# # a parti de l'enquete 4, le code KOL correspond au nouveau village BLA (Blahouara)
+# # le code de KOU est modifié en KON pour éviter les homonymies avec le BF
+# # le code de NAV est modifié en NAA pour éviter les homonymies avec le BF
+# 
+# CI_GE$codeindividu <- with(CI_GE, if_else(str_detect(codeindividu, "NAA") & codenquete > 3, str_replace(codeindividu, "NAA", "NAM"), codeindividu))
+# CI_GE$codeindividu <- with(CI_GE, if_else(str_detect(codeindividu, "KOL") & codenquete > 3, str_replace(codeindividu, "KOL", "BLA"), codeindividu))
+# 
+# # updater code village et créer menage
+# CI_GE$codemenage <- str_sub(CI_GE$codeindividu,1,6)
+# CI_GE$codevillage <- str_sub(CI_GE$codeindividu,1,3)
+# table(CI_GE$codevillage, CI_GE$codenquete)
 
 
 ##### stats sur les table act pour extraire age median et sexe des individus
@@ -332,20 +333,20 @@ BF_ind_act$sex_med <- BF_ind_act$sex - 1 # recode to 0 = F and 1 = M (for modell
 CI_ind_act$sex_med <- CI_ind_act$sex - 1 # recode to 0 = F and 1 = M (for modelling purpose)
 BF_ind_act$sex <- CI_ind_act$sex <- NULL
 
-### lier la table GE aux données d'âge et de sexe (CI):
-CI_GE_stats <- left_join(CI_GE, CI_ind_act, by = "codeindividu")
-BF_GE_stats <- left_join(BF_GE, BF_ind_act, by = "codeindividu")
+# ### lier la table GE aux données d'âge et de sexe (CI):
+# CI_GE_stats <- left_join(CI_GE, CI_ind_act, by = "codeindividu")
+# BF_GE_stats <- left_join(BF_GE, BF_ind_act, by = "codeindividu")
 
-### binding BF & CI tables
-BF_GE_stats$country <- "BF"
-CI_GE_stats$country <- "CI"
-GE_stats <- bind_rows(BF_GE_stats, CI_GE_stats)
+# ### binding BF & CI tables
+# BF_GE_stats$country <- "BF"
+# CI_GE_stats$country <- "CI"
+# GE_stats <- bind_rows(BF_GE_stats, CI_GE_stats)
 
-# create a column prev (prevalence for falciparum, binomial) based on parasite density
-GE_stats <- GE_stats %>% mutate(prev = tropho_pf > 1) %>%
-	arrange(codeindividu,codenquete)
-#GE_stats$codenquete <- as.factor(GE_stats$codenquete)
-#GE_stats$codeindividu <- as.factor(GE_stats$codeindividu)
+# # create a column prev (prevalence for falciparum, binomial) based on parasite density
+# GE_stats <- GE_stats %>% mutate(prev = tropho_pf > 1) %>%
+# 	arrange(codeindividu,codenquete)
+# #GE_stats$codenquete <- as.factor(GE_stats$codenquete)
+# #GE_stats$codeindividu <- as.factor(GE_stats$codeindividu)
 GE_stats$datelecture<-as.character(GE_stats$datelecture)
 
 
