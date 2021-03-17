@@ -62,7 +62,8 @@ villages <- villages %>%
 villages <- villages %>%
   mutate(date_debut_interv=NA) %>%
   mutate(date_fin_interv=NA) %>%
-  mutate(date_debut_interv=case_when(codevillage %in% c("PEN","LOK") ~ "2017-11-20",
+  mutate(date_debut_interv=case_when(
+                                     codevillage %in% c("PEN","LOK") ~ "2017-11-20",
                                      codevillage %in% c("LAT","KAT") ~ "2017-11-21",
                                      codevillage %in% c("NOW","PES") ~ "2017-11-22",
                                      codevillage %in% c("NAL") ~ "2017-11-16",
@@ -80,6 +81,7 @@ villages <- villages %>%
                                      codevillage %in% c("SKI") ~ "2017-08-18",
                                      codevillage %in% c("YBE") ~ "2017-08-19"
   )) %>%
+  mutate(date_debut_interv=ifelse(codepays=="BF" & is.na(date_debut_interv),"2016-07-15",date_debut_interv)) %>%
   mutate(date_fin_interv=case_when(codevillage %in% c("PEN","LOK") ~ "2018-04-09",
                                      codevillage %in% c("LAT","KAT") ~ "2018-04-10",
                                      codevillage %in% c("NOW","PES") ~ "2018-04-11",

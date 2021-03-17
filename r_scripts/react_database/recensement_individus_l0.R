@@ -22,11 +22,16 @@ villages<-dbGetQuery(amal_db, query)
 colnames(villages)<-gsub("_fk","",colnames(villages))
 colnames(villages)<-gsub("_pk","",colnames(villages))
 
+ind_nam_bla <- read.csv("data/react_db/miscellaneous_data/IndividuCI_niv1_NAM_BLA.txt",sep="\t") %>%
+  mutate(codevillage = substr(codemenage,1,3))
+
 # CI :
 individus_CI <- individus %>%
+  mutate(autreniveducation=NA) %>%
+  bind_rows(ind_nam_bla) %>%
   left_join(villages) %>%
   filter(codepays=="CI") %>%
-  dplyr::select(repondant,codevillage,codemenage,codeindividu,nomindividu,prenomindividu,sexeindividu,ageindividu,niveducation,profession,autreprofession,lienchefm,autrelienchefm,dormirssmoust,piecetmoust) %>%
+  dplyr::select(repondant,codevillage,codemenage,codeindividu,nomindividu,prenomindividu,sexeindividu,ageindividu,niveducation,autreniveducation,profession,autreprofession,lienchefm,autrelienchefm,dormirssmoust,piecetmoust) %>%
   mutate(codepays="CI")
 
 # BF : 
@@ -35,6 +40,7 @@ individus_BF <- read_excel("data/react_db/miscellaneous_data/IndividusBF_ok.xlsx
   mutate(codevillage=substr(codemenage,1,3)) %>%
   mutate(dormirssmoust=NA) %>%
   mutate(piecetmoust=NA) %>%
+  mutate(autreniveducation=NA) %>%
   mutate(codepays="BF") %>%
   mutate(codemenage=gsub("KOL","KLK",codemenage)) %>%
   mutate(codeindividu=gsub("KOL","KLK",codeindividu)) %>%

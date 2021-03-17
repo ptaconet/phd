@@ -408,7 +408,7 @@ write.csv(SMO1, file.path("data",roi_name,"SMO1.csv"), row.names = F)
 
 ```
 
-#### RFD1_F
+#### RFD1F
 ```{r }
 # Download GPM_3IMERGDF.06 data - band precipitationCal - for the region and time frames of interest ;
 variables <- c("precipitationCal")
@@ -421,15 +421,15 @@ rasts_gpm <- map(gpm$list_of_urls, ~opendapr::odr_import_data(.$destfile, "GPM_3
 rasts_gpm <- map(rasts_gpm, ~eodataflow:::.resample_rast(.,250))
 
 # Extract the averaged value from the precipitationCal band within each buffer around the sampling points.
-RFD1_F <- eodataflow::extract_var_on_buffers(rasts_gpm, df_sampling_points$sf_points, buffer_sizes_v1, "mean", TRUE, df_sampling_points$date, code_indice = "RFD1_F")
-RFD1_F$val[which(RFD1_F$val<0)] <- 0
+RFD1F <- eodataflow::extract_var_on_buffers(rasts_gpm, df_sampling_points$sf_points, buffer_sizes_v1, "mean", TRUE, df_sampling_points$date, code_indice = "RFD1F")
+RFD1F$val[which(RFD1F$val<0)] <- 0
 rm(rasts_gpm)
 
 # Save to disk
-write.csv(RFD1_F, file.path("data",roi_name,"RFD1_F.csv"), row.names = F)
+write.csv(RFD1F, file.path("data",roi_name,"RFD1F.csv"), row.names = F)
 ```
 
-#### RFD1_L
+#### RFD1L
 ```{r }
 # Download GPM_3IMERGDL.06 data - band precipitationCal - for the region and time frames of interest ;
 variables <- c("precipitationCal")
@@ -442,12 +442,12 @@ rasts_gpm <- map(gpm$list_of_urls, ~opendapr::odr_import_data(.$destfile, "GPM_3
 rasts_gpm <- map(rasts_gpm, ~eodataflow:::.resample_rast(.,250))
 
 # Extract the averaged value from the precipitationCal band within each buffer around the sampling points.
-RFD1_L <- eodataflow::extract_var_on_buffers(rasts_gpm, df_sampling_points$sf_points, buffer_sizes_v1, "mean", TRUE, df_sampling_points$date, code_indice = "RFD1_L")
-RFD1_L$val[which(RFD1_L$val<0)] <- 0
+RFD1L <- eodataflow::extract_var_on_buffers(rasts_gpm, df_sampling_points$sf_points, buffer_sizes_v1, "mean", TRUE, df_sampling_points$date, code_indice = "RFD1L")
+RFD1L$val[which(RFD1L$val<0)] <- 0
 rm(rasts_gpm)
 
 # Save to disk
-write.csv(RFD1_L, file.path("data",roi_name,"RFD1_L.csv"), row.names = F)
+write.csv(RFD1L, file.path("data",roi_name,"RFD1L.csv"), row.names = F)
 
 ```
 
@@ -591,6 +591,15 @@ rasts_AvgRadiance <- map2(rasts_AvgRadiance,rasts_CloudFreeCoverage,~mask(.x,.y)
 LIG30 <- eodataflow::extract_var_on_buffers(rasts_AvgRadiance, df_sampling_points$sf_points, buffer_sizes_v2, "mean", TRUE, df_sampling_points$date, code_indice = "LIG30")
 rm(rasts_CloudFreeCoverage,rasts_AvgRadiance)
 
+LIG30 <- LIG30 %>%
+  mutate(lag_n2 = case_when(lag_n == 3 ~ 0,
+                            lag_n == 2 ~ 1,
+                            lag_n == 1 ~ 2,
+                            lag_n == 0 ~ 3)
+  ) %>%
+  mutate(lag_n = lag_n2) %>%
+  dplyr::select(-lag_n2)
+
 # Save to disk
 write.csv(LIG30, file.path("data",roi_name,"LIG30.csv"), row.names = F)
 
@@ -662,6 +671,35 @@ RFH <- RFH %>%
   left_join(df_points_metadata,by="id") %>%
   dplyr::select(-c(longitude,latitude,date))
 
+
+
+
+## version for hourly rainfall
+hour <- c("18","18","19","19","20","20","21","21","22","22","23","23","0","0","1","1","2","2","3","3","4","4","5","5","6","6","7","7","8")
+
+b = unique(RFH$id)
+RFH3 = NULL
+for(i in 1:length(b)){
+  
+  RFH2 <- RFH %>%
+    filter(id == b[i]) %>%
+    bind_cols(hour)
+  
+ colnames(RFH2) <- c(colnames(RFH2)[1:7],"heuredecapture")
+  
+ RFH3 <- rbind(RFH3,RFH2)
+}
+
+RFH = RFH3 %>%
+  dplyr::select(id,heuredecapture,val) %>%
+  dplyr::rename(idpointdecapture = id, RFH = val) %>%
+  group_by(idpointdecapture,heuredecapture) %>%
+  summarise(RFH = sum(RFH))
+
+
+
+
+
 rm(rasts_gpm_precip)
 
 # Save to disk
@@ -693,13 +731,44 @@ rasts_wind_speed<- future_map(rasts_wind_speed, ~eodataflow:::.resample_rast(.,2
 WSP <- eodataflow::extract_var_on_buffers(rasts_wind_speed, df_sampling_points_entomo$sf_points, buffer_sizes = 10, "mean", TRUE, df_sampling_points_entomo$date, code_indice = "WSP")
 WDR <- eodataflow::extract_var_on_buffers(rast_wind_dir_cardinal, df_sampling_points_entomo$sf_points, buffer_sizes = 10, "mean", TRUE, df_sampling_points_entomo$date, code_indice = "WDR")
 
-# Compute the mean wind speed for the whole duration of the night
+# Compute the mean wind speed for the whole duration of the night (version for whole night)
 WSP <- WSP %>%
   group_by(id,var) %>% 
   summarise(val=mean(val, na.rm = T)) %>%
   left_join(df_points_metadata,by="id") %>%
   dplyr::select(-c(longitude,latitude,date)) %>%
   mutate(var="WSP")
+
+
+## version for hourly wind
+hour <- c("8","7","6","5","4","3","2","1","0","23","22","21","20","19","18")
+hour2 <- c("7","6","5","4","3","2","1","0","23","22","21","20","19","18")
+
+b = unique(WSP$id)
+WSP3 = NULL
+for(i in 1:length(b)){
+  
+  WSP2 <- WSP %>%
+    filter(id == b[i])
+  
+  if(nrow(WSP2)==15){
+    WSP2 <- WSP2 %>%
+      bind_cols(hour)
+  } else if (nrow(WSP2) == 14){
+    WSP2 <- WSP2 %>%
+      bind_cols(hour2)
+  }
+
+ colnames(WSP2) <- c(colnames(WSP2)[1:7],"heuredecapture")
+  
+ WSP3 <- rbind(WSP3,WSP2)
+}
+
+WSP = WSP3 %>%
+  dplyr::select(id,heuredecapture,val) %>%
+  dplyr::rename(idpointdecapture = id, WSP = val)
+
+
 
 # Compute the mean wind direction for the whole duration of the night using the formulas provided here : https://en.wikipedia.org/wiki/Mean_of_circular_quantities
 WDR <- WDR %>%
@@ -1112,7 +1181,7 @@ for (i in 1:(length(div_pts)-1)){
   LSM <- rbind(LSM,LSM_th_pts)
 
   # Export, overwriting the previous export at each iteration
-  write.csv(LSM,file.path("data",roi_name,"LSM.csv"),row.names = F)
+  write.csv(LSM,file.path("data",roi_name,"LSM2.csv"),row.names = F)
 
 }
 ```

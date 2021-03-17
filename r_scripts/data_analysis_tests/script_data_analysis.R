@@ -324,7 +324,6 @@ ggpairs(expl_static_pos, upper = list(continuous = wrap("cor", method = "spearma
 
 df_for_mod <- readRDS("/home/ptaconet/Bureau/data_analysis/df_for_mod.rds")
 
-
 # CV using leave-1-village-out (to evaluate the model on unpredicted villages)
 # to get list of village : unique(train$codevillage)
 train = df_for_mod %>% filter(codevillage!="KPE")

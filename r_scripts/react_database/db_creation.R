@@ -241,9 +241,9 @@ dbWriteTable(react_gpkg,"trmetrics_entomo_postedecapture",trmetrics_entomo_poste
 
 
 dbWriteTable(react_gpkg,"trmetrics_entomo",trmetrics_entomo,overwrite=TRUE)
-dbWriteTable(react_gpkg_light,"trmetrics_entomo",trmetrics_entomo,overwrite=TRUE)
+#dbWriteTable(react_gpkg_light,"trmetrics_entomo",trmetrics_entomo,overwrite=TRUE)
 dbWriteTable(react_gpkg,"trmetrics_epidemio",trmetrics_epidemio,overwrite=TRUE)
-dbWriteTable(react_gpkg_light,"trmetrics_epidemio",trmetrics_epidemio,overwrite=TRUE)
+#dbWriteTable(react_gpkg_light,"trmetrics_epidemio",trmetrics_epidemio,overwrite=TRUE)
 
 data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(trmetrics_entomo),table="trmetrics_entomo"))
 data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(trmetrics_epidemio),table="trmetrics_epidemio"))
@@ -252,7 +252,7 @@ data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(trmetrics_ep
 trmetrics_dictionary<-googlesheets4::read_sheet("https://docs.google.com/spreadsheets/d/1dIeSOa2WinXvOQGLmIjA0gFdsHnb6zMMsDME-G5pyMc/edit?usp=sharing",sheet = "var_reponse",col_types="c")
 trmetrics_dictionary <- cbind(fid = 1:nrow(trmetrics_dictionary), trmetrics_dictionary)
 dbWriteTable(react_gpkg,"trmetrics_dictionary",trmetrics_dictionary,overwrite=TRUE)
-dbWriteTable(react_gpkg_light,"trmetrics_dictionary",trmetrics_dictionary,overwrite=TRUE)
+#dbWriteTable(react_gpkg_light,"trmetrics_dictionary",trmetrics_dictionary,overwrite=TRUE)
 data_dictionnary <- rbind(data_dictionnary,data.frame(name=colnames(trmetrics_dictionary),table="trmetrics_dictionary"))
 
 

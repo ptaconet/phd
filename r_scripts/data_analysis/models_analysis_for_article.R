@@ -48,21 +48,24 @@ fun_get_predictors_labels <- function(table = NULL, vector_predictors_name = NUL
       dplyr::mutate(pixval = as.numeric(word(name1,6))) %>%
       dplyr::left_join(lco_metadata) %>%
       dplyr::rename(pixlabel = pixlabel_english) %>%
-      #dplyr::mutate(pixlabel = paste0(pixlabel, " - ",buffer1," m buff.")) %>%
+      dplyr::mutate(pixlabel_detail = paste0(pixlabel, "\n",buffer1," m buffer")) %>%
       dplyr::mutate(pixlabel = ifelse(grepl("prd",name1),"patch richness density",pixlabel)) %>%
       dplyr::mutate(pixlabel = ifelse(grepl("shdi",name1),"shannon diversity index",pixlabel)) %>%
-      dplyr::select(code, pixlabel) %>%
+      dplyr::select(code, pixlabel,pixlabel_detail) %>%
       dplyr::rename(short_name = pixlabel) %>%
+      dplyr::rename(short_name_detail = pixlabel_detail) %>%
       dplyr::arrange(code) %>%
       dplyr::mutate(group = ifelse(short_name %in% c("Marsh","Riparian forests","Still waters"), "Landscape - wetlands","Landscape - other")) %>%
-      dplyr::mutate(unit = "% land.")
+      dplyr::mutate(unit = "% land.") %>%
+      dplyr::select(code,short_name,short_name_detail,group,unit)
   }
   
   if(length(vector_predictors_vcm)>0){
     vector_predictors_vcm <- as.data.frame(vector_predictors_vcm)
     names(vector_predictors_vcm) <- "code"
     vector_predictors_vcm$code <- as.character(vector_predictors_vcm$code)
-    vector_predictors_vcm <- vector_predictors_vcm %>% left_join(prediction_vars %>% dplyr::select(code, short_name, group, unit))
+    vector_predictors_vcm <- vector_predictors_vcm %>% left_join(prediction_vars %>% dplyr::select(code, short_name, group, unit))  %>% mutate(short_name_detail="") %>%
+      dplyr::select(code,short_name,short_name_detail,group,unit)
   }
   
   if(length(vector_predictors_other)>0){
@@ -70,7 +73,7 @@ fun_get_predictors_labels <- function(table = NULL, vector_predictors_name = NUL
     names(vector_predictors_other) <- "code_df"
     vector_predictors_other$code_df <- as.character(vector_predictors_other$code_df)
     vector_predictors_other$code <- word(vector_predictors_other$code_df,1,sep = "\\_")
-    vector_predictors_other <- vector_predictors_other %>% left_join(prediction_vars %>% dplyr::select(code, short_name, group, unit)) %>% dplyr::select(-code) %>% dplyr::rename(code = code_df)
+    vector_predictors_other <- vector_predictors_other %>% left_join(prediction_vars %>% dplyr::select(code, short_name, group, unit)) %>% dplyr::select(-code) %>% dplyr::rename(code = code_df) %>% mutate(short_name_detail="")
     
     vector_predictors_past_climatic_conditions <- vector_predictors_other %>%
       dplyr::filter(group == "Past climatic conditions") %>%
@@ -78,21 +81,23 @@ fun_get_predictors_labels <- function(table = NULL, vector_predictors_name = NUL
       mutate(day_end = as.numeric(word(code,4,sep = "\\_"))) %>%
       mutate(day_start = ifelse(grepl("TMIN1|TMAX1|TAMP1|RFD1|SMO1",code),day_start/7,day_start)) %>%
       mutate(day_end = ifelse(grepl("TMIN1|TMAX1|TAMP1|RFD1|SMO1",code),day_end/7,day_end)) %>%
-      #mutate(short_name = paste0(short_name, " b/w ",day_start," and ",day_end," weeks")) %>%
+      mutate(short_name_detail = paste0(short_name, "\nb/w ",day_start," and ",day_end," weeks")) %>%
       dplyr::select(-c(day_start,day_end))
     
     vector_predictors_other <- vector_predictors_other %>%
       dplyr::filter(group != "Past climatic conditions") %>%
-      bind_rows(vector_predictors_past_climatic_conditions)
+      bind_rows(vector_predictors_past_climatic_conditions) %>%
+      dplyr::select(code,short_name,short_name_detail,group,unit)
     
   }
   
   table_labels <- rbind(vector_predictors_lsm, vector_predictors_other, vector_predictors_vcm)
   
   if(!is.null(table)){
-    colnames(table_labels) <- c(vector_predictors_name,"label","label_group","unit")
+    colnames(table_labels) <- c(vector_predictors_name,"label","label_detail","label_group","unit")
     table_labels <- table_labels %>%
-      dplyr::right_join(table)
+      dplyr::right_join(table) %>%
+      mutate(label_detail = ifelse(label_detail=="",label,label_detail))
   }
   
   
@@ -114,13 +119,14 @@ fun_glmm_dotpoint <- function(glmm_model_tabversion, mod, quality){
   glmm_model_tabversion <- glmm_model_tabversion %>%
     filter(!is.na(label)) %>%
     mutate(label = ifelse(grepl("Vector control measure|Household outdoor|still water",label), paste0(label, " (comp. to ",unit,")"),paste0(label, " (by add. ",unit,")"))) %>%
-    # mutate(p.value2 = case_when(
-    #   p.value <= 0.01 ~ "< 0.01 ***",
-    #   p.value >= 0.01 & p.value <= 0.03 ~ paste0("= ", round(p.value,2), " **"),
-    #   p.value > 0.03 & p.value <= 0.05 ~ paste0("= ",round(p.value,2), " *"),
-    #   p.value > 0.05 ~ paste0("= ",round(p.value,2))
-    # )) %>%
     mutate(p.value2 = case_when(
+      pval <= 0.0001 ~ "****",
+      pval > 0.0001 & pval <= 0.001 ~ "***",
+      pval > 0.001 & pval <= 0.01  ~  "**",
+      pval > 0.01 & pval <= 0.05 ~ " *",
+      pval > 0.05 ~ ""
+    )) %>%
+  mutate(p.value2 = case_when(
       p.value <= 0.01 ~ "***",
       p.value >= 0.01 & p.value <= 0.03 ~  "**",
       p.value > 0.03 & p.value <= 0.05 ~  "*",
@@ -221,24 +227,27 @@ fun_plot_tile_univ_spatial <- function(df, metric_name = "Spearman correlation",
   df <- df %>%
     mutate(buffer = forcats::fct_relevel(buffer, c("250","500","1000","2000"))) %>%
     mutate(indicator = forcats::fct_relevel(indicator, c("Presence","Abundance"))) %>%
-    mutate(species = forcats::fct_relevel(species, c("An. funestus ss.","An. gambiae ss.","An. coluzzii")))
+    mutate(species = forcats::fct_relevel(species, c("An. funestus","An. gambiae ss.","An. coluzzii")))
   
   df$label <- factor(df$label, levels = unique(df$label[order(df$correlation)]))
   df <- df %>% filter(!is.na(correlation),pval<=0.2) %>%
      mutate(p.value2 = case_when(
-       pval <= 0.01 ~ "***",
-       pval >= 0.01 & pval <= 0.03 ~  " **",
-       pval > 0.03 & pval <= 0.05 ~ " *",
+       pval <= 0.001 ~ "***",
+       pval > 0.001 & pval <= 0.01  ~  "**",
+       pval > 0.01 & pval <= 0.05 ~ " *",
        pval > 0.05 ~ ""
      ))
     
 
   p <- ggplot(df, aes(buffer, label)) + 
     geom_tile(aes(fill = correlation), color = "white") + facet_grid(species~indicator, scales="free_y", space="free_y") +
-    xlab("buffer radius around the collection site (meters)") + 
+      xlab("buffer radius around the collection site (meters)") + 
     ylab("") +
     theme_bw() +
-    theme(legend.position = "bottom") +
+    theme(legend.position = "bottom",
+          strip.text.x = element_text(size = 11),
+          strip.text.y = element_text(size = 11)
+    ) +
     scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0, limit = c(-0.6,0.6), space = "Lab", name = metric_name, na.value="grey") + 
     geom_text(aes(label = ifelse(is.na(correlation), "",paste(round(correlation,2), p.value2))), size = 3)
 
@@ -267,17 +276,19 @@ fun_plot_dotpoint_univ_spatial <- function(df){
 
 
 # function to plot the CCM (simple plot : only the CCM)
-fun_ccm_plot2 <- function(correlation_df, var){
+fun_ccm_plot2 <- function(correlation_df, var, time_frame){
   
-    abs_corr <- correlation_df %>% filter(abs_corr == max(abs_corr, na.rm = T))
+    most_corr <- correlation_df %>% filter(abs_corr == max(abs_corr, na.rm = T))
 
-    abs_corr2 <- correlation_df %>% arrange(desc(abs_corr)) %>% head(round(0.03*nrow(.))) # 3 % top correlations will be blacked borders
-
-  
-  ccm_plot <- ggplot(data = correlation_df, aes(time_lag_1, time_lag_2, fill = correlation)) +
-    geom_tile(color = "white", show.legend = TRUE, size = 0.05) +
-    geom_tile(data = abs_corr2 , color = "black", size = 0.3, show.legend = FALSE) +
-    geom_tile(data = abs_corr , color = "deeppink3", size = 0.6, show.legend = FALSE) +
+    #most_corr2 <- correlation_df %>% arrange(desc(abs_corr)) %>% head(round(0.1*nrow(.))) # 3 % top correlations will be blacked borders
+    #most_corr2 <- correlation_df %>% arrange(desc(abs_corr)) %>% filter(abs_corr >= most_corr$abs_corr - 0.05)
+    most_corr2 <- correlation_df %>% arrange(desc(abs_corr)) %>% filter(abs_corr >= most_corr$abs_corr * 0.9)
+    
+    
+    ccm_plot <- ggplot(data = correlation_df, aes(time_lag_1, time_lag_2, fill = correlation)) +
+    geom_tile(color = "white", show.legend = TRUE, size = 0.05,aes(width=1, height=1)) + 
+      geom_tile(data = most_corr2 , color = "black", size = 0.2, show.legend = FALSE,aes(width=1, height=1)) +  # ,aes(width=1, height=1)
+    geom_tile(data = most_corr , color = "deeppink3", size = 0.6, show.legend = FALSE,aes(width=1, height=1)) +  # ,aes(width=1, height=1)
     theme_minimal() + 
     theme(plot.title = element_text(size = 10, hjust = 0.5),
           axis.title = element_text(size = 8),
@@ -286,11 +297,13 @@ fun_ccm_plot2 <- function(correlation_df, var){
           legend.position = "none"
     ) +
     ggtitle(var) +
-    annotate("text", size = 3,x = min(correlation_df$time_lag_1), y = max(correlation_df$time_lag_2), vjust = "inward", hjust = "inward", label = paste0("r(",abs_corr$time_lag_2,",",abs_corr$time_lag_1,") = ",round(abs_corr$correlation,3))) +
+    annotate("text", size = 3,x = min(correlation_df$time_lag_1), y = max(correlation_df$time_lag_2), vjust = "inward", hjust = "inward", label = paste0("r(",most_corr$time_lag_2*time_frame,",",most_corr$time_lag_1*time_frame,") = ",round(most_corr$correlation,2))) +
     coord_fixed() +
     ylab("time lag 1") +
     xlab("time lag 2") + 
-    scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0, limit = c(-.6,.6), space = "Lab", name = "Spearman correlation", na.value = "grey") 
+    scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0, limit = c(-.6,.6), space = "Lab", name = "Spearman correlation", na.value = "grey") #+
+    #scale_x_continuous(breaks = seq(0,8,2), labels = seq(0,40,10)) +
+    #scale_y_continuous(breaks = seq(0,8,2), labels = seq(0,40,10))
 
   return(ccm_plot)
   
@@ -306,7 +319,7 @@ fun_plot_pdp <- function(modell, indicator, species){
   model = modell$mod$finalModel
   df = modell$df_mod %>% dplyr::select(resp_var, model$xNames)
   
-  if(indicator == "presence"){
+  if(indicator %in% c("presence","exophagy","early_biting","late_biting","early_late_biting")){
     mod <- Predictor$new(model, data = df, class = "Presence")
     metric <- "AUC"
     quality = max(modell$mod$results$AUC)
@@ -328,49 +341,108 @@ fun_plot_pdp <- function(modell, indicator, species){
   colnames(imp)[ncol(imp)] <- "importance"
   imp <- imp %>%
     mutate(label = forcats::fct_reorder(label, importance)) %>%
-    arrange(-importance)
+    arrange(-importance) %>%
+    filter(!(label %in% c("Place","Vector control measure")))
   
   # variable importance plot
   plot_imp <- ggplot(imp, aes(x = importance , y = label, label = label)) +
-    geom_bar(stat="identity") + 
+    geom_bar(position = 'dodge', stat="identity") + 
     theme_bw() + 
-      geom_label(size=2, aes(fontface=2), label.padding = unit(0.15, "lines"), x = 0.05) +
+    geom_label(size=2.5,position = position_dodge(0.9),aes(fontface=2),hjust=-0.1,label.padding = unit(0.2, "lines")) +
+   #   geom_label(size=2, aes(fontface=2), label.padding = unit(0.15, "lines"), x = 0.05, alpha = 0.5) +
     theme(axis.text.y = element_blank(),
           axis.text.x = element_blank(),
+          axis.ticks.x = element_blank(),
           axis.title.x = element_text(size = 8),
           plot.subtitle = element_text(size = 9, face="bold")
           ) +
     ylab("") + 
     xlab("") +
+    xlim(NA,max(imp$importance, na.rm = T) + max(imp$importance, na.rm = T)*2.5) +
     labs(subtitle = "Variable importance")
     #ggtitle("Variable importance plot")
   
-  # interactions for the most important variable
-  # plan("callr", workers = 7)
-  # future::plan(multisession, workers = 7)
-   #interact = Interaction$new(mod, grid.size = 30)
-   # 
-   # interact$results$feat <- word(gsub(":"," ",interact$results$.feature),1)
-   # interact$results <- fun_get_predictors_labels(interact$results,"feat")
-   # interact$results$.feature <- interact$results$label
-   # interact$results <- interact$results %>% filter(!is.na(.feature))
-   # plot_interactions <- plot(interact) +
-   #   scale_y_discrete("") +
-   #   theme_bw() +
-   #   ggtitle("Interaction strengths")
+  # interactions 
+  plot_interactions <- NULL
+  plot_interactions_strengths <- NULL
+   #plan("callr", workers = 7)
+   #future::plan(multisession, workers = 7)
+  #  interactions_strenght = Interaction$new(mod, grid.size = 30)
+  #   
+  #  interactions_strenght$results$feat <- word(gsub(":"," ",interactions_strenght$results$.feature),1)
+  #  interactions_strenght$results <- fun_get_predictors_labels(interactions_strenght$results,"feat")
+  #  interactions_strenght$results$.feature <- interactions_strenght$results$label
+  #  interactions_strenght$results <- interactions_strenght$results %>% filter(!is.na(.feature))
+  #   plot_interactions_strengths <- plot(interactions_strenght) +
+  #     scale_y_discrete("") +
+  #     theme_bw() +
+  #     ggtitle("Interaction strengths")
+  # 
+  #  # interact <- furrr::future_map_dfr(imp$var,~iml::Interaction$new(mod, feature = .)$results)
+  # interactions_to_study <- interactions_strenght$results %>% filter(.interaction>0.2) %>% arrange(desc(.interaction))
+  # 
   
-  # get most important interaction
+  nmax <- 7
+  
+  library(furrr)
+  interact <- future_map_dfr(imp$var[1:nmax],~iml::Interaction$new(mod, feature = .)$results)
+  
+  interact <- interact %>%
+       as.data.frame() %>%
+       mutate(var1 = word(.feature,1,sep = ":")) %>%
+       mutate(var2 = word(.feature,2,sep = ":")) %>%
+       group_by(grp = paste(pmax(var1, var2), pmin(var1, var2), sep = "_")) %>%
+       slice(1) %>%
+       ungroup() %>%
+       dplyr::select(.interaction, var1, var2) %>%
+       left_join(imp %>% dplyr::select(var,label), by = c("var1" = "var")) %>%
+       dplyr::rename(label1 = label) %>%
+       left_join(imp %>% dplyr::select(var,label), by = c("var2" = "var")) %>%
+       dplyr::rename(label2 = label) %>%
+       filter(!is.na(label1),!is.na(label2)) %>%
+       filter(var1 %in% imp$var[1:nmax],var2 %in% imp$var[1:nmax]) %>%
+       #filter(!(label1 %in% c("Place","Vector control measure")), !(label2 %in% c("Place","Vector control measure"))) %>%
+       dplyr::select(.interaction ,label1,label2)
+
+     plot_interactions <- ggplot(data = interact, aes(label2 , label1 , fill = .interaction)) + 
+     geom_tile(color = "white", show.legend = TRUE, size = 0.05) + 
+     theme_bw() +
+     theme(axis.title.x = element_blank(),
+           axis.title.y = element_blank(), 
+           axis.text.x = element_text(angle = 45, hjust=1),
+           legend.title = element_text("interaction\nstrength")) + 
+     scale_fill_gradient(low = "white", high = "red", limits = c(0,1))
+
   # interaction_most_interact_var = Interaction$new(mod, feature = interact$results$feat[which.max(interact$results$.interaction)]) 
   # interaction_most_interact_var$results = interaction_most_interact_var$results %>% dplyr::arrange(.interaction)
   
   # pdp 2 vars for the main interaction
-  # pd = FeatureEffect$new(mod, c(as.character(imp$var[1]), as.character(imp$var[2])), method = "pdp") 
-  # pdp_2vars <- plot(pd) + 
-  #   xlab(as.character(imp$label[1])) + 
-  #   ylab(as.character(imp$label[2]))  + 
-  #   theme_bw() + 
-  #   ggtitle("partial dependance plots (2 vars)")
-  
+   # pd = FeatureEffect$new(mod, c("RFD1F_2000_14_21","TMAX1_2000_0_14" ), method = "pdp") 
+   # pdp_2vars1 <- plot(pd) + 
+   #   xlab("Rainfall") + 
+   #   ylab("Diurnal temperature")  + 
+   #   theme_bw() + 
+   #   theme(axis.title.x = element_text(size = 8),
+   #         axis.title.y = element_text(size = 8),
+   #         axis.text.x = element_text(size = 6),
+   #         axis.text.y = element_text(size = 6),
+   #         plot.subtitle = element_text(size = 9, face="bold"),
+   #         legend.position = "bottom") +
+   #   labs(subtitle = "PDP 2 vars")
+   # 
+   # pd = FeatureEffect$new(mod, c("TMIN1_2000_0_14","TMAX1_2000_0_14" ), method = "pdp") 
+   # pdp_2vars2 <- plot(pd) + 
+   #   xlab("Nocturnal temperature") + 
+   #   ylab("Diurnal temperature")  + 
+   #   theme_bw() + 
+   #   theme(axis.title.x = element_text(size = 8),
+   #         axis.title.y = element_text(size = 8),
+   #         axis.text.x = element_text(size = 6),
+   #         axis.text.y = element_text(size = 6),
+   #         plot.subtitle = element_text(size = 9, face="bold"),
+   #         legend.position = "bottom") +
+   #   labs(subtitle = "PDP 2 vars")
+   # 
   
    pred_wrapper_classif <- function(object, newdata) {
      p <- predict(object, newdata = newdata, type ="prob")[,"Presence"]
@@ -383,7 +455,6 @@ fun_plot_pdp <- function(modell, indicator, species){
    }
   
   # partial dependance plot
-  pdps <- list()
   
 
   # imp <- imp %>%
@@ -414,7 +485,7 @@ fun_plot_pdp <- function(modell, indicator, species){
   # 
   # 
   
-  # if(species == "An. funestus ss." & indicator == "abundance_discrete"){
+  # if(species == "An. funestus" & indicator == "abundance_discrete"){
   #   target <- c("TMAX1_2000_7_35","lsm_c_pland_2000_3_9","lsm_c_pland_2000_3_4","RFD1F_2000_7_14","RFH","LMN")
   #   imp <- imp %>% arrange(factor(var, levels = target))
   # }
@@ -433,41 +504,66 @@ fun_plot_pdp <- function(modell, indicator, species){
   #   imp <- imp %>% dplyr::filter(var %in% target) %>% arrange(factor(var, levels = target))
   #     
   # }
-  # if(species == "An. funestus ss." & indicator == "presence"){
+  # if(species == "An. funestus" & indicator == "presence"){
   #   target <- c("lsm_c_pland_2000_3_9","lsm_c_pland_2000_3_12","WAC_2000","RFD1F_2000_14_21","RFH","LMN")
   #   imp <- imp %>% dplyr::filter(var %in% target) %>% arrange(factor(var, levels = target))
   #   
   # }
 
-  
-  imp <- imp %>%
-    mutate(var = forcats::fct_relevel(var, c("RFD1F_2000_14_21","TMIN1_2000_0_14","TMAX1_2000_0_14","lsm_c_pland_2000_3_9","lsm_c_pland_2000_3_12","WLS_2000","WMD","lsm_c_pland_2000_3_4","lsm_c_pland_2000_3_1","lsm_c_pland_2000_3_2","VCM","int_ext"))) %>%
-    arrange(var) %>%
-    mutate(var = as.character(var))
+  pdps <- list()
+
     
   pdps[[1]] <- plot_imp
   
-  for(i in 1:nrow(imp)){
+  if(indicator %in% c("presence","abundance")){
+    imp <- imp %>%
+      mutate(var = forcats::fct_relevel(var, c(imp$var[grep("RFD",imp$var)],
+                                               imp$var[grep("TMIN",imp$var)],
+                                               imp$var[grep("TMAX",imp$var)],
+                                               imp$var[grep("3_9",imp$var)],
+                                               imp$var[grep("2_5",imp$var)],
+                                               "WLS_2000","WMD",
+                                               imp$var[grep("3_4",imp$var)],
+                                               imp$var[grep("3_1",imp$var)],
+                                               imp$var[grep("3_2",imp$var)],
+                                               imp$var[grep("3_3",imp$var)]))) %>%
+      dplyr::filter(!(var %in% c("VCM","int_ext"))) %>%
+      arrange(var) %>%
+      mutate(var = as.character(var))
+    
+   nmax_vars_pdp <- nrow(imp)
+   
+   n_row=3
+   n_col=4
+  } else if (indicator=="exophagy"){
+    nmax_vars_pdp <- 8
+    n_row=3
+    n_col=3
+  }
+  
+  for(i in 1:nmax_vars_pdp){
     
     pdp = FeatureEffect$new(mod, imp$var[i], method = "pdp")
     
-    subt <- imp$label[i]
-    if(!is.na(imp$unit[i])){
-      subt <- paste0(subt," (", imp$unit[i], ")")
-    }
+    subt <- imp$label_detail[i]
+    # if(!is.na(imp$unit[i])){
+    #   subt <- paste0(subt," (", imp$unit[i], ")")
+    # }
 
-    if(indicator == "presence"){
+    if(indicator %in% c("presence","exophagy")){
       
       pdps[[i+1]] = pdp$plot() +
         scale_y_continuous('', limits = c(0, 1)) +
         #xlab(paste0(imp$label_group[i]," : \n",imp$label[i], " (", imp$unit[i], ")")) +
-        #xlab(imp$unit[i]) +
-        xlab("") +
+        xlab(imp$unit[i]) +
+        ylab("Probability of >= 1 bite") +
+      #  xlab("") +
         labs(subtitle = subt) + 
         theme_bw() + 
-        theme(axis.title.x = element_text(size = 8),
-              axis.text.x = element_text(size = 6),
-              axis.text.y = element_text(size = 6),
+        theme(axis.title.x = element_text(size = 9),
+              axis.title.y = element_text(size = 9),
+              axis.text.x = element_text(size = 8),
+              axis.text.y = element_text(size = 7),
               plot.subtitle = element_text(size = 9, face="bold"))
       
     } else if (indicator == "abundance_discrete"){
@@ -483,12 +579,12 @@ fun_plot_pdp <- function(modell, indicator, species){
         geom_line(aes(linetype =biting_rate)) +
         scale_y_continuous('', limits = c(0, 1)) +
         #xlab(paste0(imp$label_group[i]," : \n",imp$label[i], " (", imp$unit[i], ")")) +
-        #xlab(imp$unit[i]) +
-        xlab("") +
+        xlab(imp$unit[i]) +
+        #xlab("") +
         labs(subtitle = subt) + 
         theme_bw() + 
         theme(axis.title.x = element_text(size = 8),
-              axis.text.x = element_text(size = 6),
+              axis.text.x = element_text(size = 7),
               axis.text.y = element_text(size = 6),
               legend.title = element_text(size = 9), 
               legend.text = element_text(size = 8),
@@ -505,7 +601,7 @@ fun_plot_pdp <- function(modell, indicator, species){
       
       } else if (indicator == "abundance"){
         
-        if(species %in% c("An. funestus ss.","An. coluzzii")){
+        if(species %in% c("An. funestus","An. coluzzii")){
           y_max = 2
         } else if(species == "An. gambiae ss."){
           y_max = 1
@@ -515,15 +611,17 @@ fun_plot_pdp <- function(modell, indicator, species){
         #scale_y_continuous('', limits = c(0, max(df$resp_var))) +
         scale_y_continuous('', limits = c(0, y_max)) +
         #xlab(paste0(imp$label_group[i]," : \n",imp$label[i], " (", imp$unit[i], ")")) +
-        #xlab(imp$unit[i]) +
-        xlab("") +
+        xlab(imp$unit[i]) +
+        ylab(ifelse(i==1,"log10 (num. bites/human/night)","")) +
+        #xlab("") +
         labs(subtitle = subt) + 
         theme_bw() + 
-        theme(axis.title.x = element_text(size = 8),
-              axis.text.x = element_text(size = 6),
-              axis.text.y = element_text(size = 6),
-              plot.subtitle = element_text(size = 9, face = "bold"))
-    }
+        theme(axis.title.x = element_text(size = 9),
+              axis.title.y = element_text(size = 9),
+              axis.text.x = element_text(size = 8),
+              axis.text.y = element_text(size = 7),
+              plot.subtitle = element_text(size = 9, face="bold"))
+      }
     
     if(indicator != "abundance_discrete" & !is.factor(df[,imp$var[i]])){
     pdp$results$.value <- pdp$results$.type <- NULL
@@ -546,25 +644,29 @@ fun_plot_pdp <- function(modell, indicator, species){
     
   }
   
-  
-  pdps <- wrap_plots(pdps)
-  
+  # pdps[[length(pdps)+1]] <- pdp_2vars1
+  # pdps[[length(pdps)+1]] <- pdp_2vars2
+
+  pdps <- wrap_plots(pdps) + plot_layout(nrow=n_row,ncol=n_col)
+
+
   #p_final <- (plot_imp  + pdps ) / (plot_interactions ) + plot_annotation(title = paste0(species, " - ", indicator, " (",metric," = ",round(quality,2),")")) + plot_layout(guides = 'auto')
 
-  return(list(pdps = pdps, quality = quality, metric = metric))
+  return(list(pdps = pdps, plot_interactions = plot_interactions, plot_interactions_strengths = plot_interactions_strengths, quality = quality, metric = metric))
   
 }
 
-fun_plot_validation_abundance <- function(df, spec){
+  fun_plot_validation_abundance <- function(df, spec){
   
   plot_validation_abundance <- ggplot(data = df, aes(x = nummission, y = value, group = name, col = name)) + 
     geom_line() + 
     geom_point(size = 1) +
-    facet_wrap(species~codevillage) + 
+    facet_wrap(.~codevillage) + 
     ylab("log (n bites)") + 
-    xlab("entomological mission") +
+    xlab("entomological survey") +
     ggtitle(spec) + 
-    theme_bw()
+    theme_bw() +
+    labs(color = "")
   
   return(plot_validation_abundance)
   
@@ -574,7 +676,7 @@ fun_plot_validation_abundance <- function(df, spec){
 fun_plot_validation_presence <- function(df, spec){
   
   precrec_obj <- evalmod(scores = df$pred, labels = df$obs)
-  plot_validation_presence <- autoplot(precrec_obj,curvetype = c("ROC","PRC"))# + ggtitle(spec)
+  plot_validation_presence <- autoplot(precrec_obj,curvetype = c("ROC")) + ggtitle(spec)
   
   return(plot_validation_presence)
 }
@@ -594,9 +696,18 @@ fun_map <- function(mod,code_pays,response_var){
 myLocation <- c(roi[1], roi[2], roi[3], roi[4])
 myMap <- get_map(location=myLocation, source="osm",crop=FALSE)
 
-entomo_csh_metadata_l1 <- dbReadTable(react_gpkg, 'entomo_csh_metadata_l1') %>% filter(!(nummission %in% c("11","12","13","15")))
+entomo_csh_metadata_l1 <- dbReadTable(react_gpkg, 'entomo_csh_metadata_l1') %>% 
+  dplyr::select(-geom) %>%
+  filter(!(nummission %in% c("11","12","13","15")))
 
-mean_date_mission <- entomo_csh_metadata_l1 %>% mutate(date_capture = as.Date(date_capture)) %>% dplyr::group_by(codepays,nummission) %>% dplyr::summarise(mean_date_mission=mean(date_capture)) %>% as_tibble() %>% filter(codepays==code_pays) %>% dplyr::select(-codepays) %>% mutate(date_mission_char = paste0(lubridate::year(mean_date_mission)," - ",lubridate::month(mean_date_mission,label=TRUE, abbr=FALSE, locale = "en_US.utf8")))  %>%   mutate(date_mission_char = forcats::fct_reorder(date_mission_char,mean_date_mission))
+mean_date_mission <- entomo_csh_metadata_l1 %>% 
+  mutate(date_capture = as.Date(date_capture)) %>% 
+  dplyr::group_by(codepays,nummission) %>% 
+  dplyr::summarise(mean_date_mission=mean(date_capture)) %>% 
+  as_tibble() %>% filter(codepays==code_pays) %>% 
+  dplyr::select(-codepays) %>% 
+  mutate(date_mission_char = paste0(nummission, " - ", lubridate::month(mean_date_mission,label=TRUE, abbr=FALSE, locale = "en_US.utf8"), " ",lubridate::year(mean_date_mission)))  %>%  
+  mutate(date_mission_char = forcats::fct_reorder(date_mission_char,mean_date_mission))
 
 
 # load coordinates
@@ -612,19 +723,35 @@ df <- dbReadTable(react_gpkg, 'trmetrics_entomo_postedecapture') %>%
   left_join(mean_date_mission) %>%
   left_join(mean_coords_points_4326)
 
+exo_byvillage <- dbReadTable(react_gpkg, 'entomo_idmoustiques_l0') %>%
+  filter(codepays == "BF") %>%
+  filter(pcr_espece %in% c( "An.funestus_ss", "An.coluzzii", "An.gambiae_ss"), nummission <10) %>%
+  group_by(nummission, codepays, codevillage, postedecapture,pcr_espece) %>%
+  summarise(n=n()) %>%
+  pivot_wider(names_from = postedecapture, values_from = n) %>%
+  mutate_all(funs(replace_na(., 0))) %>%
+  mutate(tot = e+i) %>%
+  mutate(exophagy = e / tot * 100) %>%
+  mutate(exophagy = ifelse(is.na(exophagy),0,exophagy)) %>%
+  mutate(nummission = as.character(nummission)) %>%
+  left_join(mean_date_mission) %>%
+  left_join(mean_coords_points_4326 %>% group_by(codevillage) %>% summarise(X_4326 = mean(X_4326),Y_4326 = mean(Y_4326))) %>%
+  filter(tot>5)
+
+
 df <- df %>%
   dplyr::select(codevillage,nummission,date_mission_char,X_4326,Y_4326,ma_funestus_ss,ma_gambiae_ss,ma_coluzzi) %>%
   pivot_longer(c(ma_funestus_ss,ma_gambiae_ss,ma_coluzzi)) %>%
   mutate(name = case_when(
-    name == "ma_funestus_ss" ~ "An. funestus ss.",
+    name == "ma_funestus_ss" ~ "An. funestus",
     name == "ma_gambiae_ss" ~ "An. gambiae ss.",
     name == "ma_coluzzi" ~ "An. coluzzii")) %>%
-  mutate(species = fct_relevel(name,c("An. funestus ss.","An. gambiae ss.", "An. coluzzii")))
+  mutate(species = fct_relevel(name,c("An. funestus","An. gambiae ss.", "An. coluzzii")))
 
 
  df_map <- df %>%
       group_by(codevillage,nummission, date_mission_char,species) %>%
-       summarise(Biting.rate = sum(value), X = mean(X_4326), Y = mean(Y_4326)) %>%
+       summarise(Biting.rate = mean(value), X = mean(X_4326), Y = mean(Y_4326)) %>%
    mutate(Biting.rate = ifelse(Biting.rate==0,NA,Biting.rate))
 
  villages <- dbReadTable(react_gpkg, 'recensement_villages_l1') %>%
@@ -635,7 +762,8 @@ df <- df %>%
   m <- ggmap(myMap) + geom_point(aes(x = X, y = Y), data = villages, size = 0.7, color = "seagreen4") + 
       geom_point(aes(x = X, y = Y, size = Biting.rate), data = df_map, colour = "darkred") + 
       facet_grid(species~date_mission_char) + 
-    theme(strip.text.y = element_text(size = 11, face = "bold"))
+    theme(strip.text.y = element_text(size = 13, face = "bold")) + 
+    theme(strip.text.x = element_text(size = 13))
     
  
   
@@ -644,7 +772,7 @@ df <- df %>%
 df$resp_var <- df[,response_var]
 
 response_var = case_when(
-  response_var == "ma_funestus_ss" ~ "An. funestus ss.",
+  response_var == "ma_funestus_ss" ~ "An. funestus",
   response_var == "ma_gambiae_ss" ~ "An. gambiae ss.",
   response_var == "ma_coluzzi" ~ "An. coluzzii")
 
@@ -683,12 +811,12 @@ return(map)
 ######################
 
 
-res <-  readRDS("/home/ptaconet/Bureau/data_analysis/model_results_univanalysis4.rds")
+res <-  readRDS("/home/ptaconet/Bureau/data_analysis/model_results_univanalysis7.rds")
 
 
 model_univanalysis_results <- res %>%
   mutate(response_var = case_when(
-    response_var == "ma_funestus_ss" ~ "An. funestus ss.",
+    response_var == "ma_funestus_ss" ~ "An. funestus",
     response_var == "ma_gambiae_ss" ~ "An. gambiae ss.",
     response_var == "ma_coluzzi" ~ "An. coluzzii")) %>%
   mutate(spatial_corrs_spearman = map(spatial_corrs_spearman, ~fun_get_predictors_labels(table = ., vector_predictors_name = "name"))) %>%
@@ -706,10 +834,10 @@ univ_spearman_spatial <- do.call(rbind.data.frame, model_univanalysis_results$sp
   #                                                         "WAL_500","WAC_500","WLS_500","POP_500","BCH_500","lsm_c_pland_500_3_12","lsm_c_pland_500_3_5","lsm_c_pland_500_3_3","lsm_c_pland_500_3_2","lsm_c_pland_500_3_4","lsm_c_pland_500_3_9","lsm_c_pland_500_3_1","lsm_c_pland_500_3_7","lsm_c_pland_500_3_8","lsm_c_pland_500_3_11",
   #                                                         "WAL_250","WAC_250","WLS_250","POP_250","BCH_250","lsm_c_pland_250_3_12","lsm_c_pland_250_3_5","lsm_c_pland_250_3_3","lsm_c_pland_250_3_2","lsm_c_pland_250_3_4","lsm_c_pland_250_3_9","lsm_c_pland_250_3_1","lsm_c_pland_250_3_7","lsm_c_pland_250_3_8","lsm_c_pland_250_3_11",
   #                                                         "WAL_100","WAC_100","WLS_100","POP_100","BCH_100","lsm_c_pland_100_3_12","lsm_c_pland_100_3_5","lsm_c_pland_100_3_3","lsm_c_pland_100_3_2","lsm_c_pland_100_3_4","lsm_c_pland_100_3_9","lsm_c_pland_100_3_1","lsm_c_pland_100_3_7","lsm_c_pland_100_3_8","lsm_c_pland_100_3_11")) %>%
-      filter(buffer %in% c(NA,250,500,1000,2000), name %in% c("POP_2000","WMD","BDE","BCH","WLS_2000","lsm_c_pland_2000_3_12","lsm_c_pland_2000_3_3","lsm_c_pland_2000_3_2","lsm_c_pland_2000_3_4","lsm_c_pland_2000_3_9","lsm_c_pland_2000_3_1","lsm_c_pland_2000_3_7","lsm_c_pland_2000_3_5","lsm_c_pland_2000_3_11",
-                                                          "POP_1000","WLS_1000","lsm_c_pland_1000_3_12","lsm_c_pland_1000_3_3","lsm_c_pland_1000_3_2","lsm_c_pland_1000_3_4","lsm_c_pland_1000_3_9","lsm_c_pland_1000_3_1","lsm_c_pland_1000_3_7","lsm_c_pland_1000_3_5","lsm_c_pland_1000_3_11",
-                                                          "POP_500","WLS_500","lsm_c_pland_500_3_12","lsm_c_pland_500_3_3","lsm_c_pland_500_3_2","lsm_c_pland_500_3_4","lsm_c_pland_500_3_9","lsm_c_pland_500_3_1","lsm_c_pland_500_3_7","lsm_c_pland_500_3_5","lsm_c_pland_500_3_11",
-                                                          "POP_250","WLS_250","lsm_c_pland_250_3_12","lsm_c_pland_250_3_3","lsm_c_pland_250_3_2","lsm_c_pland_250_3_4","lsm_c_pland_250_3_9","lsm_c_pland_250_3_1","lsm_c_pland_250_3_7","lsm_c_pland_250_3_5","lsm_c_pland_250_3_11")) %>%
+      filter(buffer %in% c(NA,250,500,1000,2000), name %in% c("WMD","BDE","BCH","WLS_2000","lsm_c_pland_2000_2_5","lsm_c_pland_2000_3_3","lsm_c_pland_2000_3_2","lsm_c_pland_2000_3_4","lsm_c_pland_2000_3_9","lsm_c_pland_2000_3_1","lsm_c_pland_2000_3_5",
+                                                          "WLS_1000","lsm_c_pland_1000_2_5","lsm_c_pland_1000_3_3","lsm_c_pland_1000_3_2","lsm_c_pland_1000_3_4","lsm_c_pland_1000_3_9","lsm_c_pland_1000_3_1","lsm_c_pland_1000_3_5",
+                                                          "WLS_500","lsm_c_pland_500_2_5","lsm_c_pland_500_3_3","lsm_c_pland_500_3_2","lsm_c_pland_500_3_4","lsm_c_pland_500_3_9","lsm_c_pland_500_3_1","lsm_c_pland_500_3_5",
+                                                          "WLS_250","lsm_c_pland_250_2_5","lsm_c_pland_250_3_3","lsm_c_pland_250_3_2","lsm_c_pland_250_3_4","lsm_c_pland_250_3_9","lsm_c_pland_250_3_1","lsm_c_pland_250_3_5")) %>%
   mutate(model = "spearman univariate") %>%
   mutate(indicator = ifelse(indicator == "presence","Presence","Abundance")) %>%
   mutate(buffer = ifelse(is.na(buffer),"2000",buffer)) %>%
@@ -721,10 +849,10 @@ univ_spearman_spatial <- do.call(rbind.data.frame, model_univanalysis_results$sp
 
 univ_spearman_temporal <-  do.call(rbind.data.frame, model_univanalysis_results$temporal_corrs_spearman) %>% 
   filter(var %in% c("RFD1F", "TMIN1", "TMAX1")) %>%
-  mutate(correlation = ifelse(p<=0.05,correlation,NA) ) %>%
+  mutate(correlation = ifelse(p<=0.2 | correlation >= 0.1,correlation,NA) ) %>%
+  mutate(time_lag_1=ifelse(grepl("1",name),time_lag_1/7,time_lag_1),time_lag_2=ifelse(grepl("1",name),time_lag_2/7,time_lag_2),diff_lag=ifelse(grepl("1",name),diff_lag/7,diff_lag)) %>%
   mutate(model = "spearman univariate") %>%
   nest(-c(indicator,country,species,var))
-  
 
 
 #### spatial univariate
@@ -738,8 +866,8 @@ plots_univ_spearman_spatial <- univ_spearman_spatial %>%
 
 plots_univ_spearman_temporal <- univ_spearman_temporal %>%
   arrange(rev(indicator),species,var) %>%
-  mutate(univ_temporal = pmap(list(data), ~fun_ccm_plot2(..1, paste0(..1$label[1]," (",..1$unit,")")))) %>%
-  mutate(species = fct_relevel(species,c("An. funestus ss.","An. gambiae ss.","An. coluzzii"))) %>%
+  mutate(univ_temporal = pmap(list(data), ~fun_ccm_plot2(..1, ..1$label[1], time_frame = 1))) %>%
+  mutate(species = fct_relevel(species,c("An. funestus","An. gambiae ss.","An. coluzzii"))) %>%
   arrange(species) %>%
   nest(-c(indicator,country)) %>%
   mutate(univ_temporal = map(data, ~wrap_plots(.$univ_temporal, nrow = 3, ncol = 3))) %>%
@@ -755,7 +883,7 @@ wrap_plots(plots_univ_spearman_temporal$univ_temporal, ncol = 2, nrow = 1)
 ## pdps
 pdps <- res %>%
   mutate(response_var = case_when(
-    response_var == "ma_funestus_ss" ~ "An. funestus ss.",
+    response_var == "ma_funestus_ss" ~ "An. funestus",
     response_var == "ma_gambiae_ss" ~ "An. gambiae ss.",
     response_var == "ma_coluzzi" ~ "An. coluzzii")) %>%
   mutate(rf_plots_lto = pmap(list(rf_lto,mod,response_var), ~fun_plot_pdp(..1,..2,..3)))
@@ -764,11 +892,12 @@ wrap_plots(pdps$rf_plots_lto[[1]]$pdps, pdps$rf_plots_lto[[4]]$pdps) # funestus
 wrap_plots(pdps$rf_plots_lto[[2]]$pdps, pdps$rf_plots_lto[[5]]$pdps) # gambiae ss.
 wrap_plots(pdps$rf_plots_lto[[3]]$pdps, pdps$rf_plots_lto[[6]]$pdps) # coluzzii
 
+    #wrap_plots(pdps$rf_plots_lto[[1]]$plot_interactions, pdps$rf_plots_lto[[2]]$plot_interactions, pdps$rf_plots_lto[[3]]$plot_interactions, pdps$rf_plots_lto[[4]]$plot_interactions, pdps$rf_plots_lto[[5]]$plot_interactions, pdps$rf_plots_lto[[6]]$plot_interactions, nrow = 3, ncol = 2, byrow = F)  + plot_layout(guides = 'collect')
 
 # plots for models validation
 model_validation <- res %>%
   mutate(response_var = case_when(
-    response_var == "ma_funestus_ss" ~ "An. funestus ss.",
+    response_var == "ma_funestus_ss" ~ "An. funestus",
     response_var == "ma_gambiae_ss" ~ "An. gambiae ss.",
     response_var == "ma_coluzzi" ~ "An. coluzzii")) %>%
   mutate(df_cv = map(rf_lto, ~pluck(.,"df_cv"))) %>%
@@ -785,11 +914,47 @@ plots_validation_abundance <- model_validation$df_cv2[[2]] %>%
   summarise(pred = sum(pred), obs = sum(obs)) %>%
   pivot_longer(c("pred","obs")) %>%
   nest(-species) %>%
-  mutate(plots_validation = map2(data, species, ~fun_plot_validation_abundance(..1,..2)))
+  mutate(plots_validation = map2(data,species, ~fun_plot_validation_abundance(.x,.y)))
+
+wrap_plots(list(plots_validation_abundance$plots_validation[[2]],plots_validation_abundance$plots_validation[[3]],plots_validation_abundance$plots_validation[[1]])) + plot_layout(guides = 'collect')
 
 # presence
 plots_validation_presence <- model_validation$df_cv2[[1]] %>%
   nest(-c(species)) %>%
   mutate(plots_validation = map2(data, species, ~fun_plot_validation_presence(..1,..2)))
 
+
+
+######################
+###### resistances
+######################
+
+res <-  readRDS("/home/ptaconet/Bureau/data_analysis/model_results_resistances.rds")
+
+## pdps
+pdps_resistances <- res %>%
+  mutate(response_var = case_when(
+    response_var == "ma_funestus_ss" ~ "An. funestus",
+    response_var == "ma_gambiae_ss" ~ "An. gambiae ss.",
+    response_var == "ma_coluzzi" ~ "An. coluzzii")) %>%
+  mutate(rf_plots = pmap(list(rf,mod,response_var), ~fun_plot_pdp(..1,..2,..3)))
+
+
+# plots for models validation
+model_validation <- res %>%
+  mutate(response_var = case_when(
+    response_var == "ma_funestus_ss" ~ "An. funestus",
+    response_var == "ma_gambiae_ss" ~ "An. gambiae ss.",
+    response_var == "ma_coluzzi" ~ "An. coluzzii")) %>%
+  mutate(df_cv = map(rf_lto, ~pluck(.,"df_cv"))) %>%
+  dplyr::select(response_var, code_pays, mod, df_cv) %>%
+  mutate(df_cv = map2(df_cv,response_var, ~mutate(.x, species = .y))) %>%
+  nest(-c(mod,code_pays))
+
+model_validation <- model_validation %>%
+  mutate(df_cv2 = map(data, ~do.call(rbind.data.frame, .$df_cv)))
+
+plots_validation_exophagy <- model_validation$df_cv2[[1]] %>%
+  nest(-c(species)) %>%
+  mutate(plots_validation = map2(data, species, ~fun_plot_validation_presence(..1,..2)))
 
