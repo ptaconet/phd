@@ -18,7 +18,7 @@ path_to_gpkg_light_database<-"data/react_db/react_db_light.gpkg"
 
 path_to_metadata_table<-"https://docs.google.com/spreadsheets/d/1O7JUhoAzXtoFWjiLOz7HgDLe--zxkZKR96_BhzU7DME/edit?usp=sharing"
 
-download.file("http://www.geopackage.org/data/empty.gpkg",path_to_gpkg_database)
+###download.file("http://www.geopackage.org/data/empty.gpkg",path_to_gpkg_database)
 file.copy(path_to_gpkg_database,path_to_gpkg_light_database,overwrite =T)
 
 ## Connect to DBs

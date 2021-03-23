@@ -82,7 +82,7 @@
     if(code_pays == "BF"){
       landcover_layers_to_keep <- c(2,3)
     } else if (code_pays == "CI"){
-      landcover_layers_to_keep <- c(8)
+      landcover_layers_to_keep <- c(7,8)
     }
     #}
     
@@ -154,10 +154,13 @@
     if(code_pays=="BF"){
       predictors <- setdiff(c(colnames(env_landcover)[grepl("_3_",colnames(env_landcover))], "lsm_c_pland_250_2_5","lsm_c_pland_500_2_5","lsm_c_pland_1000_2_5","lsm_c_pland_2000_2_5",colnames(env_spatial), "WMD"),"idpointdecapture")
       predictors <- setdiff(predictors, predictors[grepl("_3_12|3_5",predictors)])
+      predictors <- predictors[!grepl('TSL|TEL|TAS|TCI|TWI|WAL|HYS|LIG30|POH|POP', predictors)]
       } else {
       predictors <- setdiff(c(colnames(env_landcover), colnames(env_spatial), "WMD"),"idpointdecapture")
+      
+      #predictors <- setdiff(predictors, predictors[grepl("_8_15|8_16",predictors)])
+      
     }
-    predictors <- predictors[!grepl('TSL|TEL|TAS|TCI|TWI|WAL|HYS|LIG30|POH|POP', predictors)]
   
     # spatial_corrs_spearman_withrandomeff <- fun_feature_forward_selection(
     #   df = th_trmetrics_entomo_postedecapture, 
@@ -249,9 +252,16 @@
     # predictors <- c("lsm_c_pland_2000_2_5","lsm_c_pland_500_3_2","lsm_c_pland_500_3_3","lsm_c_pland_2000_3_4","lsm_c_pland_2000_3_9","lsm_c_pland_2000_3_1",
     #                   "WMD","WLS_2000",
     #                   cols_to_keep_timevar,"VCM","int_ext")
+    
     predictors <- unique(c(cols_to_keep_spacevar,
-                    "WMD","WLS_2000","lsm_c_pland_2000_2_5","lsm_c_pland_2000_3_9",
-                    cols_to_keep_timevar,"VCM","int_ext"))
+                           "WMD","WLS_2000",
+                           cols_to_keep_timevar,"VCM","int_ext"))
+    if(code_pays=="BF"){
+      predictors <- unique(c(predictors,"lsm_c_pland_2000_2_5","lsm_c_pland_2000_3_9"))
+    } else if(code_pays=="CI"){
+      
+    }
+
     
   
     # spatial_vars <- fun_feature_forward_selection(
@@ -275,9 +285,12 @@
     predictors <- fun_multicol(th_trmetrics_entomo_postedecapture, predictors)
     
     #rf_llo <- fun_compute_rf(th_trmetrics_entomo_postedecapture, predictors, cv_type = "llo", mod, featureselect = FALSE)
-    rf_lto <- fun_compute_rf(th_trmetrics_entomo_postedecapture, predictors, cv_type = "lto", mod, featureselect = FALSE)
     #rf_lto_withfeatureselect <- fun_compute_rf(th_trmetrics_entomo_postedecapture, predictors, cv_type = "lto", mod, featureselect = TRUE)
     #rf_llto <- fun_compute_rf(th_trmetrics_entomo_postedecapture, predictors, cv_type = "llto", mod)
+    
+    
+    rf_lto <- NULL
+    #rf_lto <- fun_compute_rf(th_trmetrics_entomo_postedecapture, predictors, cv_type = "lto", mod, featureselect = FALSE)
   
     return(list(spatial_corrs_spearman = spatial_corrs_spearman, temporal_corrs_spearman = ccms_spearman, rf_lto = rf_lto))
     
@@ -291,8 +304,12 @@
     add_row(response_var = "ma_coluzzi", code_pays = "BF", mod = "presence") %>%
     add_row(response_var = "ma_funestus_ss", code_pays = "BF", mod = "abundance") %>%
     add_row(response_var = "ma_gambiae_ss", code_pays = "BF", mod = "abundance") %>%
-    add_row(response_var = "ma_coluzzi", code_pays = "BF", mod = "abundance")
-    
+    add_row(response_var = "ma_coluzzi", code_pays = "BF", mod = "abundance") %>%
+    add_row(response_var = "ma_gambiae_sl", code_pays = "CI", mod = "presence") %>%
+    add_row(response_var = "ma_funestus_ss", code_pays = "CI", mod = "presence") %>%
+    add_row(response_var = "ma_gambiae_sl", code_pays = "CI", mod = "abundance") %>%
+    add_row(response_var = "ma_funestus_ss", code_pays = "CI", mod = "abundance") 
+  
   model_results1 <- df_input_params_glmm[1,] %>%
     mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
   model_results2 <- df_input_params_glmm[2,] %>%
@@ -304,6 +321,14 @@
   model_results5 <- df_input_params_glmm[5,] %>%
     mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
   model_results6 <- df_input_params_glmm[6,] %>%
+    mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
+  model_results7 <- df_input_params_glmm[7,] %>%
+    mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
+  model_results8 <- df_input_params_glmm[8,] %>%
+    mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
+  model_results9 <- df_input_params_glmm[9,] %>%
+    mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
+  model_results10 <- df_input_params_glmm[10,] %>%
     mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
   
   model_results <- rbind(model_results1,model_results2,model_results3,model_results4,model_results5,model_results6)

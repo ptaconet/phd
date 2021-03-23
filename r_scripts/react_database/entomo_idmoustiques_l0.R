@@ -186,6 +186,9 @@ df_mosquitoes$especeanoph[which(df_mosquitoes$especeanoph=="gambiaeS.1")]="An.ga
 
 df_mosquitoes$pcr_pf <- as.numeric(df_mosquitoes$pcr_pf)
 
+df_mosquitoes <- df_mosquitoes %>%
+  mutate(pcr_espece = ifelse(especeanoph=="An.funestus","An.funestus_ss",pcr_espece))
+
 ## import ent_hlcmetadata to check if all villages / points de captures are ok
 #ent_hlcmetadata<-st_read(path_to_gpkg_database,"ent_hlcmetadata") %>% as_tibble
 #df_mosquitoes_check<-df_mosquitoes %>% mutate(codevillage=substr(idpointdecapture,2,4)) %>% mutate(nummission=as.numeric(substr(idpointdecapture,1,1)))

@@ -36,6 +36,18 @@ ma <- dbReadTable(react_gpkg, 'entomo_idmoustiques_l0') %>%
   mutate(var = "ma") %>%
   as_tibble()
 
+ma2 <-  dbReadTable(react_gpkg, 'entomo_idmoustiques_l0') %>% 
+   filter(especeanoph %in% c("An.gambiae s.l.","gambiaeS.1.")) %>%
+   mutate(pcr_espece = "An.gambiae s.l.") %>%
+   group_by(idpointdecapture,postedecapture,genre,especeanoph,pcr_espece,heuredecapture) %>%
+   summarise(val = n()) %>%
+   #right_join(csh_all) %>%
+   #mutate(val = ifelse(is.na(val),0,val)) %>%
+   mutate(var = "ma") %>%
+   as_tibble()
+
+ma <- rbind(ma,ma2)
+
 # ma_anopheles <- dbReadTable(react_gpkg, 'entomo_idmoustiques_l0') %>% 
 #   filter(genre=="Anopheles") %>%
 #   group_by(idpointdecapture,postedecapture,especeanoph) %>%
@@ -392,10 +404,11 @@ pres_ma_by_complex <- trmetrics_entomo %>%
    mutate(pres_gambiae =  ifelse(ma_gambiae==0,FALSE,TRUE))
    
 pres_ma_by_species <- trmetrics_entomo %>%
-   filter(var=="ma",genre=="Anopheles",species %in% c("An.funestus_ss","An.coluzzii","An.gambiae_ss")) %>% 
+   filter(var=="ma",genre=="Anopheles",species %in% c("An.funestus_ss","An.coluzzii","An.gambiae_ss","An.gambiae s.l.")) %>% 
    mutate(species = gsub("An.funestus_ss","ma_funestus_ss",species)) %>%
    mutate(species = gsub("An.coluzzii","ma_coluzzi",species)) %>%
    mutate(species = gsub("An.gambiae_ss","ma_gambiae_ss",species)) %>%
+   mutate(species = gsub("An.gambiae s.l.","ma_gambiae_sl",species)) %>%
    group_by(idpointdecapture,species) %>%
    summarise(ma=sum(val)) %>%
    pivot_wider(names_from = species , values_from = ma, values_fill = list(ma = 0)) %>%
@@ -405,7 +418,8 @@ pres_ma_by_species <- trmetrics_entomo %>%
    mutate(ma_gambiae_ss = ifelse(is.na(ma_gambiae_ss),0,ma_gambiae_ss)) %>%
    mutate(pres_funestus_ss =  ifelse(ma_funestus_ss==0,FALSE,TRUE)) %>%
    mutate(pres_gambiae_ss =  ifelse(ma_gambiae_ss==0,FALSE,TRUE)) %>%
-   mutate(pres_coluzzi =  ifelse(ma_coluzzi==0,FALSE,TRUE))
+   mutate(pres_coluzzi =  ifelse(ma_coluzzi==0,FALSE,TRUE)) %>%
+   mutate(pres_gambiae_sl =  ifelse(ma_gambiae_sl==0,FALSE,TRUE))
 
 er_by_complex <- trmetrics_entomo %>%
    filter(var=="ma",genre=="Anopheles",complex %in% c("An.funestus","An.gambiae s.l.")) %>% 
@@ -552,9 +566,11 @@ trmetrics_entomo_pointdecapture <- trmetrics_entomo_pointdecapture %>%
                  pres_funestus_ss,
                  pres_gambiae_ss,
                  pres_coluzzi,
+                 pres_gambiae_sl,
                  ma_funestus_ss,
                  ma_gambiae_ss,
                  ma_coluzzi,
+                 ma_gambiae_sl,
                  er_funestus_ss,
                  er_gambiae_ss,
                  er_coluzzi,
@@ -655,10 +671,11 @@ pres_ma_by_complex <- trmetrics_entomo %>%
    mutate(pres_gambiae =  ifelse(ma_gambiae==0,FALSE,TRUE))
 
 pres_ma_by_species <- trmetrics_entomo %>%
-   filter(var=="ma",genre=="Anopheles",species %in% c("An.funestus_ss","An.coluzzii","An.gambiae_ss")) %>% 
+   filter(var=="ma",genre=="Anopheles",species %in% c("An.funestus_ss","An.coluzzii","An.gambiae_ss","An.gambiae s.l.")) %>% 
    mutate(species = gsub("An.funestus_ss","ma_funestus_ss",species)) %>%
    mutate(species = gsub("An.coluzzii","ma_coluzzi",species)) %>%
    mutate(species = gsub("An.gambiae_ss","ma_gambiae_ss",species)) %>%
+   mutate(species = gsub("An.gambiae s.l.","ma_gambiae_sl",species)) %>%
    group_by(idpostedecapture,species) %>%
    summarise(ma=sum(val)) %>%
    pivot_wider(names_from = species , values_from = ma, values_fill = list(ma = 0)) %>%
@@ -668,7 +685,8 @@ pres_ma_by_species <- trmetrics_entomo %>%
    mutate(ma_gambiae_ss = ifelse(is.na(ma_gambiae_ss),0,ma_gambiae_ss)) %>%
    mutate(pres_funestus_ss =  ifelse(ma_funestus_ss==0,FALSE,TRUE)) %>%
    mutate(pres_gambiae_ss =  ifelse(ma_gambiae_ss==0,FALSE,TRUE)) %>%
-   mutate(pres_coluzzi =  ifelse(ma_coluzzi==0,FALSE,TRUE))
+   mutate(pres_coluzzi =  ifelse(ma_coluzzi==0,FALSE,TRUE)) %>%
+   mutate(pres_gambiae_sl =  ifelse(ma_gambiae_sl==0,FALSE,TRUE))
 
 kdre_rs_an <- trmetrics_entomo %>%
    filter(var=="kdre_RS") %>%
@@ -775,6 +793,7 @@ trmetrics_entomo_postedecapture <- trmetrics_entomo_postedecapture %>%
                  ma_funestus_ss,
                  ma_gambiae_ss,
                  ma_coluzzi,
+                 ma_gambiae_sl,
                  pcr_pf_an,
                  prop_pcr_pf_an,
                  eir_an,
@@ -793,15 +812,21 @@ trmetrics_entomo_postedecapture <- trmetrics_entomo_postedecapture %>%
                  ace1_rs_an,
                  ace1_rr_an,
                  ace1_ss_an
-   )
+   ) %>%
+   mutate(ma_gambiae = round(ma_gambiae/2)) %>%
+   mutate(ma_an = round(ma_an/2)) %>%
+   mutate(ma_gambiae_sl = ifelse(is.na(ma_gambiae_sl),0,ma_gambiae_sl))
 
 
+  a=dbReadTable(react_gpkg, 'entomo_idmoustiques_l0') %>% filter(genre=="Anopheles") %>% group_by(idpostedecapture) %>% summarise(ma_an=n())
 
-
+  trmetrics_entomo_postedecapture$ma_an <- NULL
+  trmetrics_entomo_postedecapture <- trmetrics_entomo_postedecapture %>% left_join(a) %>% mutate(ma_an=ifelse(is.na(ma_an),0,ma_an))
 
 
 # link info on villages, intervention dates and intervention types
  recensement_villages_l1 <- dbReadTable(react_gpkg, 'recensement_villages_l1') %>%
+    dplyr::select(-geom) %>%
     filter(!is.na(intervention)) %>%
     dplyr::select("codevillage","codepays","intervention","date_debut_interv","date_fin_interv")
  
@@ -836,12 +861,14 @@ trmetrics_entomo_postedecapture <- trmetrics_entomo_postedecapture %>%
    mutate(fever2 = ifelse(fever2==0,FALSE,TRUE))
    
  spn_bf <- epidemio_active_l1 %>%
+    dplyr::select(-geom) %>%
    filter(codepays=="BF") %>%
-   group_by(idenquete,datenquete,codenquete,codevillage,codepays,age_c,case) %>%
+   group_by(idenquete,datenquete,codenquete,codevillage,codepays,age_c,case,sexe) %>%
    summarise(val = n())
  spn_ci <- epidemio_active_l1 %>%
+    dplyr::select(-geom) %>%
    filter(codepays=="CI") %>%
-   group_by(idenquete,datenquete,codenquete,codevillage,codepays,age_c,case2) %>%
+   group_by(idenquete,datenquete,codenquete,codevillage,codepays,age_c,case2,sexe) %>%
    summarise(val = n()) %>%
    rename(case=case2)
    
@@ -895,6 +922,7 @@ trmetrics_entomo_postedecapture <- trmetrics_entomo_postedecapture %>%
  ######## pfpn	: Total number of febrile malaria cases as a proportion of all febrile cases  ########
  
  a <- epidemio_active_l1 %>%
+    dplyr::select(-geom) %>%
    distinct(idenquete,datenquete,codenquete,codevillage,codepays,sexe,age_c) %>%
    mutate(case=TRUE)
 
@@ -904,6 +932,7 @@ trmetrics_entomo_postedecapture <- trmetrics_entomo_postedecapture %>%
  ab <- rbind(a,b)
  
  pfpn_bf <- epidemio_active_l1 %>%
+    dplyr::select(-geom) %>%
    filter(codepays=="BF",fever==TRUE) %>%
    mutate(fever_case = ifelse(case==TRUE, TRUE, FALSE)) %>%
    group_by(idenquete,datenquete,codenquete,codevillage,codepays,sexe,age_c,fever_case) %>%
@@ -911,6 +940,7 @@ trmetrics_entomo_postedecapture <- trmetrics_entomo_postedecapture %>%
    rename(case=fever_case)
  
  pfpn_ci <- epidemio_active_l1 %>%
+    dplyr::select(-geom) %>%
    filter(codepays=="CI",fever2==TRUE) %>%
    mutate(fever_case = ifelse(case2==TRUE, TRUE, FALSE))  %>%
    group_by(idenquete,datenquete,codenquete,codevillage,codepays,sexe,age_c,fever_case) %>%
@@ -943,12 +973,12 @@ trmetrics_entomo_postedecapture <- trmetrics_entomo_postedecapture %>%
  
  # link info on villages, intervention dates and intervention types
  recensement_villages_l1 <- dbReadTable(react_gpkg, 'recensement_villages_l1') %>%
+    dplyr::select(-geom) %>%
    filter(!is.na(intervention)) %>%
    dplyr::select("codevillage","codepays","intervention","date_debut_interv","date_fin_interv")
  
  trmetrics_epidemio <- trmetrics_epidemio %>%
    left_join(recensement_villages_l1) %>%
-    mutate(nummission = as.numeric(nummission)) %>%
    mutate(phase_interv = ifelse(as.Date(datenquete) < as.Date(date_debut_interv),"pre-intervention","post-intervention")) %>%
    mutate(phase_interv = ifelse((is.na(phase_interv) & codepays=="BF" & as.Date(datenquete) < as.Date("2017-08-17")),"pre-intervention",phase_interv)) %>%
    mutate(phase_interv = ifelse((is.na(phase_interv) & codepays=="CI" & as.Date(datenquete) < as.Date("2017-09-01")),"pre-intervention",phase_interv)) %>%

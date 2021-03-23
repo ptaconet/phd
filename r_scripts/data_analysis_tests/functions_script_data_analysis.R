@@ -752,7 +752,7 @@ load_spatial_data <- function(code_pays, landcover_layers_to_keep, mod, landcove
       dplyr::group_by(idpostedecapture) %>%
       dplyr::summarise(NMT = mean(NMT,na.rm = T), NMH = mean(NMH,na.rm = T), NMA=mean(NMA,na.rm = T)) %>%
       as_tibble()
-  } else if(mod %in% c("exophagy","early_late_biting")){
+  } else if(mod %in% c("exophagy","early_late_biting","early_biting","late_biting")){
     th_env_nightcatch_postedecapture <- read.csv("/home/ptaconet/Bureau/data_anglique.csv") %>%
       dplyr::select(idpostedecapture,date_time,temperature_hygro,humidity_hygro,pressure_baro,luminosite_hobo) %>%
       dplyr::rename(NMT = temperature_hygro, NMH = humidity_hygro, NMA = pressure_baro, NML = luminosite_hobo) %>%
@@ -788,7 +788,7 @@ load_spatial_data <- function(code_pays, landcover_layers_to_keep, mod, landcove
     
     th_env_nightcatch_postedecapture <- th_env_nightcatch_postedecapture2 %>%
       left_join(th_env_nightcatch_postedecapture_wsp_rfh) %>%
-      mutate(NMT = ifelse(NMT<10,NA,NMT),NMA = ifelse(NMA<800,NA,NMA),NML = ifelse(NML>100000,NA,NML),DNML = ifelse(DNML< -100000,NA,DNML))
+      mutate(NMT = ifelse(NMT<10,NA,NMT),NMA = ifelse(NMA<800,NA,NMA),NML = ifelse(NML>100000,NA,NML),DNML = ifelse(DNML< -25000,NA,DNML))
     
     
   } else if (mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre")){
@@ -1324,7 +1324,7 @@ fun_compute_glmm <- function(df, predictors, predictors_forced = NULL, mod, cv_t
   if(mod == "abundance"){
     th_mod <- buildglmmTMB(form, include = form_forc, data = df_mod, family = truncated_nbinom2)
     #df_mod_results <- broom.mixed::tidy(th_mod@model, conf.int = TRUE)
-  } else if (mod %in% c("presence","abundance", "early_late_biting", "exophagy", "physiological_resistance_kdrw","physiological_resistance_kdre")){
+  } else if (mod %in% c("presence","abundance", "early_late_biting","late_biting","early_biting", "exophagy", "physiological_resistance_kdrw","physiological_resistance_kdre","physiological_resistance_ace1")){
     th_mod <- buildglmmTMB(form, include = form_forc, data = df_mod, family = binomial(link = "logit"))
     #df_mod_results <- broom.mixed::tidy(th_mod@model, conf.int = TRUE, exponentiate = TRUE)
   }
@@ -1362,13 +1362,14 @@ fun_compute_glmm <- function(df, predictors, predictors_forced = NULL, mod, cv_t
 }
 
 
-fun_compute_rf <- function(df, predictors, cv_type, mod, featureselect){
+fun_compute_rf <- function(df, predictors, cv_type, mod, featureselect, species = "not_set"){
 
   ###### create indices for cross-validation
   indices_spatial <- CAST::CreateSpacetimeFolds(df, spacevar = "codevillage", k = length(unique(df$codevillage)))
   indices_temporal <- CAST::CreateSpacetimeFolds(df, timevar = "nummission", k = length(unique(df$nummission)))
   indices_spatiotemporal <- CAST::CreateSpacetimeFolds(df, timevar = "nummission", spacevar = "codevillage", k = ifelse(mod=="abundance",3,4), seed = 10) # set seed for reproducibility as folds of spatiotemporal cv can change 
-  indices_spatiotemporal2 <- CAST::CreateSpacetimeFolds(df, spacevar = "mission_village", k =  length(unique(df$mission_village))) 
+  indices_spatiotemporal2 <- CAST::CreateSpacetimeFolds(df, spacevar = "col_folds", k =  length(unique(df$col_folds)))
+  indices_spatiotemporal3 <- CAST::CreateSpacetimeFolds(df, spacevar = "idpointdecapture", k =  length(unique(df$idpointdecapture))) 
   
   
   df <- df %>% dplyr::select(resp_var,predictors,codevillage,nummission,pointdecapture,int_ext) %>% mutate_if(is.character, as.factor)
@@ -1391,22 +1392,32 @@ fun_compute_rf <- function(df, predictors, cv_type, mod, featureselect){
                                      index = indices_spatiotemporal2$index, 
                                      indexOut = indices_spatiotemporal2$indexOut,
                                      savePredictions = 'final')
+    tr_spatiotemporal3 = trainControl(method="cv",
+                                      index = indices_spatiotemporal3$index, 
+                                      indexOut = indices_spatiotemporal3$indexOut,
+                                      savePredictions = 'final')
     
    
     if(mod == "abundance"){
       met = "MAE"   # RMSE
+      df$resp_var <- log(df$resp_var)
     } else {
       met = "Accuracy"
       df$resp_var <- as.factor(df$resp_var)
     }
     
-    df$resp_var <- log(df$resp_var)
     
-  } else if (mod %in% c("presence", "early_late_biting","early_biting","late_biting", "physiological_resistance_kdrw","physiological_resistance_kdre")){
+  } else if (mod %in% c("presence", "early_late_biting","early_biting","late_biting","physiological_resistance_kdrw","physiological_resistance_kdre","physiological_resistance_ace1")){
     
     df$resp_var <- ifelse(df$resp_var==0,"Absence","Presence")
     df$resp_var <- as.factor(df$resp_var)
 
+    if(mod=="physiological_resistance_kdrw" & species == "An.gambiae_ss"){
+      df$resp_var <- forcats::fct_relevel(df$resp_var,c("Presence","Absence"))
+    }
+    
+    met = "AUC"
+    
     tr = trainControl(method="cv",
                               sampling = "up",
                               summaryFunction = prSummary,
@@ -1439,8 +1450,14 @@ fun_compute_rf <- function(df, predictors, cv_type, mod, featureselect){
                                      summaryFunction = prSummary,
                                      classProbs = TRUE,
                                      savePredictions = 'final')
+    tr_spatiotemporal3 = trainControl(method="cv",
+                                      index = indices_spatiotemporal3$index, 
+                                      indexOut = indices_spatiotemporal3$indexOut,
+                                      sampling = "up",
+                                      summaryFunction = prSummary,
+                                      classProbs = TRUE,
+                                      savePredictions = 'final')
     
-    met = "AUC"
     
 
     if(cv_type == "random"){
@@ -1450,6 +1467,10 @@ fun_compute_rf <- function(df, predictors, cv_type, mod, featureselect){
     
   }  else if (mod %in% c("exophagy")){
     
+    met = "AUC"
+    
+    df$resp_var <- ifelse(df$resp_var==0,"Absence","Presence")
+    df$resp_var <- as.factor(df$resp_var)
 
     tr = trainControl(method="cv",
                       summaryFunction = prSummary,
@@ -1478,18 +1499,22 @@ fun_compute_rf <- function(df, predictors, cv_type, mod, featureselect){
                                       summaryFunction = prSummary,
                                       classProbs = TRUE,
                                       savePredictions = 'final')
+    tr_spatiotemporal3 = trainControl(method="cv",
+                                      index = indices_spatiotemporal3$index, 
+                                      indexOut = indices_spatiotemporal3$indexOut,
+                                      summaryFunction = prSummary,
+                                      classProbs = TRUE,
+                                      savePredictions = 'final')
     
-    met = "AUC"
-    
-    df$resp_var <- ifelse(df$resp_var==0,"Absence","Presence")
-    df$resp_var <- as.factor(df$resp_var)
     
   }
   
   if(cv_type == "random"){
     th_mod <- caret::train(x = df[,predictors], y = df$resp_var, method = "rf", tuneLength = 10, trControl = tr, metric = met, importance = T, keep.forest=TRUE, keep.inbag=TRUE)
-   # control <- rfeControl(functions=rfFuncs, method="cv", number=10)
-  #  th_mod <- rfe(df[,predictors], df$resp_var, rfeControl=control, sizes = c(5,10,15,20,25,30,35,40), metric = met, keep.forest=TRUE, keep.inbag=TRUE)
+    
+  # rfFuncs$summary <- prSummary
+  # control <- rfeControl(functions=rfFuncs, method="cv", number=10, )
+  # th_mod <- rfe(df[,predictors], df$resp_var, rfeControl=control, sizes = c(5,10,15,20,25,30,35,40), metric = met, keep.forest=TRUE, keep.inbag=TRUE)
   } else if(cv_type == "llo"){
     
     if(featureselect == TRUE){
@@ -1522,11 +1547,19 @@ fun_compute_rf <- function(df, predictors, cv_type, mod, featureselect){
       th_mod <- caret::train(x = df[,predictors], y = df$resp_var, method = "rf", tuneLength = 10, trControl = tr_spatiotemporal2, metric = met, importance = T, keep.forest=TRUE, keep.inbag=TRUE)
     }
     
+  } else if (cv_type == "llto3"){
+    
+    if(featureselect == TRUE){
+      th_mod <- CAST::ffs(predictors = df[,predictors], response = df$resp_var, method = "rf", tuneLength = 5, trControl = tr_spatiotemporal3, metric = met, importance = T)
+    } else {
+      th_mod <- caret::train(x = df[,predictors], y = df$resp_var, method = "rf", tuneLength = 10, trControl = tr_spatiotemporal3, metric = met, importance = T, keep.forest=TRUE, keep.inbag=TRUE)
+    }
+    
   }
   
   df$rowIndex <- seq(1,nrow(df),1)
   
-   if (mod %in% c("presence", "early_late_biting","early_biting","late_biting", "exophagy", "physiological_resistance_kdrw","physiological_resistance_kdre")){
+   if (mod %in% c("presence", "early_late_biting","early_biting","late_biting", "exophagy","physiological_resistance_kdrw","physiological_resistance_kdre","physiological_resistance_ace1")){
      df_cv <- th_mod$pred %>%
        left_join(df) %>%
        dplyr::select(pred,Presence,obs,codevillage,nummission,pointdecapture,int_ext) %>%
@@ -1732,4 +1765,47 @@ annotation_compass <- function(label,
                                    x=grid::unit(x,"npc") + f1*padding[1] , 
                                    y=grid::unit(y,"npc") + f2*padding[2],
                                    hjust=hjust,vjust=vjust, ...))
+}
+
+
+
+create_folds <- function(df, number_bites){
+  
+  a = df %>% 
+    group_by(nummission,codevillage) %>% 
+    summarise(n=n()) %>%
+    mutate(col_folds = ifelse(n>=number_bites,paste0(codevillage,nummission),"all_other")) %>%
+    dplyr::select(nummission,codevillage,col_folds,n)
+  
+  b <- a %>% filter(col_folds!="all_other") %>% rename(n2=n)# b OK
+  num_groups = median(b$n2)
+  
+  c <- a %>% filter(col_folds=="all_other") %>% 
+    group_by(codevillage) %>% 
+    mutate(n2=sum(n)) %>%
+    mutate(col_folds = ifelse(n2>=number_bites,paste0(codevillage),"all_other"))
+  
+  #set.seed(42) 
+  d <- c %>% filter(col_folds!="all_other") %>% dplyr::select(-n) # d OK
+  
+  e <- c %>% 
+    filter(col_folds=="all_other") %>%
+    dplyr::select(-n2)
+  
+  e <- e[sample(nrow(e)), ]
+  e$cumsum <- cumsum(e$n)
+  e$new_mission_village <- trunc(e$cumsum/num_groups)
+  e$col_folds <- paste0("all_other_",e$new_mission_village) # e OK
+  
+  b$n2 <- NULL
+  d$n2 <- NULL
+  e$n <- e$new_mission_village <- e$cumsum <- NULL
+  
+  
+  folds <- rbind(b,d,e)
+  
+  
+  
+  return(folds)
+  
 }
