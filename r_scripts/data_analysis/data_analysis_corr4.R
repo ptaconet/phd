@@ -249,20 +249,18 @@
       #purrr::keep(., ~nrow(.) > 0) %>%
       purrr::map_chr(.,~rownames(.)[which.max(.$abs_corr)])
   
-    # predictors <- c("lsm_c_pland_2000_2_5","lsm_c_pland_500_3_2","lsm_c_pland_500_3_3","lsm_c_pland_2000_3_4","lsm_c_pland_2000_3_9","lsm_c_pland_2000_3_1",
-    #                   "WMD","WLS_2000",
-    #                   cols_to_keep_timevar,"VCM","int_ext")
     
-    predictors <- unique(c(cols_to_keep_spacevar,
-                           "WMD","WLS_2000",
-                           cols_to_keep_timevar,"VCM","int_ext"))
+     predictors <- unique(c(cols_to_keep_spacevar,
+                            "WMD","WLS_2000",
+                            cols_to_keep_timevar,"VCM","int_ext"))  #,"codevillage"
+    
+    
     if(code_pays=="BF"){
       predictors <- unique(c(predictors,"lsm_c_pland_2000_2_5","lsm_c_pland_2000_3_9"))
     } else if(code_pays=="CI"){
       
     }
-
-    
+   
   
     # spatial_vars <- fun_feature_forward_selection(
     #   df = th_trmetrics_entomo_postedecapture,
@@ -284,15 +282,20 @@
   
     predictors <- fun_multicol(th_trmetrics_entomo_postedecapture, predictors)
     
-    #rf_llo <- fun_compute_rf(th_trmetrics_entomo_postedecapture, predictors, cv_type = "llo", mod, featureselect = FALSE)
-    #rf_lto_withfeatureselect <- fun_compute_rf(th_trmetrics_entomo_postedecapture, predictors, cv_type = "lto", mod, featureselect = TRUE)
-    #rf_llto <- fun_compute_rf(th_trmetrics_entomo_postedecapture, predictors, cv_type = "llto", mod)
+    # if(mod=="abundance"){
+    #   col_cv <- "mission_village"
+    # } else if(mod=="presence"){
+    #   col_cv <- "mission_village"
+    # }
     
     
-    rf_lto <- NULL
-    #rf_lto <- fun_compute_rf(th_trmetrics_entomo_postedecapture, predictors, cv_type = "lto", mod, featureselect = FALSE)
-  
-    return(list(spatial_corrs_spearman = spatial_corrs_spearman, temporal_corrs_spearman = ccms_spearman, rf_lto = rf_lto))
+    
+    #rf_lto <- fun_compute_rf(th_trmetrics_entomo_postedecapture, predictors, "nummission", mod, featureselect = FALSE)
+    rf_llo <- fun_compute_rf(th_trmetrics_entomo_postedecapture, predictors, "codevillage", mod, featureselect = FALSE)
+     rf_lto <- NULL
+    
+
+    return(list(spatial_corrs_spearman = spatial_corrs_spearman, temporal_corrs_spearman = ccms_spearman, rf_lto = rf_lto, rf_llo = rf_llo))
     
   }
   
@@ -309,35 +312,35 @@
     add_row(response_var = "ma_funestus_ss", code_pays = "CI", mod = "presence") %>%
     add_row(response_var = "ma_gambiae_sl", code_pays = "CI", mod = "abundance") %>%
     add_row(response_var = "ma_funestus_ss", code_pays = "CI", mod = "abundance") 
+    
+    model_results1 <- df_input_params_glmm[1,] %>%
+      mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
+      model_results2 <- df_input_params_glmm[2,] %>%
+      mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
+    model_results3 <- df_input_params_glmm[3,] %>%
+      mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
+    model_results4 <- df_input_params_glmm[4,] %>%
+      mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
+    model_results5 <- df_input_params_glmm[5,] %>%
+      mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
+    model_results6 <- df_input_params_glmm[6,] %>%
+      mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
+    # model_results7 <- df_input_params_glmm[7,] %>%
+    #   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
+    # model_results8 <- df_input_params_glmm[8,] %>%
+    #   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
+    # model_results9 <- df_input_params_glmm[9,] %>%
+    #   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
+    # model_results10 <- df_input_params_glmm[10,] %>%
+    #   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
+    
+    model_results <- rbind(model_results1,model_results2,model_results3,model_results4,model_results5,model_results6)
+    
+    model_results <- model_results %>%
+      mutate(spatial_corrs_spearman = map(results, ~pluck(.,"spatial_corrs_spearman"))) %>%
+      mutate(temporal_corrs_spearman = map(results, ~pluck(.,"temporal_corrs_spearman"))) %>%
+      mutate(rf_lto = map(results, ~pluck(.,"rf_lto"))) %>%
+      mutate(rf_llo = map(results, ~pluck(.,"rf_llo"))) %>%
+      dplyr::select(-results)
   
-  model_results1 <- df_input_params_glmm[1,] %>%
-    mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
-  model_results2 <- df_input_params_glmm[2,] %>%
-    mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
-  model_results3 <- df_input_params_glmm[3,] %>%
-    mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
-  model_results4 <- df_input_params_glmm[4,] %>%
-    mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
-  model_results5 <- df_input_params_glmm[5,] %>%
-    mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
-  model_results6 <- df_input_params_glmm[6,] %>%
-    mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
-  model_results7 <- df_input_params_glmm[7,] %>%
-    mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
-  model_results8 <- df_input_params_glmm[8,] %>%
-    mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
-  model_results9 <- df_input_params_glmm[9,] %>%
-    mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
-  model_results10 <- df_input_params_glmm[10,] %>%
-    mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
-  
-  model_results <- rbind(model_results1,model_results2,model_results3,model_results4,model_results5,model_results6)
-  
-  model_results <- model_results %>%
-    mutate(spatial_corrs_spearman = map(results, ~pluck(.,"spatial_corrs_spearman"))) %>%
-    mutate(temporal_corrs_spearman = map(results, ~pluck(.,"temporal_corrs_spearman"))) %>%
-    mutate(rf_lto = map(results, ~pluck(.,"rf_lto"))) %>%
-    #mutate(rf_llo = map(results, ~pluck(.,"rf_llo"))) %>%
-    dplyr::select(-results)
-
-saveRDS(model_results,"/home/ptaconet/Bureau/data_analysis/model_results_univanalysis7.rds")
+  saveRDS(model_results,"/home/ptaconet/Bureau/data_analysis/model_results_univanalysis9.rds")

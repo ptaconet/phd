@@ -125,7 +125,7 @@ fun_workflow_model <- function(response_var,
       mutate(heuredecapture = NA)
     
     th_trmetrics_entomo_postedecapture$resp_var <- th_trmetrics_entomo_postedecapture[,response_var]
-  } else if(mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","early_late_biting","early_biting","late_biting")){
+  } else if(mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","physiological_resistance_ace1","exophagy","early_late_biting","early_biting","late_biting")){
     
     if(response_var == "ma_funestus_ss"){
       response_var <- "An.funestus_ss"
@@ -204,8 +204,8 @@ fun_workflow_model <- function(response_var,
           mutate(resp_var = ifelse(ELB == "late_biting",1,0)) 
       }
       if(mod == "early_late_biting"){
-        th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>%
-          mutate(resp_var = ifelse(ELB != "nocturnal",1,0)) 
+         th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>%
+           mutate(resp_var = ELB) 
       }
       
         th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>%
@@ -248,9 +248,9 @@ fun_workflow_model <- function(response_var,
   th_env_static <- th_env_static %>% dplyr::select(idpointdecapture,VCM)
   
   mean_date_mission <- entomo_csh_metadata_l1 %>% mutate(date_capture = as.Date(date_capture)) %>% dplyr::group_by(codepays,nummission) %>% dplyr::summarise(mean_date_mission=mean(date_capture)) %>% as_tibble() %>% filter(codepays==code_pays) %>% dplyr::select(-codepays) 
+
   
-  
-  ######## join response variable with explanatory variables
+    ######## join response variable with explanatory variables
   
   th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>% 
     left_join(mean_date_mission) %>%
@@ -287,7 +287,8 @@ fun_workflow_model <- function(response_var,
   # si moins de 10 piqures sur un {point de capture, mission} : on regroupe tous les points de capture du village (toutes missions confondues) dans un fold
   # si moins de 10 piqures sur tous les points de capture du village (toutes missions confondues) : on regroupe aléatoirement pour faire de folds de la médiane du nb de piqures par point de capture
   
-folds <- create_folds(th_trmetrics_entomo_postedecapture, 15)
+  folds <- create_folds(th_trmetrics_entomo_postedecapture,15)
+#folds <- create_folds2(th_trmetrics_entomo_postedecapture)
 
 th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>%
   left_join(folds)
@@ -327,8 +328,8 @@ th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>%
       }
       
       glmm_varstoforce <- "VCM"
-      predictors_nightscience <- c(lsm_agri,"VCM","VCT","VCT2","LUS","POPANI","int_ext")
-      predictors_dayscience <- predictors_nightscience
+      predictors_dayscience <-c(lsm_agri,"VCM","VCT","VCT2","LUS","POPANI","int_ext")
+      predictors_nightscience <- c(predictors_dayscience,"NMT","NMH","NML","NMA","DNMT","DNMH","DNML")
     }
   
   glmms_univs <- NULL
@@ -376,6 +377,15 @@ th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>%
     }
     i = i+1
   }
+  
+  if(mod == "early_biting" & response_var == "An.funestus_ss" & period_interv=="all" & code_pays=="BF"){
+    glmms_univs[9] <- NULL
+  }
+  if(mod == "late_biting" & response_var == "An.coluzzii" & period_interv=="postinterv" & code_pays=="BF"){
+    glmms_univs[10] <- NULL
+    glmms_univs[24] <- NULL
+  }
+  
     glmms_univs <- glmms_univs %>%
       purrr::map(.,~broom.mixed::tidy(., conf.int = TRUE, exponentiate = ifelse(mod == "abundance",FALSE,TRUE))) %>%
       do.call(rbind.data.frame, .) %>%
@@ -385,8 +395,8 @@ th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>%
     ###### GLMM multivariate model  ######
 
     #### based on glmm pval univariate analysis
-    pvals_filts_nightscience <- glmms_univs %>% filter(term %in% predictors_nightscience, p.value < 0.5, !grepl("VCM",term))
-    
+      pvals_filts_nightscience <- glmms_univs %>% filter(term %in% predictors_nightscience, p.value < 0.5, !grepl("VCM",term))
+
   # multicollinearity among predictors
     vars_multiv_nightscience <- pvals_filts_nightscience$term
     if(nrow(pvals_filts_nightscience)>1){
@@ -395,7 +405,12 @@ th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>%
     predictors_nightscience <- fun_multicol(th_trmetrics_entomo_postedecapture, vars_multiv_nightscience)
     
     
-    pvals_filts_dayscience <- glmms_univs %>% filter(term %in% predictors_dayscience, p.value < 0.5, !grepl("VCM",term))
+    if (mod %in% c("exophagy","early_late_biting","early_biting","late_biting")){
+      pvals_filts_dayscience <- glmms_univs %>% filter(term %in% predictors_dayscience, p.value < 0.5, !grepl("VCM",term))
+    } else {
+      pvals_filts_dayscience <- glmms_univs %>% filter(term %in% predictors_dayscience)
+    }
+    
     vars_multiv_dayscience <- pvals_filts_dayscience$term
     if(nrow(pvals_filts_dayscience)>1){
       vars_multiv_dayscience <- fun_multicol(th_trmetrics_entomo_postedecapture, pvals_filts_dayscience$term)
@@ -411,11 +426,24 @@ th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>%
         if (mod %in% c("physiological_resistance_kdre","physiological_resistance_ace1")) {
           th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>% mutate(resp_var = ifelse(resp_var==0.5,1,resp_var))
         }
+    if(mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","physiological_resistance_ace1","exophagy")){
+      th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>% 
+        mutate(trchehorairecapt = case_when(heuredecapture >=15 & heuredecapture <=19 ~ "17 - 19",
+                                            heuredecapture > 19 & heuredecapture <=24 ~ "20 - 23",
+                                            heuredecapture >=0 & heuredecapture <=3 ~ "00 - 03",
+                                            heuredecapture >3 & heuredecapture <=6 ~ "04 - 06",
+                                            heuredecapture >6 & heuredecapture <=10 ~ "07 - 09"
+                                            )) %>%
+        mutate(trchehorairecapt = forcats::fct_relevel(trchehorairecapt,c("17 - 19","20 - 23","00 - 03","04 - 06","07 - 09")))
+      #predictors_dayscience <- c(predictors_dayscience,"trchehorairecapt")
+      #predictors_nightscience <- c(predictors_nightscience,"trchehorairecapt")
+    }
 
-    rf_dayscience <- fun_compute_rf(th_trmetrics_entomo_postedecapture, unique(c(predictors_dayscience,"VCM")), cv_type = "llto2", mod, featureselect = FALSE, species = response_var)
-    rf_nightscience <- fun_compute_rf(th_trmetrics_entomo_postedecapture, unique(c(predictors_nightscience,"VCM")), cv_type = "llto2", mod, featureselect = FALSE, species = response_var)
+    
+    rf_dayscience <- fun_compute_rf(th_trmetrics_entomo_postedecapture, unique(c(predictors_dayscience,"VCM")), cv_col = "col_folds", mod, featureselect = FALSE)
+    rf_nightscience <- fun_compute_rf(th_trmetrics_entomo_postedecapture, unique(c(predictors_nightscience,"VCM")), cv_col = "col_folds", mod, featureselect = FALSE)
+    
 
-    #rf_selectvar <- fun_compute_rf(th_trmetrics_entomo_postedecapture, predictors, cv_type = "llto2", mod, featureselect = TRUE)
     # rf_nightscience$mod$pred %>% group_by(Resample) %>% summarise(n=n())  -> number of samples for each fold
     # rf_nightscience$mod$resample -> predictive quality for each resampling
     
@@ -450,79 +478,79 @@ df_input_params_glmm <- df_input_params_glmm %>%
   add_row(response_var = "ma_funestus_ss", code_pays = "BF", mod = "late_biting", period_interv="postinterv") %>%
   add_row(response_var = "ma_gambiae_ss", code_pays = "BF", mod = "late_biting", period_interv="postinterv") %>%
   add_row(response_var = "ma_coluzzi", code_pays = "BF", mod = "late_biting", period_interv="postinterv") %>%
-   add_row(response_var = "ma_gambiae_ss", code_pays = "BF", mod = "physiological_resistance_kdrw") %>%
-   add_row(response_var = "ma_coluzzi", code_pays = "BF", mod = "physiological_resistance_kdrw") %>%
-   add_row(response_var = "ma_gambiae_ss", code_pays = "BF", mod = "physiological_resistance_kdre") %>%
-   add_row(response_var = "ma_coluzzi", code_pays = "BF", mod = "physiological_resistance_kdre") %>%
-   add_row(response_var = "ma_gambiae_ss", code_pays = "BF", mod = "physiological_resistance_ace1") %>%
-   add_row(response_var = "ma_coluzzi", code_pays = "BF", mod = "physiological_resistance_ace1")
+   add_row(response_var = "ma_gambiae_ss", code_pays = "BF", mod = "physiological_resistance_kdrw", period_interv = "all") %>%
+   add_row(response_var = "ma_coluzzi", code_pays = "BF", mod = "physiological_resistance_kdrw", period_interv = "all") %>%
+   add_row(response_var = "ma_gambiae_ss", code_pays = "BF", mod = "physiological_resistance_kdre", period_interv = "all") %>%
+   add_row(response_var = "ma_coluzzi", code_pays = "BF", mod = "physiological_resistance_kdre", period_interv = "all") %>%
+   add_row(response_var = "ma_gambiae_ss", code_pays = "BF", mod = "physiological_resistance_ace1", period_interv = "all") %>%
+   add_row(response_var = "ma_coluzzi", code_pays = "BF", mod = "physiological_resistance_ace1", period_interv = "all")
    
 th_model_results1 <- df_input_params_glmm[1,] %>%
   mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
+      
+      th_model_results2 <- df_input_params_glmm[2,] %>%
+        mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
+      
+      th_model_results3 <- df_input_params_glmm[3,] %>%
+        mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
+       
+       th_model_results4 <- df_input_params_glmm[4,] %>%
+         mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
+       
+       th_model_results5 <- df_input_params_glmm[5,] %>%
+         mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
+       
+       th_model_results6 <- df_input_params_glmm[6,] %>%
+         mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
+      
+      th_model_results7 <- df_input_params_glmm[7,] %>%
+        mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
+      
+      th_model_results8 <- df_input_params_glmm[8,] %>%
+        mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
+      
+      th_model_results9 <- df_input_params_glmm[9,] %>%
+        mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
+      
+      th_model_results10 <- df_input_params_glmm[10,] %>%
+        mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
+      
+      th_model_results11 <- df_input_params_glmm[11,] %>%
+        mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
+      
+      th_model_results12 <- df_input_params_glmm[12,] %>%
+        mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
+      
+      th_model_results13 <- df_input_params_glmm[13,] %>%
+        mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
+      
+      th_model_results14 <- df_input_params_glmm[14,] %>%
+        mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
+      
+      th_model_results15 <- df_input_params_glmm[15,] %>%
+        mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
+      
+      th_model_results16 <- df_input_params_glmm[16,] %>%
+        mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
+      th_model_results17 <- df_input_params_glmm[17,] %>%
+        mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
+      th_model_results18 <- df_input_params_glmm[18,] %>%
+        mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
+      th_model_results19 <- df_input_params_glmm[19,] %>%
+        mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
+      th_model_results20 <- df_input_params_glmm[20,] %>%
+        mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
+      th_model_results21 <- df_input_params_glmm[21,] %>%
+        mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
+      th_model_results22 <- df_input_params_glmm[22,] %>%
+        mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
+      th_model_results23 <- df_input_params_glmm[23,] %>%
+        mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
+      th_model_results24 <- df_input_params_glmm[24,] %>%
+        mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
+      
 
-th_model_results2 <- df_input_params_glmm[2,] %>%
-  mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
-
-th_model_results3 <- df_input_params_glmm[3,] %>%
-  mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
- 
- th_model_results4 <- df_input_params_glmm[4,] %>%
-   mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
- 
- th_model_results5 <- df_input_params_glmm[5,] %>%
-   mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
- 
- th_model_results6 <- df_input_params_glmm[6,] %>%
-   mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
-
-th_model_results7 <- df_input_params_glmm[7,] %>%
-  mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
-
-th_model_results8 <- df_input_params_glmm[8,] %>%
-  mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
-
-th_model_results9 <- df_input_params_glmm[9,] %>%
-  mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
-
-th_model_results10 <- df_input_params_glmm[10,] %>%
-  mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
-
-th_model_results11 <- df_input_params_glmm[11,] %>%
-  mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
-
-th_model_results12 <- df_input_params_glmm[12,] %>%
-  mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
-
-th_model_results13 <- df_input_params_glmm[13,] %>%
-  mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
-
-th_model_results14 <- df_input_params_glmm[14,] %>%
-  mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
-
-th_model_results15 <- df_input_params_glmm[15,] %>%
-  mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
-
-th_model_results16 <- df_input_params_glmm[16,] %>%
-  mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
-th_model_results17 <- df_input_params_glmm[17,] %>%
-  mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
-th_model_results18 <- df_input_params_glmm[18,] %>%
-  mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
-th_model_results19 <- df_input_params_glmm[19,] %>%
-  mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
-th_model_results20 <- df_input_params_glmm[20,] %>%
-  mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
-th_model_results21 <- df_input_params_glmm[21,] %>%
-  mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
-th_model_results22 <- df_input_params_glmm[22,] %>%
-  mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
-th_model_results23 <- df_input_params_glmm[23,] %>%
-  mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
-th_model_results24 <- df_input_params_glmm[24,] %>%
-  mutate(results = pmap(list(response_var, code_pays, mod,period_interv), ~fun_workflow_model(..1,..2,..3,..4)))
-
-
-  model_results <- rbind(th_model_results1,th_model_results2,th_model_results3,th_model_results7,th_model_results8,th_model_results9)
+  model_results <- rbind(th_model_results1,th_model_results2,th_model_results3,th_model_results4,th_model_results5,th_model_results6,th_model_results7,th_model_results8,th_model_results9,th_model_results10,th_model_results11,th_model_results12,th_model_results13,th_model_results14,th_model_results15,th_model_results16,th_model_results17,th_model_results18,th_model_results19,th_model_results20,th_model_results21,th_model_results22,th_model_results23)
 
 model_results <- model_results %>%
   mutate(glmms_univs = map(results, ~pluck(.,"glmms_univs"))) %>%
@@ -534,4 +562,5 @@ model_results <- model_results %>%
 
 saveRDS(model_results,"/home/ptaconet/Bureau/data_analysis/model_results_resistances4.rds")
 
-  # model_results_resistances4.rds : with post intervention data only + model day science and model night science
+  # model_results_resistances4.rds : glmm + rf
+# model_results_resistances5.rds : rf only
