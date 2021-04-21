@@ -212,13 +212,13 @@ fun_feature_forward_selection <- function(stat_method, spearman_factor = NULL, m
       if(mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","early_late_biting","presence")){
         #pvals <- future_map_dfr(colnames(df[4:ncol(df)]), ~Anova(glmmTMB(as.formula(paste0("resp_var ~ ",.x," + (1|codevillage/pointdecapture2)")), data = df, family = binomial(link = "logit")))[3])
         func <- function(x){
-          pval <- glmmTMB(as.formula(paste0("resp_var ~ ",x," + VCM + int_ext + (1|codevillage/pointdecapture2)")), data = df, family = binomial(link = "logit"))
+          pval <- glmmTMB(as.formula(paste0("resp_var ~ ",x," + (1|codevillage/pointdecapture2)")), data = df, family = binomial(link = "logit"))
           return(pval)
         }
         } else if (mod == "abundance"){
         #pvals <- future_map_dfr(colnames(df[4:ncol(df)]), ~Anova(glmmTMB(as.formula(paste0("resp_var ~ ",.x," + (1|codevillage/pointdecapture2)")), data = df, family = truncated_nbinom2))[3])
           func <- function(x){
-            pval <- glmmTMB(as.formula(paste0("resp_var ~ ",x," + VCM + int_ext + (1|codevillage/pointdecapture2)")), data = df, family = truncated_nbinom2)
+            pval <- glmmTMB(as.formula(paste0("resp_var ~ ",x," + (1|codevillage/pointdecapture2)")), data = df, family = truncated_nbinom2)
             return(pval)
           }
       }
@@ -733,32 +733,26 @@ load_spatial_data <- function(code_pays, landcover_layers_to_keep, mod, landcove
   # variables for the night of catch
   env_nightcatch <- dbReadTable(react_gpkg, 'env_nightcatch') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id) %>% dplyr::filter(var != "WDR")
   
+  
+  # from : https://physics.stackexchange.com/questions/4343/how-can-i-calculate-vapor-pressure-deficit-from-temperature-and-relative-humidit
+  get.vpd <- function(rh, temp){
+    ## calculate saturation vapor pressure
+    es <- 6.11 * exp((2.5e6 / 461) * (1 / 273 - 1 / (273 + temp)))
+    ## calculate vapor pressure deficit
+    vpd <- ((100 - rh) / 100) * es
+    return(vpd)
+  }
+  
+  
   # variables for the night of catch at the postedecapture level
-  if(mod %in% c("presence","abundance","abundance_discrete","presence_abundance")){
-    # env_nightcatch_postedecapture <- dbReadTable(react_gpkg,"env_nightcatch_postedecapture") %>% dplyr::select(-fid)
-    # NMA <-  read.csv("/home/ptaconet/Bureau/data_anglique.csv") %>%
-    #   dplyr::select(idpostedecapture, pressure_baro) %>%
-    #   group_by(idpostedecapture) %>%
-    #   summarise(val = mean(pressure_baro)) %>%
-    #   mutate(var="NMA")
-    # 
-    # env_nightcatch_postedecapture <- rbind(env_nightcatch_postedecapture,NMA)
-    # 
-    # th_env_nightcatch_postedecapture <- env_nightcatch_postedecapture %>% pivot_wider(names_from = var, values_from = val) %>% mutate_all(~ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x))
-    th_env_nightcatch_postedecapture <- read.csv("/home/ptaconet/Bureau/data_anglique.csv") %>%
-      dplyr::select(idpostedecapture,date_time,temperature_baro,humidity_baro,pressure_baro) %>%
-      dplyr::rename(NMT = temperature_baro, NMH = humidity_baro, NMA = pressure_baro) %>%
-      mutate(date = as.Date(date_time), heuredecapture = lubridate::hour(date_time)) %>%
-      dplyr::group_by(idpostedecapture) %>%
-      dplyr::summarise(NMT = mean(NMT,na.rm = T), NMH = mean(NMH,na.rm = T), NMA=mean(NMA,na.rm = T)) %>%
-      as_tibble()
-  } else if(mod %in% c("exophagy","early_late_biting","early_biting","late_biting")){
+ if(mod %in% c("exophagy")){
     th_env_nightcatch_postedecapture <- read.csv("/home/ptaconet/Bureau/data_anglique.csv") %>%
       dplyr::select(idpostedecapture,date_time,temperature_hygro,humidity_hygro,pressure_baro,luminosite_hobo) %>%
       dplyr::rename(NMT = temperature_hygro, NMH = humidity_hygro, NMA = pressure_baro, NML = luminosite_hobo) %>%
       mutate(date = as.Date(date_time), heuredecapture = hour(date_time)) %>%
       dplyr::group_by(idpostedecapture,heuredecapture) %>%
       dplyr::summarise(NMT = mean(NMT,na.rm = T), NMH = mean(NMH,na.rm = T), NMA=mean(NMA,na.rm = T), NML=mean(NML,na.rm = T)) %>%
+      mutate(VPD = get.vpd(NMH, NMT)) %>%
       as_tibble() %>%
       mutate(idpostedecapture=as.character(idpostedecapture))
       
@@ -767,11 +761,11 @@ load_spatial_data <- function(code_pays, landcover_layers_to_keep, mod, landcove
       mutate(idpointdecapture = substr(idpostedecapture,0,nchar(idpostedecapture)-1)) %>%
       mutate(postedecapture = substr(idpostedecapture,nchar(idpostedecapture),nchar(idpostedecapture))) %>%
       dplyr::select(-idpostedecapture) %>%
-      pivot_longer(c(NMT,NMH , NML,NMA)) %>%
+      pivot_longer(c(NMT,NMH , NML,NMA,VPD)) %>%
       pivot_wider(names_from = c(name,postedecapture), values_from = value) %>%
-      mutate(DNMT = NMT_i - NMT_e,DNMH = NMH_i - NMH_e,DNML = NML_i - NML_e) %>%
-      dplyr::select( heuredecapture,idpointdecapture,NMT_i,NMH_i,NML_e,NMA_e,DNMT,DNMH,DNML) %>%
-      rename(NMT = NMT_i, NMH = NMH_i, NML = NML_e, NMA = NMA_e) %>%
+      mutate(DNMT = NMT_i - NMT_e,DNMH = NMH_i - NMH_e,DNML = NML_i - NML_e, DVPD = VPD_i - VPD_e) %>%
+      dplyr::select( heuredecapture,idpointdecapture,NMT_i,NMH_i,VPD_i,NML_e,NMA_e,DNMT,DNMH,DNML,DVPD) %>%
+      rename(NMTI = NMT_i, NMHI = NMH_i, NMLE = NML_e, NMA = NMA_e, VPDI = VPD_i) %>%
       mutate_all(funs(replace_na(.,0))) #%>%
       #mutate(idpostedecapture = paste0(pointdecapture,"e")) %>%
      # dplyr::select(-pointdecapture)
@@ -788,18 +782,73 @@ load_spatial_data <- function(code_pays, landcover_layers_to_keep, mod, landcove
     
     th_env_nightcatch_postedecapture <- th_env_nightcatch_postedecapture2 %>%
       left_join(th_env_nightcatch_postedecapture_wsp_rfh) %>%
-      mutate(NMT = ifelse(NMT<10,NA,NMT),NMA = ifelse(NMA<800,NA,NMA),NML = ifelse(NML>100000,NA,NML),DNML = ifelse(DNML< -25000,NA,DNML))
+      mutate(NMTI = ifelse(NMTI<10,NA,NMTI),NMA = ifelse(NMA<800,NA,NMA),NMLI = ifelse(NMLE>2000,2000,NMLE),DNML = ifelse(DNML< -2000,-2000,DNML), DNML = ifelse(DNML> 2000,2000,DNML))
     
-    
-  } else if (mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","physiological_resistance_ace1")){
+   } else if (mod %in% c("physiological_resistance_kdrw_reg","physiological_resistance_kdre_reg","physiological_resistance_ace1_reg","exophagy_reg","early_biting_reg","late_biting_reg")){
      th_env_nightcatch_postedecapture <- read.csv("/home/ptaconet/Bureau/data_anglique.csv") %>%
-       dplyr::select(idpostedecapture,date_time,temperature_hygro,humidity_hygro,luminosite_hobo,pointderosee_hygro,pressure_baro) %>%
-       dplyr::rename(NMT = temperature_hygro, NMH = humidity_hygro, NML = luminosite_hobo, NMA = pressure_baro) %>%
+       dplyr::select(idpostedecapture,date_time,temperature_hygro,humidity_hygro,pressure_baro,luminosite_hobo) %>%
+       dplyr::rename(NMT = temperature_hygro, NMH = humidity_hygro, NMA = pressure_baro, NML = luminosite_hobo) %>%
+       mutate(date = as.Date(date_time), heuredecapture = hour(date_time)) %>%
+       dplyr::group_by(idpostedecapture) %>%
+       dplyr::summarise(NMT = mean(NMT,na.rm = T), NMH = mean(NMH,na.rm = T), NMA=mean(NMA,na.rm = T), NML=mean(NML,na.rm = T)) %>%
+       mutate(VPD = get.vpd(NMH, NMT)) %>%
+       as_tibble() %>%
+       mutate(idpostedecapture=as.character(idpostedecapture))
+     
+     
+     th_env_nightcatch_postedecapture2 <-th_env_nightcatch_postedecapture %>%
+       mutate(idpointdecapture = substr(idpostedecapture,0,nchar(idpostedecapture)-1)) %>%
+       mutate(postedecapture = substr(idpostedecapture,nchar(idpostedecapture),nchar(idpostedecapture))) %>%
+       dplyr::select(-idpostedecapture) %>%
+       pivot_longer(c(NMT,NMH , NML,NMA,VPD)) %>%
+       pivot_wider(names_from = c(name,postedecapture), values_from = value) %>%
+       mutate(DNMT = NMT_i - NMT_e,DNMH = NMH_i - NMH_e,DNML = NML_i - NML_e, DVPD = VPD_i - VPD_e) %>%
+       dplyr::select( idpointdecapture,NMT_i,NMH_i,VPD_i,NML_e,NMA_e,DNMT,DNMH,DNML,DVPD) %>%
+       rename(NMT = NMT_i, NMH = NMH_i, NML = NML_e, NMA = NMA_e, VPD = VPD_i) %>%
+       mutate_all(funs(replace_na(.,0)))
+     
+     th_env_nightcatch_postedecapture <- th_env_nightcatch_postedecapture2 %>%
+       mutate(NMT = ifelse(NMT<10,NA,NMT),NMA = ifelse(NMA<800,NA,NMA),NML = ifelse(NML>2000,2000,NML),DNML = ifelse(DNML< -2000,-2000,DNML), DNML = ifelse(DNML> 2000,2000,DNML))
+     
+   } else if(mod %in% c("late_biting","early_biting")){
+     th_env_nightcatch_postedecapture <- read.csv("/home/ptaconet/Bureau/data_anglique.csv") %>%
+       dplyr::select(idpostedecapture,date_time,temperature_hygro,humidity_hygro,pressure_baro,luminosite_hobo) %>%
+       dplyr::rename(NMT = temperature_hygro, NMH = humidity_hygro, NMA = pressure_baro, NML = luminosite_hobo) %>%
+       mutate(date = as.Date(date_time), heuredecapture = hour(date_time)) %>%
+       dplyr::group_by(idpostedecapture) %>%
+       dplyr::summarise(NMT = mean(NMT,na.rm = T), NMH = mean(NMH,na.rm = T), NMA=mean(NMA,na.rm = T), NML=mean(NML,na.rm = T)) %>%
+       mutate(VPD = get.vpd(NMH, NMT)) %>%
+       as_tibble() %>%
+       mutate(idpostedecapture=as.character(idpostedecapture)) %>%
+       mutate(NMT = ifelse(NMT<10,NA,NMT),NMA = ifelse(NMA<800,NA,NMA),NML = ifelse(NML>2000,2000,NML))
+   } else if(mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","physiological_resistance_ace1")){
+     
+     th_env_nightcatch_postedecapture <- read.csv("/home/ptaconet/Bureau/data_anglique.csv") %>%
+       dplyr::select(idpostedecapture,date_time,temperature_hygro,humidity_hygro,pressure_baro,luminosite_hobo) %>%
+       dplyr::rename(NMT = temperature_hygro, NMH = humidity_hygro, NMA = pressure_baro, NML = luminosite_hobo) %>%
        mutate(date = as.Date(date_time), heuredecapture = hour(date_time)) %>%
        dplyr::group_by(idpostedecapture,heuredecapture) %>%
-       dplyr::summarise(NMT = mean(NMT,na.rm = T), NMH = mean(NMH,na.rm = T), NML=mean(NML,na.rm = T), NMA=mean(NMA,na.rm = T)) %>%
-       as_tibble()
-    }
+       dplyr::summarise(NMT = mean(NMT,na.rm = T), NMH = mean(NMH,na.rm = T), NMA=mean(NMA,na.rm = T), NML=mean(NML,na.rm = T)) %>%
+       mutate(VPD = get.vpd(NMH, NMT)) %>%
+       as_tibble() %>%
+       mutate(idpostedecapture=as.character(idpostedecapture))
+     
+     th_env_nightcatch_postedecapture <- th_env_nightcatch_postedecapture2 %>%
+       mutate(NMT = ifelse(NMT<10,NA,NMT),NMA = ifelse(NMA<800,NA,NMA),NML = ifelse(NML>2000,2000,NML),DNML = ifelse(DNML< -2000,-2000,DNML), DNML = ifelse(DNML> 2000,2000,DNML))
+   } else if( mod %in% c("presence","abundance")){
+       
+     th_env_nightcatch_postedecapture <- read.csv("/home/ptaconet/Bureau/data_anglique.csv") %>%
+       dplyr::select(idpostedecapture,date_time,temperature_hygro,humidity_hygro,pressure_baro,luminosite_hobo) %>%
+       dplyr::rename(NMT = temperature_hygro, NMH = humidity_hygro, NMA = pressure_baro, NML = luminosite_hobo) %>%
+       mutate(date = as.Date(date_time), heuredecapture = hour(date_time)) %>%
+       dplyr::group_by(idpostedecapture) %>%
+       dplyr::summarise(NMT = mean(NMT,na.rm = T), NMH = mean(NMH,na.rm = T), NMA=mean(NMA,na.rm = T), NML=mean(NML,na.rm = T)) %>%
+       mutate(VPD = get.vpd(NMH, NMT)) %>%
+       as_tibble() %>%
+       mutate(idpostedecapture=as.character(idpostedecapture)) %>%
+       mutate(NMT = ifelse(NMT<10,NA,NMT),NMA = ifelse(NMA<800,NA,NMA),NML = ifelse(NML>2000,2000,NML))
+     
+     }
   
   # landcover variables
   env_landcover <-  dbReadTable(react_gpkg, 'env_landcover') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id) %>% filter(layer_id %in% landcover_layers_to_keep) %>% filter(buffer %in% buffer_sizes)
@@ -857,8 +906,22 @@ LUS = dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>%
   mutate(LUS = oui / (non + oui) * 100) %>%
   dplyr::select(codevillage,periode,saison,LUS)
 
+if(code_pays=="CI"){
+  t$periode=NULL
+  LUS$periode=NULL
+}
+
 LUS <- t %>%
   left_join(LUS)
+
+if(code_pays=="CI"){
+  
+  LUS_season <- LUS %>% group_by(saison) %>% summarise(LUS_mean = mean(LUS,na.rm = TRUE))
+  LUS$LUS[which(is.na(LUS$LUS) & LUS$saison=="pluies")] <- LUS_season$LUS_mean[which(LUS_season$saison == "pluies")]
+  LUS$LUS[which(is.na(LUS$LUS) & LUS$saison=="seche")] <- LUS_season$LUS_mean[which(LUS_season$saison == "seche")]
+  
+}
+
 
 pop <- dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
   dplyr::select(-geom) %>%
@@ -875,6 +938,7 @@ HBI <- dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>%
      mutate(hintmaison = as.numeric(substr(hintmaison,1,2)),hsortiemaison=as.numeric(substr(hsortiemaison,1,2))) %>%
      mutate(hintmaison = ifelse(hintmaison <=16, 19, hintmaison), hsortiemaison=ifelse(hsortiemaison>=11 | hsortiemaison<=3,6,hsortiemaison))
 
+if(code_pays=="BF"){
 hintmaison <- HBI %>%
   mutate(hintmaison = paste0("h_",hintmaison)) %>%
   group_by(codevillage, hintmaison, periode, saison) %>%
@@ -906,7 +970,40 @@ hsortiemaison <- HBI %>%
   dplyr::select(-c(h_4,h_5,h_6,h_7,h_8,h_9,pop)) %>%
   pivot_longer(cols = starts_with("h_h"), names_to = "hour", values_to = "pop_indoor") %>%
   mutate(hour = as.numeric(gsub("h_h","",hour)))
-
+} else if(code_pays=="CI"){
+  
+  hintmaison <- HBI %>%
+    mutate(hintmaison = paste0("h_",hintmaison)) %>%
+    group_by(codevillage, hintmaison, periode, saison) %>%
+    dplyr::summarise(count = n()) %>%
+    as_tibble() %>%
+    pivot_wider(names_from = hintmaison, values_from = count, values_fill = list(count = 0)) %>%
+    mutate(h_19=h_18+h_19) %>%
+    mutate(h_20=h_19+h_20) %>%
+    mutate(h_21=h_20+h_21) %>%
+    mutate(h_22=h_21+h_22) %>%
+    mutate(h_23=h_22+h_23) %>%
+    pivot_longer(cols = starts_with("h_"), names_to = "hour", values_to = "pop_indoor") %>%
+    mutate(hour = as.numeric(gsub("h_","",hour)))
+  
+  hsortiemaison <- HBI %>%
+    mutate(hsortiemaison = paste0("h_",hsortiemaison)) %>%
+    group_by(codevillage, hsortiemaison, periode, saison) %>%
+    dplyr::summarise(count = n()) %>%
+    as_tibble() %>%
+    left_join(pop) %>%
+    pivot_wider(names_from = hsortiemaison, values_from = count, values_fill = list(count = 0)) %>%
+    mutate(h_h4=pop-(h_4)) %>%
+    mutate(h_h5=pop-(h_4+h_5)) %>%
+    mutate(h_h6=pop-(h_4+h_5+h_6)) %>%
+    mutate(h_h7=pop-(h_4+h_5+h_6+h_7)) %>%
+    mutate(h_h8=pop-(h_4+h_5+h_6+h_7+h_8)) %>%
+    dplyr::select(-c(h_4,h_5,h_6,h_7,h_8,h_10,pop)) %>%
+    pivot_longer(cols = starts_with("h_h"), names_to = "hour", values_to = "pop_indoor") %>%
+    mutate(hour = as.numeric(gsub("h_h","",hour)))
+  
+  
+}
 
  HBB <- dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
    dplyr::select(-geom) %>%
@@ -944,7 +1041,7 @@ hsortiemaison <- HBI %>%
    dplyr::select(-c(h_4,h_5,h_6,h_7,h_8,h_9,pop)) %>%
    pivot_longer(cols = starts_with("h_h"), names_to = "hour", values_to = "pop_coucher") %>%
    mutate(hour = as.numeric(gsub("h_h","",hour)))
- 
+
 hours <- c(0:10,16:23)
 hours2 <- rep(hours,nrow(pop))
 
@@ -981,7 +1078,7 @@ hum_behav_4_exophagy <- t %>%
    mutate(date_sort = lubridate::ymd_h(paste0(dateenquete2," 0",hsortiemaison))) %>%
    mutate(HBI = as.numeric(date_sort - date_int)) %>%
    dplyr::group_by(codevillage,periode,saison) %>%
-   summarise(HBI = mean(HBI))
+   summarise(HBI2 = mean(HBI))
 
  HBB <- dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
    dplyr::select(-geom) %>%
@@ -995,12 +1092,40 @@ hum_behav_4_exophagy <- t %>%
    mutate(HBB = as.numeric(date_sort - date_int)) %>%
    mutate(HBB = ifelse(dormirssmoust == "non",0,HBB)) %>%
    dplyr::group_by(codevillage,periode,saison) %>%
-   summarise(HBB = mean(HBB))
+   summarise(HBB2 = mean(HBB))
 
  hum_behav_4_earlylatebiting <- t %>%
    left_join(HBI) %>%
    left_join(HBB) %>%
-   dplyr::select(idpointdecapture,HBI,HBB)
+   dplyr::select(idpointdecapture,HBI2,HBB2,saison)
+ 
+   if(code_pays=="CI"){
+     
+     HBI_season <- HBI %>% group_by(saison) %>% summarise(HBI_mean = mean(HBI2,na.rm = TRUE))
+     hum_behav_4_earlylatebiting$HBI2[which(is.na(hum_behav_4_earlylatebiting$HBI2) & hum_behav_4_earlylatebiting$saison=="pluies")] <- HBI_season$HBI_mean[which(HBI_season$saison == "pluies")]
+     hum_behav_4_earlylatebiting$HBI2[which(is.na(hum_behav_4_earlylatebiting$HBI2) & hum_behav_4_earlylatebiting$saison=="seche")] <- HBI_season$HBI_mean[which(HBI_season$saison == "seche")]
+     
+     HBB_season <- HBB %>% group_by(saison) %>% summarise(HBB_mean = mean(HBB2,na.rm = TRUE))
+     hum_behav_4_earlylatebiting$HBB2[which(is.na(hum_behav_4_earlylatebiting$HBB2) & hum_behav_4_earlylatebiting$saison=="pluies")] <- HBI_season$HBI_mean[which(HBB_season$saison == "pluies")]
+     hum_behav_4_earlylatebiting$HBB2[which(is.na(hum_behav_4_earlylatebiting$HBB2) & hum_behav_4_earlylatebiting$saison=="seche")] <- HBI_season$HBI_mean[which(HBB_season$saison == "seche")]
+     
+   }
+ hum_behav_4_earlylatebiting$saison=NULL
+ 
+ hum_behav_4_earlylatebiting <- hum_behav_4_earlylatebiting %>% 
+   group_by(idpointdecapture) %>%
+   summarise(HBI2 = mean(HBI2), HBB2 = mean(HBB2)) %>%
+   as_tibble()
+ 
+ hum_behav_4_exophagy <- hum_behav_4_exophagy %>% 
+   group_by(idpointdecapture,heuredecapture) %>%
+   summarise(HBI = mean(HBI), HBB = mean(HBB)) %>%
+   as_tibble()
+ 
+ LUS <- LUS %>% 
+   group_by(idpointdecapture) %>%
+   summarise(LUS = mean(LUS)) %>%
+   as_tibble()
 
 return(list(LUS = LUS, hum_behav_4_exophagy = hum_behav_4_exophagy, hum_behav_4_earlylatebiting = hum_behav_4_earlylatebiting))
 }
@@ -1041,9 +1166,9 @@ load_time_since_vc <- function(code_pays, entomo_csh_metadata_l1){
     left_join(dbReadTable(react_gpkg, 'recensement_villages_l1') %>% dplyr::select(codevillage,date_debut_interv)) %>%
     mutate(VCT = as.numeric(as.Date(date_capture)-as.Date("2016-07-15"))) %>%
     mutate(VCT2 = as.numeric(as.Date(date_capture)-as.Date(date_debut_interv))) %>%
-    mutate(VCT2 = ifelse(VCT2<0,0,VCT2)) %>%
-    mutate(VCT2 = VCT2/7) %>%
-    mutate(VCT = VCT/7) %>%
+    mutate(VCT2 = ifelse(VCT2<0 | VCT == VCT2 | is.na(VCT2),0,VCT2)) %>%
+    mutate(VCT2 = VCT2/30) %>%
+    mutate(VCT = VCT/30) %>%
     dplyr::select(idpointdecapture,VCT,VCT2)
     
   return(time_since_vc)
@@ -1141,7 +1266,7 @@ fun_glmm_cross_validation <- function(indices_cv, th_mod, mod, df, ind_vars_to_c
       th_mod_th_it <- glmmTMB(formula(th_mod), data = df_train, family = truncated_nbinom2)
       preds_th_it <- predict(th_mod_th_it, newdata = df_test, type = "response", allow.new.levels=TRUE)
       metric <- c(metric,Metrics::rmse(df_test$resp_var,preds_th_it))
-    } else if (mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","exophagy","early_late_biting","presence")){
+    } else if (mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","physiological_resistance_ace1","exophagy","early_late_biting","presence","early_biting","late_biting","physiological_resistance_kdrw_reg","physiological_resistance_kdre_reg","exophagy_reg","early_late_biting_reg","presence_reg","early_biting_reg","late_biting_reg")){
       th_mod_th_it <- glmmTMB(formula(th_mod), data = df_train, family = binomial(link = "logit"))
       preds_th_it <- predict(th_mod_th_it, newdata = df_test, type = "response", allow.new.levels=TRUE)
           metric <- c(metric,mltools::auc_roc(preds_th_it, df_test$resp_var))
@@ -1298,19 +1423,26 @@ fun_multicollinearity <- function(df, vars_to_test){
 }
 
 
-fun_compute_glmm <- function(df, predictors, predictors_forced = NULL, mod, cv_type = NULL){
+fun_compute_glmm <- function(df, predictors, predictors_forced = NULL, mod, cv_type = NULL, predictors_interaction = NULL){
   
   ###### create indices for cross-validation
   indices_spatial <- CAST::CreateSpacetimeFolds(df, spacevar = "codevillage", k = length(unique(df$codevillage)))
   indices_temporal <- CAST::CreateSpacetimeFolds(df, timevar = "nummission", k = length(unique(df$nummission)))
   indices_spatiotemporal <- CAST::CreateSpacetimeFolds(df, timevar = "nummission", spacevar = "codevillage", k = ifelse(mod=="abundance",3,4), seed = 10) # set seed for reproducibility as folds of spatiotemporal cv can change 
-  indices_spatiotemporal2 <- CAST::CreateSpacetimeFolds(df, spacevar = "col_folds", k =  length(unique(df$col_folds))) 
+  #indices_spatiotemporal2 <- CAST::CreateSpacetimeFolds(df, spacevar = "col_folds", k =  length(unique(df$col_folds))) 
   
   df <- df %>% mutate(int_ext = fct_relevel(int_ext,c("i","e")))
   df <- df %>% dplyr::select(resp_var,codevillage,pointdecapture,int_ext,nummission,predictors,predictors_forced) %>% mutate_if(is.character, as.factor)
   df$pointdecapture2 <- as.factor(paste0(df$codevillage,df$pointdecapture))
 
-  form <- as.formula(paste("resp_var ~ ",paste(predictors, collapse = "+"))) # collapse = "*" to take into account the interactions
+  if(!is.null(predictors_interaction)){
+    predictors <- setdiff(predictors,predictors_interaction)
+    form <- as.formula(paste("resp_var ~ ",paste(predictors, collapse = "+"),"+",paste(predictors_interaction, collapse = "*"))) # collapse = "*" to take into account the interactions
+  } else {
+   form <- as.formula(paste("resp_var ~ ",paste(predictors, collapse = "+"))) # collapse = "*" to take into account the interactions
+  }
+  
+  
   
   if(!is.null(predictors_forced)){
     form_forc <- as.formula(paste(" ~", paste(predictors_forced, collapse = "+"), "+ (1|codevillage/pointdecapture2)")) 
@@ -1318,13 +1450,13 @@ fun_compute_glmm <- function(df, predictors, predictors_forced = NULL, mod, cv_t
     form_forc <- as.formula("~ (1|codevillage/pointdecapture2)")
   }
   
-  predictors_to_scale <- setdiff(c(predictors, predictors_forced), c("VCM","IEH","int_ext"))
-  df_mod <- df %>% mutate_at(predictors_to_scale, ~scale(., center = TRUE, scale = FALSE)) %>% dplyr::select(c("resp_var","codevillage","pointdecapture2",predictors,predictors_forced))
+  predictors_to_scale <- setdiff(c(predictors, predictors_forced, predictors_interaction), c("VCM","IEH","int_ext","kdre","kdrw","ace1"))
+  df_mod <- df %>% mutate_at(predictors_to_scale, ~scale(., center = TRUE, scale = FALSE)) %>% dplyr::select(c("resp_var","codevillage","pointdecapture2",predictors,predictors_forced,predictors_interaction))
   
   if(mod == "abundance"){
     th_mod <- buildglmmTMB(form, include = form_forc, data = df_mod, family = truncated_nbinom2)
     #df_mod_results <- broom.mixed::tidy(th_mod@model, conf.int = TRUE)
-  } else if (mod %in% c("presence","abundance", "early_late_biting","late_biting","early_biting", "exophagy", "physiological_resistance_kdrw","physiological_resistance_kdre","physiological_resistance_ace1")){
+  } else if (mod %in% c("presence","abundance", "early_late_biting","late_biting","early_biting", "exophagy", "physiological_resistance_kdrw","physiological_resistance_kdre","physiological_resistance_ace1","late_biting_reg","early_biting_reg", "exophagy_reg", "physiological_resistance_kdrw_reg","physiological_resistance_kdre_reg","physiological_resistance_ace1_reg")){
     th_mod <- buildglmmTMB(form, include = form_forc, data = df_mod, family = binomial(link = "logit"))
     #df_mod_results <- broom.mixed::tidy(th_mod@model, conf.int = TRUE, exponentiate = TRUE)
   }
@@ -1561,10 +1693,14 @@ fun_compute_rf <- function(df, predictors, cv_col, mod, featureselect){
   ###### create indices for cross-validation
   #indices_cv <- CAST::CreateSpacetimeFolds(df, spacevar = "codevillage",timevar = "nummission", k = 10, seed = 29)
   
-   indices_cv <- CAST::CreateSpacetimeFolds(df, spacevar = cv_col, k = length(unique(df[,cv_col])))
-# also works with : indices_cv <- groupKFold(d[,cv_col], k =  length(unique(df[,cv_col])))
-  df <- df %>% dplyr::select(resp_var,predictors,codevillage,nummission,pointdecapture,int_ext) %>% mutate(int_ext = ifelse(int_ext=="int.","i","e")) %>% mutate_if(is.character, as.factor)
+   indices_cv <- CAST::CreateSpacetimeFolds(df, spacevar = cv_col,k = length(unique(unlist(df[,cv_col]))))  # k = length(unique(df[,cv_col])
+# also works with : indices_cv <- groupKFold(df[,cv_col], k =  length(unique(df[,cv_col])))
   
+  if("int_ext" %in% colnames(df)){
+    df <- df %>% mutate(int_ext = ifelse(int_ext %in% c("int.","i"),"i","e"))
+  }
+   df <- df %>% dplyr::select(resp_var,predictors,codevillage,nummission,pointdecapture,int_ext) %>% mutate_if(is.character, as.factor)
+   
   
   if(mod %in% c("presence","abundance")){
     rownames(df)<- paste0(df$nummission,df$codevillage,df$pointdecapture,df$int_ext)
@@ -1607,15 +1743,15 @@ fun_compute_rf <- function(df, predictors, cv_col, mod, featureselect){
     }
     
     
-    
+    if(mod != "physiological_resistance_kdrw"){
     df$resp_var <- ifelse(df$resp_var==0,"Absence","Presence")
+    } else {
+      df$resp_var <- ifelse(df$resp_var==0,"Presence","Absence")
+    }
     df$resp_var <- as.factor(df$resp_var)
     df$resp_var <- forcats::fct_relevel(df$resp_var,c("Presence","Absence"))
     
-    if(mod == "physiological_resistance_kdrw"){
-      df$resp_var <- forcats::fct_relevel(df$resp_var,c("Absence","Presence"))
-    }
-    
+
     if(mod %in% c("presence","early_biting","late_biting","physiological_resistance_kdrw","physiological_resistance_kdre","physiological_resistance_ace1")){
     met = "PR_AUC"
     } else if(mod %in% c("exophagy")){
@@ -1637,7 +1773,8 @@ fun_compute_rf <- function(df, predictors, cv_col, mod, featureselect){
                         indexOut = indices_cv$indexOut,
                         summaryFunction = comboSummary,
                         classProbs = TRUE,
-                        savePredictions = 'final')
+                        savePredictions = 'final',
+                        verboseIter = TRUE)
     
     # if(cv_type == "random"){
     #   rfFuncs$summary <- prSummary
@@ -1654,6 +1791,20 @@ fun_compute_rf <- function(df, predictors, cv_col, mod, featureselect){
     
     met = "Accuracy"
     
+  } else if (mod %in% c("exophagy_reg","early_biting_reg","late_biting_reg","physiological_resistance_kdrw_reg","physiological_resistance_kdre_reg","physiological_resistance_ace1_reg")){
+    
+    
+    tr = trainControl(method="cv",
+                      index = indices_cv$index, 
+                      indexOut = indices_cv$indexOut,
+                      savePredictions = 'final')
+    
+    met = "RMSE" 
+    
+    if(mod %in% c("early_biting_reg","late_biting_reg","physiological_resistance_kdre_reg","physiological_resistance_ace1_reg")){
+    df$resp_var <- log(df$resp_var)
+    }
+
   }
   
 
@@ -1666,10 +1817,10 @@ fun_compute_rf <- function(df, predictors, cv_col, mod, featureselect){
   } else {
     
     if(featureselect == TRUE){
-      th_mod <- CAST::ffs(predictors = df[,predictors], response = df$resp_var, method = "rf", tuneLength = 5, trControl = tr, metric = met, importance = T)
+      th_mod <- CAST::ffs(predictors = df[,predictors], response = df$resp_var, method = "ranger", tuneLength = 5, trControl = tr, metric = met, maximize = ifelse(met %in% c("RMSE", "logLoss", "MAE", "brier","Dist"), FALSE,TRUE),  preProcess = c("center","scale"),importance = "permutation", local.importance = TRUE)
     } else {
       #th_mod <- caret::train(x = df[,predictors], y = df$resp_var, method = "rf", tuneLength = 10, trControl = tr, metric = met, maximize = ifelse(met %in% c("RMSE", "logLoss", "MAE", "brier","Dist"), FALSE,TRUE), importance = T, keep.forest=TRUE, keep.inbag=TRUE)
-      th_mod <- caret::train(x = df[,predictors], y = df$resp_var, method = "ranger", tuneLength = 10, trControl = tr, metric = met, maximize = ifelse(met %in% c("RMSE", "logLoss", "MAE", "brier","Dist"), FALSE,TRUE), importance = "permutation", local.importance = TRUE) #importance = "impurity_corrected" , preProcess = c("center","scale")
+      th_mod <- caret::train(x = df[,predictors], y = df$resp_var, method = "ranger", tuneLength = 5, trControl = tr, metric = met, maximize = ifelse(met %in% c("RMSE", "logLoss", "MAE", "brier","Dist"), FALSE,TRUE),  preProcess = c("center","scale"),importance = "permutation", local.importance = TRUE) #importance = "impurity_corrected" 
       
     }
     
@@ -1683,6 +1834,7 @@ fun_compute_rf <- function(df, predictors, cv_col, mod, featureselect){
       dplyr::select(pred,Presence,obs,codevillage,nummission,pointdecapture,int_ext) %>%
       mutate(obs = ifelse(obs == "Absence",0,1)) %>%
       dplyr::rename(pred_final = pred, pred = Presence)
+    
   } else {
     df_cv <- th_mod$pred %>%
       left_join(df) %>%

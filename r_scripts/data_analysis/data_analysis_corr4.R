@@ -80,9 +80,9 @@
     #   landcover_layers_to_keep <- c(11,12)
     # } else {
     if(code_pays == "BF"){
-      landcover_layers_to_keep <- c(2,3)
+      landcover_layers_to_keep <- c(2,3,4)
     } else if (code_pays == "CI"){
-      landcover_layers_to_keep <- c(7,8)
+      landcover_layers_to_keep <- c(7,8,9)
     }
     #}
     
@@ -95,6 +95,16 @@
     th_env_nightcatch <- env_spatial_all[[4]]
     th_env_static <- env_spatial_all[[5]]
     rm(env_spatial_all)
+    
+    # load time since vector control measure
+    time_since_vc <- load_time_since_vc(code_pays, entomo_csh_metadata_l1)
+    
+    # load human beahviour use data
+    hum_behav <- load_hmnbehav_data(code_pays, entomo_csh_metadata_l1)
+    LUS = hum_behav[[1]]
+    hum_behav_4_exophagy = hum_behav[[2]]
+    hum_behav_4_earlylatebiting = hum_behav[[3]]
+    rm(hum_behav)
     
     # load coordinates
     spatial_coordinates <- load_csh_sp_coord()
@@ -142,42 +152,65 @@
       mutate(VCM = case_when(VCM == "Ctrle" ~ "LLIN",
                              VCM == "IEC" ~ "LLIN + IEC",
                              VCM == "IRS" ~ "LLIN + IRS",
-                            VCM == "IVM" ~ "LLIN + IVM")) %>%
+                            VCM == "IVM" ~ "LLIN + IVM",
+                            VCM == 'Larvicide' ~ 'LLIN + Larv.')) %>%
       mutate(mission_village = paste0(nummission,codevillage)) %>%
       mutate_all(funs(ifelse(is.na(.), mean(., na.rm = TRUE), .)))
     
     th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture[, colSums(is.na(th_trmetrics_entomo_postedecapture)) != nrow(th_trmetrics_entomo_postedecapture)]
+
     
-    
+    rf_lto <- NULL
+    rf_llo <- NULL
+    spatial_corrs_spearman <- NULL
+    spatial_corrs_glmm <- NULL
+    temporal_corrs_spearman <- NULL
+    temporal_corrs_glmm<- NULL
     
     ## landcover 
     if(code_pays=="BF"){
       predictors <- setdiff(c(colnames(env_landcover)[grepl("_3_",colnames(env_landcover))], "lsm_c_pland_250_2_5","lsm_c_pland_500_2_5","lsm_c_pland_1000_2_5","lsm_c_pland_2000_2_5",colnames(env_spatial), "WMD"),"idpointdecapture")
       predictors <- setdiff(predictors, predictors[grepl("_3_12|3_5",predictors)])
       predictors <- predictors[!grepl('TSL|TEL|TAS|TCI|TWI|WAL|HYS|LIG30|POH|POP', predictors)]
+      
+      predictors <- c(predictors, "NMT"  , "NMH"  , "NMA",  "RFH" ,  "WSP"  ,  "LMN")
+      
       } else {
       predictors <- setdiff(c(colnames(env_landcover), colnames(env_spatial), "WMD"),"idpointdecapture")
       
       #predictors <- setdiff(predictors, predictors[grepl("_8_15|8_16",predictors)])
+
+      predictors <- c(predictors, "NMT"  , "NMH"  , "NMA",  "RFH" ,  "WSP"  ,  "LMN")
       
     }
+
   
-    # spatial_corrs_spearman_withrandomeff <- fun_feature_forward_selection(
-    #   df = th_trmetrics_entomo_postedecapture, 
-    #   stat_method = "spearman", 
-    #   spearman_factor = "codevillage",
-    #   mod = mod, 
-    #   type = "univariate_selection", 
-    #   expl_vars_to_test = predictors)
-  
-    spatial_corrs_spearman <- fun_feature_forward_selection(
-      df = th_trmetrics_entomo_postedecapture, 
-      stat_method = "spearman", 
+    cat("calc spearman\n")
+     spatial_corrs_spearman <- fun_feature_forward_selection(
+       df = th_trmetrics_entomo_postedecapture, 
+       stat_method = "spearman", 
+       spearman_factor = NULL,
+       mod = ifelse(mod=="presence","presence","abundance"), 
+       type = "univariate_selection", 
+       expl_vars_to_keep = NULL,
+       expl_vars_to_test = predictors)
+    
+     cat("calc glmm\n")
+    spatial_corrs_glmm <- fun_feature_forward_selection(
+      df = th_trmetrics_entomo_postedecapture,
+      stat_method = "glmm",
       spearman_factor = NULL,
-      mod = ifelse(mod=="presence","presence","abundance"), 
-      type = "univariate_selection", 
+      mod = ifelse(mod=="presence","presence","abundance"),
+      type = "univariate_selection",
       expl_vars_to_keep = NULL,
       expl_vars_to_test = predictors)
+
+    spatial_corrs_glmm <- spatial_corrs_glmm %>%
+      purrr::map(.,~broom.mixed::tidy(., conf.int = TRUE, exponentiate = ifelse(mod == "abundance",FALSE,TRUE))) %>%
+      do.call(rbind.data.frame, .) %>%
+      filter(effect == "fixed" & term!="(Intercept)")
+
+    
   
     ## ccms
     time_vars <- c("RFD1F","TMIN1","TMAX1")
@@ -213,6 +246,32 @@
       corr_spearman$var <- time_vars[i]
   
       ccms_spearman[[i]] <- corr_spearman
+      
+      
+      corr_glmm <- fun_feature_forward_selection(
+        df = th_trmetrics_entomo_postedecapture,
+        stat_method = "glmm",
+        spearman_factor = NULL,
+        mod = ifelse(mod=="presence","presence","abundance"),
+        type = "univariate_selection",
+        expl_vars_to_keep = NULL,
+        expl_vars_to_test = expl_vars_to_test)
+      
+      
+      corr_glmm <- corr_glmm %>%
+        purrr::map(.,~broom.mixed::tidy(., conf.int = TRUE, exponentiate = ifelse(mod == "abundance",FALSE,TRUE))) %>%
+        do.call(rbind.data.frame, .) %>%
+        filter(effect == "fixed" & term!="(Intercept)")
+      
+      corr_glmm$time_lag_1 <- as.numeric(sub('.*\\_', '', corr_glmm$term))
+      corr_glmm$time_lag_2 <- as.numeric(stringr::str_match( corr_glmm$term, '([^_]+)(?:_[^_]+){1}$')[,2])
+      corr_glmm$diff_lag <- corr_glmm$time_lag_1 - corr_glmm$time_lag_2
+      corr_glmm <- arrange(corr_glmm, time_lag_1, time_lag_2)
+      corr_glmm$var <- time_vars[i]
+      
+      ccms_glmm[[i]] <- corr_glmm
+      
+      
     }
     
     
@@ -227,75 +286,77 @@
       
     }
   
-    
-    spatial_corrs_spearman2 <- spatial_corrs_spearman %>%
-      mutate(stock = rownames(.)) %>%
-      mutate(name = gsub("_"," ",stock)) %>%
-      mutate(function_name = paste(word(name,1),word(name,2),word(name,3),sep="_")) %>%
-      mutate(buffer = as.numeric(word(name,4))) %>%
-      mutate(layer_id = as.numeric(word(name,5))) %>%
-      mutate(pixval = as.numeric(word(name,6))) %>%
-      filter(!is.na(buffer), p <0.2, abs_corr>0.1) %>%
-      group_by(layer_id,pixval) %>%
-      nest() %>%
-      mutate(m = map(data, ~which.max(.$abs_corr))) %>%
-      mutate(m2 = map2(data,m, ~.x[.y,"stock"]))
-      
-    cols_to_keep_spacevar <- as.character(unlist(spatial_corrs_spearman2$m2))
-    cols_to_keep_spacevar <- cols_to_keep_spacevar[!grepl('_3_11|_3_8|_3_10|_3_6|3_7', cols_to_keep_spacevar)]
-    
-    cols_to_keep_timevar <- ccms_spearman %>% 
-      #purrr::map(.,~dplyr::filter(.,p<=0.05)) %>%
-      #purrr::keep(., ~nrow(.) > 0) %>%
-      purrr::map_chr(.,~rownames(.)[which.max(.$abs_corr)])
+   ###################### DECOCHER
+   spatial_corrs_spearman2 <- spatial_corrs_spearman %>%
+     mutate(stock = rownames(.)) %>%
+     mutate(name = gsub("_"," ",stock)) %>%
+     mutate(function_name = paste(word(name,1),word(name,2),word(name,3),sep="_")) %>%
+     mutate(buffer = as.numeric(word(name,4))) %>%
+     mutate(layer_id = as.numeric(word(name,5))) %>%
+     mutate(pixval = as.numeric(word(name,6))) %>%
+     filter(!is.na(buffer), p <0.2, abs_corr>0.1) %>%
+     group_by(layer_id,pixval) %>%
+     nest() %>%
+     mutate(m = map(data, ~which.max(.$abs_corr))) %>%
+     mutate(m2 = map2(data,m, ~.x[.y,"stock"]))
+
+   cols_to_keep_spacevar <- as.character(unlist(spatial_corrs_spearman2$m2))
+   cols_to_keep_spacevar <- cols_to_keep_spacevar[!grepl('_3_11|_3_8|_3_10|_3_6|3_7', cols_to_keep_spacevar)]
+
+   cols_to_keep_timevar <- ccms_spearman %>%
+     purrr::map_chr(.,~rownames(.)[which.max(.$abs_corr)])
+
+
+    predictors <- unique(c(cols_to_keep_spacevar,
+                           "WMD","WLS_2000",
+                           cols_to_keep_timevar,"VCM","int_ext"))
+
+
+   if(code_pays=="BF"){
+     predictors <- unique(c(predictors,"lsm_c_pland_2000_2_5","lsm_c_pland_2000_3_9"))
+   } else if(code_pays=="CI"){
+
+   }
+   ################################# FIN DECOCHER
   
     
-     predictors <- unique(c(cols_to_keep_spacevar,
-                            "WMD","WLS_2000",
-                            cols_to_keep_timevar,"VCM","int_ext"))  #,"codevillage"
     
     
-    if(code_pays=="BF"){
-      predictors <- unique(c(predictors,"lsm_c_pland_2000_2_5","lsm_c_pland_2000_3_9"))
-    } else if(code_pays=="CI"){
-      
-    }
-   
-  
-    # spatial_vars <- fun_feature_forward_selection(
-    #   df = th_trmetrics_entomo_postedecapture,
-    #   stat_method = "rf",
-    #   mod = mod,
-    #   type = "model_comparison",
-    #   expl_vars_to_keep = cols_to_keep_timevar,
-    #   expl_vars_to_test = spatial_vars,
-    #   cross_validation_type = "temporal",
-    #   tune_length = 3)
+    
+    # # spatial_vars <- fun_feature_forward_selection(
+    # #   df = th_trmetrics_entomo_postedecapture,
+    # #   stat_method = "rf",
+    # #   mod = mod,
+    # #   type = "model_comparison",
+    # #   expl_vars_to_keep = cols_to_keep_timevar,
+    # #   expl_vars_to_test = spatial_vars,
+    # #   cross_validation_type = "temporal",
+    # #   tune_length = 3)
+    # # 
+    # # spatial_vars <- spatial_vars %>%
+    # #   filter(diff_res_w_basemod > 0) %>%
+    # #   arrange(desc(diff_res_w_basemod)) %>%
+    # #   top_n(10)
     # 
-    # spatial_vars <- spatial_vars %>%
-    #   filter(diff_res_w_basemod > 0) %>%
-    #   arrange(desc(diff_res_w_basemod)) %>%
-    #   top_n(10)
+    # # spatial_vars <- as.character(spatial_vars$name)
     
-    # spatial_vars <- as.character(spatial_vars$name)
+    predictors <- unique(c(predictors, "NMT"  , "NMH"  , "NMA",  "RFH" ,  "WSP"  ,  "LMN"))
     
-  
+    ####################### DECOCHER
     predictors <- fun_multicol(th_trmetrics_entomo_postedecapture, predictors)
+    ################################## FIN DECOCHER
     
-    # if(mod=="abundance"){
-    #   col_cv <- "mission_village"
-    # } else if(mod=="presence"){
-    #   col_cv <- "mission_village"
-    # }
+    # # if(mod=="abundance"){
+    # #   col_cv <- "mission_village"
+    # # } else if(mod=="presence"){
+    # #   col_cv <- "mission_village"
+    # # }
     
     
-    
-    #rf_lto <- fun_compute_rf(th_trmetrics_entomo_postedecapture, predictors, "nummission", mod, featureselect = FALSE)
-    rf_llo <- fun_compute_rf(th_trmetrics_entomo_postedecapture, predictors, "codevillage", mod, featureselect = FALSE)
-     rf_lto <- NULL
+    # rf_llo <- fun_compute_rf(th_trmetrics_entomo_postedecapture, predictors, "codevillage", mod, featureselect = FALSE)
     
 
-    return(list(spatial_corrs_spearman = spatial_corrs_spearman, temporal_corrs_spearman = ccms_spearman, rf_lto = rf_lto, rf_llo = rf_llo))
+    return(list(spatial_corrs_spearman = spatial_corrs_spearman, spatial_corrs_glmm = spatial_corrs_glmm,temporal_corrs_spearman = ccms_spearman, temporal_corrs_glmm = ccms_glmm,rf_lto = rf_lto, rf_llo = rf_llo))
     
   }
   
@@ -325,22 +386,27 @@
       mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
     model_results6 <- df_input_params_glmm[6,] %>%
       mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
-    # model_results7 <- df_input_params_glmm[7,] %>%
-    #   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
-    # model_results8 <- df_input_params_glmm[8,] %>%
-    #   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
-    # model_results9 <- df_input_params_glmm[9,] %>%
-    #   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
-    # model_results10 <- df_input_params_glmm[10,] %>%
-    #   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
+     model_results7 <- df_input_params_glmm[7,] %>%
+       mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
+     model_results8 <- df_input_params_glmm[8,] %>%
+       mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
+        model_results9 <- df_input_params_glmm[9,] %>%
+       mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
+      model_results10 <- df_input_params_glmm[10,] %>%
+       mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
     
-    model_results <- rbind(model_results1,model_results2,model_results3,model_results4,model_results5,model_results6)
+    model_results <- rbind(model_results1,model_results2,model_results3,model_results4,model_results5,model_results6,model_results7,model_results8,model_results9,model_results10)
     
     model_results <- model_results %>%
       mutate(spatial_corrs_spearman = map(results, ~pluck(.,"spatial_corrs_spearman"))) %>%
+      mutate(spatial_corrs_glmm = map(results, ~pluck(.,"spatial_corrs_glmm"))) %>%
       mutate(temporal_corrs_spearman = map(results, ~pluck(.,"temporal_corrs_spearman"))) %>%
+      mutate(temporal_corrs_glmm = map(results, ~pluck(.,"temporal_corrs_glmm"))) %>%
       mutate(rf_lto = map(results, ~pluck(.,"rf_lto"))) %>%
       mutate(rf_llo = map(results, ~pluck(.,"rf_llo"))) %>%
       dplyr::select(-results)
   
-  saveRDS(model_results,"/home/ptaconet/Bureau/data_analysis/model_results_univanalysis9.rds")
+  saveRDS(model_results,"/home/ptaconet/Bureau/data_analysis/model_results_univanalysis10.rds")  
+  # 9 : BF avec tous les résultats
+  # 10 : BF + CI, sans les RF , univariate avec glmm et spearman
+  # 12 : comme 9, avec en plus les données micro-climatiques
