@@ -189,6 +189,45 @@ df_mosquitoes$pcr_pf <- as.numeric(df_mosquitoes$pcr_pf)
 df_mosquitoes <- df_mosquitoes %>%
   mutate(pcr_espece = ifelse(especeanoph=="An.funestus","An.funestus_ss",pcr_espece))
 
+
+
+## update biomol data from CIV
+
+df_mosquitoes_ci <- df_mosquitoes %>% 
+  filter(codepays=="CI") %>%
+  mutate(code = substr(idmoustique,nchar(idmoustique)-4,nchar(idmoustique))) %>%
+  mutate(code = as.numeric(gsub("[^0-9.-]", "", code)))
+
+data_civ <- read_excel("data/react_db/miscellaneous_data/Rapportdactivité_LMB_IRD-IRP_10au16Décembre2018.xls")
+data_civ <- data_civ %>%
+  distinct() %>% 
+  filter(!(code==11151 & is.na(plasmodium)),!(code==11153 & is.na(plasmodium)),!(code==10130 & is.na(plasmodium)),!(code==10828 & is.na(plasmodium)),!(code==10832 & is.na(plasmodium)),!(code==10841 & is.na(plasmodium)),!(code==11486 & is.na(plasmodium)),!(code==10282 & is.na(plasmodium)),!(code==11080 & is.na(plasmodium)),!(code==11082 & is.na(plasmodium)),!(code==11087 & is.na(plasmodium)),!(code==11089 & is.na(plasmodium)),!(code==11093 & is.na(plasmodium)),!(code==11119 & is.na(plasmodium)),!(code==11125 & is.na(plasmodium)),!(code==11128 & is.na(plasmodium)),!(code==11105 & is.na(plasmodium)),!(code==11098 & is.na(plasmodium)),!(code==11099 & is.na(plasmodium))) %>%
+  mutate(postedecapture = ifelse(postedecapture == "int","i","e")) %>%
+  mutate(heuredecapture=substr(heuredecapture,0,2))%>%
+  filter(!is.na(heuredecapture)) %>%
+  mutate(codevillage = ifelse(codevillage == "KOU", "KON",codevillage)) %>%
+  mutate(codevillage = ifelse(codevillage == "NAV", "NAA",codevillage)) %>%
+  mutate(codevillage = ifelse(codevillage == "NAV" & nummission %in% c("5","6","7","8"), "NAM",codevillage)) %>%
+  mutate(codevillage = ifelse(codevillage == "KOL" & nummission %in% c("5","6","7","8"), "BLA",codevillage)) %>%
+  mutate(idpostedecapture=paste0(nummission,codevillage,pointdecapture,postedecapture)) %>%
+  dplyr::select(code,idpostedecapture,plasmodium) %>%
+  mutate(code = as.numeric(code))
+
+
+df_mosquitoes_ci = full_join(df_mosquitoes_ci, data_civ, by = c("code","idpostedecapture")) %>%
+  filter(!is.na(idmoustique)) %>%
+  mutate(pcr_pf = NA) %>%
+  mutate(pcr_pf = case_when(plasmodium == "P.falciparum" ~ 1,
+                            plasmodium %in% c("Negatif","négatif") ~ 0)) %>%
+  dplyr::select(colnames(df_mosquitoes))
+  
+
+# bind data
+
+df_mosquitoes <- df_mosquitoes %>%
+  filter(codepays!="CI") %>%
+  bind_rows(df_mosquitoes_ci)
+
 ## import ent_hlcmetadata to check if all villages / points de captures are ok
 #ent_hlcmetadata<-st_read(path_to_gpkg_database,"ent_hlcmetadata") %>% as_tibble
 #df_mosquitoes_check<-df_mosquitoes %>% mutate(codevillage=substr(idpointdecapture,2,4)) %>% mutate(nummission=as.numeric(substr(idpointdecapture,1,1)))

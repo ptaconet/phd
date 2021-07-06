@@ -100,3 +100,70 @@ villages <- villages %>%
                                      codevillage %in% c("SKI") ~ "2017-11-26",
                                      codevillage %in% c("YBE") ~ "2017-11-26"
   ))
+
+
+## distance aux centres de soins
+
+villages <- villages %>%
+  mutate(csps_csu = case_when(csps_csu == "CSU GUIEMBÉ" ~ "GUIEMBE",
+                              csps_csu == "SIOLOKAHA" ~ "SIOLOKAHA",
+                              csps_csu == "Nicéo" ~ "Niceo",
+                              csps_csu == "Tiankoura" ~ "Tiankoura",
+                              csps_csu == "Saptan" ~ "Saptan",
+                              csps_csu == "Iolonioro" ~ "Iolonioro",
+                              csps_csu == "CSU NAPIÉ" ~ "NAPIELEDOUGOU",
+                              csps_csu == "Pokouro" ~ "Pakouro",
+                              csps_csu == "CSU DIKODOUGOU" ~ "DIKODOUGOU",
+                              csps_csu == "CSU KARAKORO" ~ "KARAKORO",
+                              csps_csu == "Bondigui" ~ "Bondigui",
+                              csps_csu == "Loto" ~ "Loto",
+                              csps_csu == "CSR KIEMOU" ~ "KIEMOU",
+                              csps_csu == "DIKODOUGOU" ~ "DIKODOUGOU",
+                              csps_csu == "Dolo" ~ "Dolo",
+                              csps_csu == "Diébougou" ~ "Diébougou",
+                              csps_csu == "Konsabla" ~ "Konsalba",
+                              csps_csu == "DR BALLEKAHA" ~ "BALEKAHA 2",
+                              csps_csu == "Tenguera" ~ "Tenguera",
+                              csps_csu == "Diourao" ~ "Diourao",
+                              csps_csu == "Tioyo" ~ "Tioyo",
+                              codevillage=="LOK" ~ "NAPIELEDOUGOU",
+                              codevillage=="PEN" ~ "NAPIELEDOUGOU",
+                              codevillage=="FEL" ~ "KARAKORO"))
+
+
+villages <- villages %>%
+  st_as_sf(coords = c("X", "Y"), crs = 4326) %>%  
+  st_transform(32630) %>%
+  mutate(X_village = st_coordinates(.)[,1],Y_village = st_coordinates(.)[,2]) %>%
+  st_transform(4326) %>%
+  mutate(X = st_coordinates(.)[,1],Y = st_coordinates(.)[,2]) %>%
+  st_drop_geometry()
+  
+  
+
+# 
+# csps_bf <- st_read("data/react_db/miscellaneous_data/csps_diebougou.gpkg")
+# csps_ci <- st_read("data/react_db/miscellaneous_data/csps_korhogo.gpkg") %>%
+#   dplyr::select(LOCALITE) %>%
+#   rename(nom = LOCALITE, geometry = geom)
+# 
+# csps <- bind_rows(csps_ci,csps_bf) %>%
+#   st_transform(32630) %>%
+#   mutate(X_csps = st_coordinates(.)[,1],Y_csps = st_coordinates(.)[,2] ) %>%
+#   st_drop_geometry() %>%
+#   as_tibble()
+# 
+# 
+# villages <- villages %>%
+#   left_join(csps, by = c("csps_csu" = "nom")) %>%
+#   mutate(dist_to_csps_euclidian=sqrt((X_village-X_csps)^2+(Y_village-Y_csps)^2)/1000) %>%
+#   dplyr::select(-c(X_csps,Y_csps,Y_village,X_village))
+
+
+# ajouter distances aux CSPS
+
+dist_reel <- read_excel("data/react_db/miscellaneous_data/villages_react.xls") %>%
+  dplyr::select(codevillage,dist_to_csps_euclidian,dist_to_csps_real,passage_basfond_village_csps)
+
+villages <- villages %>%
+  left_join(dist_reel)

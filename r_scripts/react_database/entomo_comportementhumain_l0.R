@@ -1,145 +1,113 @@
-library(readxl)
-library(tidyverse)
+library(tidyverse) 
 library(lubridate)
-library(sf)
+library(readxl)
 
-## BF
-path_to_humanbehavior_excel<-"data/react_db/miscellaneous_data/DonnéesREACT/BF/entomo/comportement-humain/All_Data_HumanBehavior_BF.xlsx"
+# load household data and match date field type
+behav_men_BF_1 <- read_excel("data/react_db/miscellaneous_data/All_Data_HumanBehavior_BF.xlsx", sheet = "HBm1", na=c("","NA")) %>%
+	mutate(dateenquete = dateenquete %>% as.character()) %>% distinct()
+behav_men_BF_2 <- read_excel("data/react_db/miscellaneous_data/All_Data_HumanBehavior_BF.xlsx", sheet = "HBm2", na=c("","NA")) %>%
+	mutate(dateenquete = dateenquete %>% as.character()) %>% distinct()
+behav_men_BF_3 <- read_excel("data/react_db/miscellaneous_data/All_Data_HumanBehavior_BF.xlsx", sheet = "HBm3", na=c("","NA")) %>%
+	mutate(dateenquete = dateenquete %>% mdy() %>% as.character()) %>% distinct()
 
-hbm_sheets<-c("HBm1","HBm2","HBm3")
-hbmbehavior_sheets<-c("HBm1Behavior","HBm2Behavior","HBm3Behavior")
+# load individual data, join to household data (gps data), delete most of duplicates, match hour data type
+behav_ind_BF_1 <- read_excel("data/react_db/miscellaneous_data/All_Data_HumanBehavior_BF.xlsx", sheet = "HBm1Behavior", na=c("","NA"),col_types = "text") %>%
+	mutate(rcpdateenquete = as_date(as.numeric(rcpdateenquete), origin = "1899-12-30") %>% as.character()) %>%
+	left_join(behav_men_BF_1[,c(7:9,11,14)],by = c("rcpcodemenage"="codemenage","rcpdateenquete"="dateenquete")) %>%
+	distinct() %>%
+	mutate_at(c("hintmaison","hcoucher","hlever","hsortiemaison"), as.numeric ) %>%
+	mutate_at(c("hintmaison","hcoucher","hlever","hsortiemaison"), map_dbl, prod,24,3600 ) %>%
+	mutate_at(c("hintmaison","hcoucher","hlever","hsortiemaison"), hms::as_hms ) %>%
+	mutate_at(c("hintmaison","hcoucher","hlever","hsortiemaison"), as.character) %>%
+	mutate_at(c("hintmaison","hcoucher","hlever","hsortiemaison"), str_sub,1,8 ) 
 
+behav_ind_BF_2 <- read_excel("data/react_db/miscellaneous_data/All_Data_HumanBehavior_BF.xlsx", sheet = "HBm2Behavior", na=c("","NA"),col_types = "text") %>%
+	mutate(rcpdateenquete = as_date(as.numeric(rcpdateenquete), origin = "1899-12-30") %>% as.character()) %>%
+	left_join(behav_men_BF_2[,c(7:9,11,14)],by = c("rcpcodemenage"="codemenage","rcpdateenquete"="dateenquete")) %>%
+	filter(!(is.na(infosmenagecoordgpsLatitude))) %>%
+	distinct() %>%
+	mutate_at(c("hintmaison","hcoucher","hlever","hsortiemaison"), as.numeric ) %>%
+	mutate_at(c("hintmaison","hcoucher","hlever","hsortiemaison"), map_dbl, prod,24,3600 ) %>%
+	mutate_at(c("hintmaison","hcoucher","hlever","hsortiemaison"), hms::as_hms ) %>%
+	mutate_at(c("hintmaison","hcoucher","hlever","hsortiemaison"), as.character) %>%
+	mutate_at(c("hintmaison","hcoucher","hlever","hsortiemaison"), str_sub,1,8 ) 
 
-hbm_df<-NULL
-hbmbehavior_df<-NULL
-for (i in 1:length(hbm_sheets)){
+behav_ind_BF_3 <- read_excel("data/react_db/miscellaneous_data/All_Data_HumanBehavior_BF.xlsx", sheet = "HBm3Behavior", na=c("","NA"),col_types = "text") %>%
+	left_join(behav_men_BF_3[,c(7:9,11,14)],by = c("rcpcodemenage"="codemenage","rcpdateenquete"="dateenquete")) %>%
+	distinct() 
 
-  hbm_df_th_hbm<-read_excel(path_to_humanbehavior_excel,sheet=hbm_sheets[i])
-  hbmbehavior_df_th_hbmbehavior<-read_excel(path_to_humanbehavior_excel,sheet=hbmbehavior_sheets[i])
-
-  if(i < 3){
-    hbm_df_th_hbm$metadatemarkedascomplete<-ymd_hms(hbm_df_th_hbm$metadatemarkedascomplete)
-    hbmbehavior_df_th_hbmbehavior$rcpdateenquete<-ymd(hbmbehavior_df_th_hbmbehavior$rcpdateenquete)
-    hbmbehavior_df_th_hbmbehavior$hintmaison<-substr(as.character(hbmbehavior_df_th_hbmbehavior$hintmaison),12,20)
-    hbmbehavior_df_th_hbmbehavior$hcoucher<-substr(as.character(hbmbehavior_df_th_hbmbehavior$hcoucher),12,20)
-    hbmbehavior_df_th_hbmbehavior$hlever<-substr(as.character(hbmbehavior_df_th_hbmbehavior$hlever),12,20)
-    hbmbehavior_df_th_hbmbehavior$hsortiemaison<-substr(as.character(hbmbehavior_df_th_hbmbehavior$hsortiemaison),12,20)
-  } else if(i==3){
-    hbm_df_th_hbm$metadatemarkedascomplete<-mdy_hms(hbm_df_th_hbm$metadatemarkedascomplete)
-    hbm_df_th_hbm$dateenquete<-mdy(hbm_df_th_hbm$dateenquete)
-    hbm_df_th_hbm$metasubmissiondate<-mdy_hms(hbm_df_th_hbm$metasubmissiondate)
-    hbmbehavior_df_th_hbmbehavior$rcpdateenquete<-ymd(hbmbehavior_df_th_hbmbehavior$rcpdateenquete)
-  }
-
-  hbm_df<-rbind(hbm_df,hbm_df_th_hbm)
-  hbmbehavior_df<-rbind(hbmbehavior_df,hbmbehavior_df_th_hbmbehavior)
-
-}
-
-hbm_df$dateenquete<-as.character(hbm_df$dateenquete)
-hbmbehavior_df$rcpdateenquete<-as.character(hbmbehavior_df$rcpdateenquete)
-
-df_humanbehavior_bf<-left_join(hbmbehavior_df,hbm_df,by = c("rcpcodemenage" = "codemenage","rcpdateenquete"="dateenquete")) %>%
+# create dataframe for BF data
+behav_ind_BF <- bind_rows(behav_ind_BF_1, behav_ind_BF_2, behav_ind_BF_3) %>%
+	dplyr::select(-c(parentuid, ageclass1:ageclass3)) %>%
+	mutate(survey = ifelse(ymd(rcpdateenquete) %within% interval(ymd("2017-02-21"),ymd("2017-04-29")), 1, NA)) %>%
+	mutate(survey = ifelse(ymd(rcpdateenquete) %within% interval(ymd("2017-09-16"),ymd("2017-09-23")), 2, survey)) %>%
+	mutate(survey = ifelse(ymd(rcpdateenquete) %within% interval(ymd("2018-01-30"),ymd("2018-02-14")), 3, survey)) %>%
   mutate(codepays="BF") %>%
-    dplyr::select(rcpdateenquete,codevillage,codepays,numordremenage,rcpcodemenage,infosmenagecoordgpsLatitude,infosmenagecoordgpsLongitude,nomprenomrepdt,nbrenfant1,nbrenfant2,nbradulte,sexe,age,rcptrcheage,hintmaison,hcoucher,dormirssmoust,hlever,hsortiemaison) %>%
-  rename("dateenquete"="rcpdateenquete","codemenage"="rcpcodemenage","latitude"="infosmenagecoordgpsLatitude","longitude"="infosmenagecoordgpsLongitude") %>%
-  unique()
-
-df_humanbehavior_bf <- df_humanbehavior_bf %>%
-  mutate(dateenquete=replace(dateenquete, dateenquete=="2013-09-23", "2017-09-23")) %>%
-  mutate(dateenquete=as.Date(dateenquete)) %>%
+  mutate(rcpdateenquete=as.Date(rcpdateenquete)) %>%
   mutate(periode="preinterv") %>%
-  mutate(periode=replace(periode, dateenquete>"2018-01-01", "postinterv")) %>%
+  mutate(periode=replace(periode, rcpdateenquete>"2018-01-01", "postinterv")) %>%
   mutate(saison="seche") %>%
-  mutate(saison=replace(saison, dateenquete>"2017-09-01" & dateenquete<"2017-10-01", "pluies"))
+  mutate(saison=replace(saison, rcpdateenquete>"2017-09-01" & rcpdateenquete<"2017-10-01", "pluies"))
 
 
-## Check des horaires
 
-#df_humanbehavior_bf$hintmaison_datetime<-ymd_hms(paste(as.Date(df_humanbehavior_bf$dateenquete)-1,df_humanbehavior_bf$hintmaison))
-#df_humanbehavior_bf$hcoucher_datetime<-ymd_hms(paste(as.Date(df_humanbehavior_bf$dateenquete)-1,df_humanbehavior_bf$hcoucher))
-#df_humanbehavior_bf$hlever_datetime<-ymd_hms(paste(as.Date(df_humanbehavior_bf$dateenquete),df_humanbehavior_bf$hlever))
-#df_humanbehavior_bf$hsortiemaison_datetime<-ymd_hms(paste(as.Date(df_humanbehavior_bf$dateenquete),df_humanbehavior_bf$hsortiemaison))
+# behav_ind_BF %>% mutate(week = isoweek(ymd(rcpdateenquete)), year = isoyear(ymd(rcpdateenquete))) %>%
+# 	group_by(year,week) %>%
+# 	summarise(n=n(),min=min(ymd(rcpdateenquete)),max=max(ymd(rcpdateenquete)))
+	
+# same for CI data
+behav_men_CI_1 <- read_excel("data/react_db/miscellaneous_data/All_Data_HumanBehavior_CI.xlsx", sheet = "HBm1", na=c("","NA")) %>%
+	mutate(dateenquete = dateenquete %>% mdy() %>% as.character()) %>% distinct()
 
-#df_humanbehavior_bf <- df_humanbehavior_bf %>%
-#  mutate(diff_time_soir=difftime(hcoucher_datetime,hintmaison_datetime,units="mins")) %>%
-#  mutate(diff_time_matin=difftime(hsortiemaison_datetime,hlever_datetime,units="mins")) %>%
-#  mutate(diff_time_soir=replace(diff_time_soir, diff_time_soir< -1000, NA))
+behav_ind_CI_1 <- read_excel("data/react_db/miscellaneous_data/All_Data_HumanBehavior_CI.xlsx", sheet = "HBm1Behavior", na=c("","NA")) %>% distinct() %>%
+	left_join(behav_men_CI_1[,c(7:9,11,14)],by = c("rcpcodemenage"="codemenage","rcpdateenquete"="dateenquete")) %>%
+	distinct(across(!c(parentuid,infosmenagecoordgpsLatitude,infosmenagecoordgpsLongitude,infosmenagecoordgpsAltitude)),.keep_all = TRUE)
 
+behav_men_CI_2 <- read_excel("data/react_db/miscellaneous_data/All_Data_HumanBehavior_CI.xlsx", sheet = "HBm2", na=c("","NA")) %>%
+	mutate(dateenquete = dateenquete %>% mdy() %>% as.character()) %>% distinct()
 
-### CIV
-path_to_humanbehavior_excel<-"data/react_db/miscellaneous_data/DonnéesREACT/CI/entomo/comportement-humain/new/All_Data_HumanBehavior_orig.xlsx"
+behav_ind_CI_2 <- read_excel("data/react_db/miscellaneous_data/All_Data_HumanBehavior_CI.xlsx", sheet = "HBm2Behavior", na=c("","NA")) %>% distinct() %>%
+	left_join(behav_men_CI_2[,c(7:9,11,14)],by = c("rcpcodemenage"="codemenage","rcpdateenquete"="dateenquete")) %>%
+	distinct(across(!c(parentuid,infosmenagecoordgpsLatitude,infosmenagecoordgpsLongitude,infosmenagecoordgpsAltitude)),.keep_all = TRUE)
 
-hbm_sheets<-c("HBm1","HBm2")
-hbmbehavior_sheets<-c("HBm1Behavior","HBm2Behavior")
-
-
-hbm_df<-NULL
-hbmbehavior_df<-NULL
-for (i in 1:length(hbm_sheets)){
-
-  hbm_df_th_hbm<-read_excel(path_to_humanbehavior_excel,sheet=hbm_sheets[i])
-  hbmbehavior_df_th_hbmbehavior<-read_excel(path_to_humanbehavior_excel,sheet=hbmbehavior_sheets[i])
-
-  hbm_df<-rbind(hbm_df,hbm_df_th_hbm)
-  hbmbehavior_df<-rbind(hbmbehavior_df,hbmbehavior_df_th_hbmbehavior)
-
-}
-
-hbm_df$dateenquete<-as.character(mdy(hbm_df$dateenquete))
-
-hbm_df <- hbm_df %>%
-  mutate(codemenage=replace(codemenage, codemenage=="MOR016" & dateenquete=="2017-10-17" & nomprenomrepdt=="YEO_FA", "MOR099")) %>%
- mutate(codemenage=replace(codemenage, codemenage=="PEN012" & dateenquete=="2017-10-10" & nomprenomrepdt=="Silue dagafolo", "PEN099"))%>%
-mutate(codemenage=replace(codemenage, codemenage=="BAP010" & dateenquete=="2018-03-22" & nomprenomrepdt=="YEO_KOLOTCHOLOMA", "BAP099"))%>%
-mutate(codemenage=replace(codemenage, codemenage=="YAY021" & dateenquete=="2017-10-19" & nomprenomrepdt=="Sidibe Assana", "YAY099"))%>%
-mutate(codemenage=replace(codemenage, codemenage=="PES004" & dateenquete=="2017-10-13" & nomprenomrepdt=="Silue Souleymane", "PES099"))%>%
-mutate(codemenage=replace(codemenage, codemenage=="LAT009" & dateenquete=="2018-03-13" & nomprenomrepdt=="YEO_KAKI", "LAT099"))%>%
-mutate(codemenage=replace(codemenage, codemenage=="FEL015" & dateenquete=="2017-10-17" & nomprenomrepdt=="Yeo doro", "FEL099"))
-
-hbmbehavior_df <- hbmbehavior_df %>%
-  mutate(rcpcodemenage=replace(rcpcodemenage, rcpcodemenage=="MOR016" & rcpdateenquete=="2017-10-17" & rcpnomprenomrepdt=="YEO_FA", "MOR099")) %>%
-   mutate(rcpcodemenage=replace(rcpcodemenage, rcpcodemenage=="PEN012" & rcpdateenquete=="2017-10-10" & rcpnomprenomrepdt=="Silue dagafolo", "PEN099"))%>%
-mutate(rcpcodemenage=replace(rcpcodemenage, rcpcodemenage=="BAP010" & rcpdateenquete=="2018-03-22" & rcpnomprenomrepdt=="YEO_KOLOTCHOLOMA", "BAP099"))%>%
-mutate(rcpcodemenage=replace(rcpcodemenage, rcpcodemenage=="YAY021" & rcpdateenquete=="2017-10-19" & rcpnomprenomrepdt=="Sidibe Assana", "YAY099"))%>%
-mutate(rcpcodemenage=replace(rcpcodemenage, rcpcodemenage=="PES004" & rcpdateenquete=="2017-10-13" & rcpnomprenomrepdt=="Silue Souleymane", "PES099"))%>%
-mutate(rcpcodemenage=replace(rcpcodemenage, rcpcodemenage=="LAT009" & rcpdateenquete=="2018-03-13" & rcpnomprenomrepdt=="YEO_KAKI", "LAT099"))%>%
-mutate(rcpcodemenage=replace(rcpcodemenage, rcpcodemenage=="FEL015" & rcpdateenquete=="2017-10-17" & rcpnomprenomrepdt=="Yeo doro", "FEL099"))
-
-df_humanbehavior_ci<-left_join(hbmbehavior_df,hbm_df,by = c("rcpcodemenage" = "codemenage","rcpdateenquete"="dateenquete")) %>%
+behav_ind_CI <- bind_rows(behav_ind_CI_1, behav_ind_CI_2) %>%
+	dplyr::select(-c(parentuid,ageclass1:ageclass3)) %>%
+	mutate(survey = ifelse(ymd(rcpdateenquete) %within% interval(ymd("2017-09-29"),ymd("2017-11-05")), 2, 3)) %>%
   mutate(codepays="CI") %>%
-  dplyr::select(rcpdateenquete,codevillage,codepays,numordremenage,rcpcodemenage,infosmenagecoordgpsLatitude,infosmenagecoordgpsLongitude,nomprenomrepdt,nbrenfant1,nbrenfant2,nbradulte,sexe,age,rcptrcheage,hintmaison,hcoucher,dormirssmoust,hlever,hsortiemaison) %>%
-  rename("dateenquete"="rcpdateenquete","codemenage"="rcpcodemenage","latitude"="infosmenagecoordgpsLatitude","longitude"="infosmenagecoordgpsLongitude") %>%
-  unique()
-
-df_humanbehavior_ci <- df_humanbehavior_ci %>%
-  mutate(dateenquete=as.Date(dateenquete)) %>%
+  mutate(rcpdateenquete=as.Date(rcpdateenquete)) %>%
   mutate(periode="preinterv") %>%
-  mutate(periode=replace(periode, dateenquete>"2017-09-30", "postinterv")) %>%
+  mutate(periode=replace(periode, rcpdateenquete>"2017-09-30", "postinterv")) %>%
   mutate(saison="seche") %>%
-  mutate(saison=replace(saison, dateenquete<"2018-01-01", "pluies"))
+  mutate(saison=replace(saison, rcpdateenquete<"2018-01-01", "pluies")) %>%
+  mutate(rcpcodevillage=replace(rcpcodevillage, rcpcodevillage=="NAV", "NAA")) %>%
+  mutate(rcpcodevillage=replace(rcpcodevillage, rcpcodevillage=="KOU", "KON")) %>%
+  mutate(rcpcodevillage=replace(rcpcodevillage, rcpcodevillage=="NAA" & infosmenagecoordgpsLatitude<9, "NAM")) %>%
+  mutate(rcpcodevillage=replace(rcpcodevillage, rcpcodevillage=="KOL" & infosmenagecoordgpsLatitude<9, "BLA")) %>%
+  mutate(rcpcodevillage=replace(rcpcodevillage, rcpcodevillage=="NAN", "NAK")) %>%
+  mutate(rcpcodemenage = paste0(rcpcodevillage, substr(rcpcodemenage,4,6)))
+
+# behav_ind_CI %>% mutate(week = isoweek(ymd(rcpdateenquete)), year = isoyear(ymd(rcpdateenquete))) %>%
+# 	group_by(year,week) %>%
+# 	summarise(n=n(),min=min(ymd(rcpdateenquete)),max=max(ymd(rcpdateenquete)))
 
 
-df_humanbehavior<-rbind(df_humanbehavior_bf,df_humanbehavior_ci) %>%
-  arrange(codepays,dateenquete,codemenage) %>%
-  mutate(dateenquete=as.character(dateenquete))
+# merge BF and CI data			
+df_humanbehavior <- bind_rows(behav_ind_BF,behav_ind_CI)		
 
-df_humanbehavior<-df_humanbehavior %>%
-      mutate(codevillage=replace(codevillage, codepays=="CI" & codevillage=="NAV", "NAA")) %>%
-  mutate(codevillage=replace(codevillage, codepays=="CI" & codevillage=="KOU", "KON")) %>%
-  mutate(codevillage=replace(codevillage, codepays=="CI" & codevillage=="NAA" & latitude<9, "NAM")) %>%
-  mutate(codevillage=replace(codevillage, codepays=="CI" & codevillage=="KOL" & latitude<9, "BLA")) %>%
+colnames(df_humanbehavior) <- gsub("rcp","",colnames(df_humanbehavior))
+df_humanbehavior$infosmenagecoordgpsAltitude <- NULL
+df_humanbehavior$latitude <- df_humanbehavior$infosmenagecoordgpsLatitude
+df_humanbehavior$longitude <- df_humanbehavior$infosmenagecoordgpsLongitude
+df_humanbehavior$infosmenagecoordgpsLatitude <- df_humanbehavior$infosmenagecoordgpsLongitude <- NULL
 
-  mutate(codevillage=replace(codevillage, codepays=="CI" & codevillage=="NAN", "NAK")) %>%
-  mutate(codevillage=replace(codevillage, codemenage %in% c("KOU004","KOU012","KOU015") & dateenquete=="2018-02-10", "LOB")) %>%
-
-  mutate(codemenage=paste0(codevillage,sprintf("%03d",as.numeric(numordremenage))))
-
-
-## import villages to check if no error in villages names
-
-#villages_humanbehavior<-df_humanbehavior %>% distinct(codevillage,codepays) %>% mutate(humanbehabior=T)
-#villages_from_db<-st_read("/home/ptaconet/react/datasets/react_db.gpkg","rst_villages") %>% as_tibble %>% distinct(codevillage,codepays)  %>% mutate(officialvillages=T)
-#View(full_join(villages_humanbehavior,villages_from_db))
-
-
+df_humanbehavior$latitude[which(is.na(df_humanbehavior$latitude) & df_humanbehavior$codevillage=="OUI")] = 10.7911
+df_humanbehavior$longitude[which(is.na(df_humanbehavior$longitude) & df_humanbehavior$codevillage=="OUI")] = -3.4026
+  
+df_humanbehavior$latitude[which(is.na(df_humanbehavior$latitude) & df_humanbehavior$codevillage=="NIP")] =   10.9892
+df_humanbehavior$longitude[which(is.na(df_humanbehavior$longitude) & df_humanbehavior$codevillage=="NIP")] = -3.3848
+  
+df_humanbehavior$latitude[which(is.na(df_humanbehavior$latitude) & df_humanbehavior$codevillage=="KPA")] = 10.8153272
+df_humanbehavior$longitude[which(is.na(df_humanbehavior$longitude) & df_humanbehavior$codevillage=="KPA")] = -3.44626716
+  
+df_humanbehavior$latitude[which(is.na(df_humanbehavior$latitude) & df_humanbehavior$codevillage=="TDI")] = 10.69310416
+df_humanbehavior$longitude[which(is.na(df_humanbehavior$longitude) & df_humanbehavior$codevillage=="TDI")] = -3.202630125

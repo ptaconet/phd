@@ -45,8 +45,8 @@ library(landscapemetrics)
 
 ```{r,  echo = T}
 # arguments to change between CI and BF
-country <- "BF"  # for CI : "CI" , for BF : "BF"
-roi_name <- "diebougou"   # for CI : "korhogo" , for BF : "diebougou"
+country <- "CI"  # for CI : "CI" , for BF : "BF"
+roi_name <- "korhogo"   # for CI : "korhogo" , for BF : "diebougou"
 hydromorphic_classes_pixels <- c(2,3,8,9,10) # pixels values whose classes are considered hydromorphic.   for CI: c(11,14,5,2,13)  for BF: c(2,3,8,9,10)
 threshold_accumulation_raster <- 1000 # threshold for the accumulaton raster dataset (all values above this threshold are considered as the hydrographic network). # For CI: 800 ; For BF: 1000
 ## end arguments to change
@@ -694,7 +694,9 @@ RFH = RFH3 %>%
   dplyr::select(id,heuredecapture,val) %>%
   dplyr::rename(idpointdecapture = id, RFH = val) %>%
   group_by(idpointdecapture,heuredecapture) %>%
-  summarise(RFH = sum(RFH))
+  summarise(RFH = sum(RFH)) %>%
+  mutate(RFH=ifelse(RFH>0,1,0)) %>%
+  as_tibble()
 
 
 
@@ -767,7 +769,6 @@ for(i in 1:length(b)){
 WSP = WSP3 %>%
   dplyr::select(id,heuredecapture,val) %>%
   dplyr::rename(idpointdecapture = id, WSP = val)
-
 
 
 # Compute the mean wind direction for the whole duration of the night using the formulas provided here : https://en.wikipedia.org/wiki/Mean_of_circular_quantities

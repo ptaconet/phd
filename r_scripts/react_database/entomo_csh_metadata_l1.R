@@ -9,7 +9,7 @@ query<-"SELECT * FROM entomo_csh_ctrlequalite_l0"
 df<-dbGetQuery(react_gpkg, query)
 
 # erase data from mission 3 from BF and other bad rows
-df <- df %>% filter(!(is.na(nummission))) %>% 
+df <- df %>% dplyr::select(-geom) %>% filter(!(is.na(nummission))) %>% 
   #filter(nummission<=8) %>% 
   filter(!(nummission %in% c(3,15) & codepays=="BF"))
 

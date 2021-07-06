@@ -91,14 +91,17 @@ fun_plot_tile <- function(df, type, xvar = "species", yvar = "label", fillvar, m
     ylab("variable")
     
   if(type == "spearman"){
-   p <- p + scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0, limit = c(-1,1), space = "Lab", name = metric_name) + geom_text(aes(label = ifelse(is.na(correlation), "",round(correlation,2))), size = 3)
+   p <- p + scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0, limit = c(-1,1), space = "Lab", name = metric_name) + geom_text(aes(label = ifelse(is.na(correlation), "",round(correlation,2))), size = 3) +
+     labs(caption = paste0("Values displayed inside the cells : spearman correlation coefficient \n Only significant results (correlation >= 0.2 and pval <= 0.2 analysis) are displayed. Vector control measures and place (int.ext) variables where one-hot encoded."))
   }
   if(type == "glmm"){
-    p <- p + geom_text(aes(label = ifelse(is.na(estimate), "",paste0(round(estimate,2)," [",round(conf.low,2),";",round(conf.high,2),"] / p=",round(p.value,2)))), size = 3)
+    p <- p + geom_text(aes(label = ifelse(is.na(estimate), "",paste0(round(estimate,2)," [",round(conf.low,2),"; ",round(conf.high,2),"] / p",ifelse(p.value < 0.01,"<0.01",paste0("=",round(p.value,2)))))), size = 3) +
+      labs(caption = paste0("Format of the values displayed inside the cells : ",ifelse(indicator == "abundance","DDR","ODR")," [95% CI] / p-value \n Only significant results (pval <= 0.2 for univariate and pval <= 0.05 for multivariate analysis) are displayed, except for vector control measures where all results are displayed."))
   }
   if(type == "rf"){
-    p <- p + scale_fill_gradient(na.value = "white", low = "blue", high = "red", limit = c(0,max(df$importance[which(df$label_group!="Model perf.")])), space = "Lab", name = metric_name) + geom_text(aes(label = ifelse(label_group == "Model perf.", round(importance,2),"")), size = 3)
-      #labels=c("Low","","","High")
+    p <- p + scale_fill_gradient(na.value = "white", low = "blue", high = "red", limit = c(0,max(df$importance[which(df$label_group!="Model perf.")])), space = "Lab", name = metric_name) + geom_text(aes(label = ifelse(label_group == "Model perf.", round(importance,2),"")), size = 3) +
+    labs(caption = paste0("The overall quality of the model is displayed in the first row."))
+    
   }
   
   
@@ -236,7 +239,7 @@ rf_nightscience <-  do.call(rbind.data.frame, model_results$rf_nightscience_vari
 
   
 univ_spearmancorr <- univ_spearmancorr %>%
-  mutate(correlation = ifelse(pval >= 0.05 | abs_corr <= 0.2, NA, correlation)) %>%
+  mutate(correlation = ifelse(pval >= 0.2 | abs_corr <= 0.2, NA, correlation)) %>%
   mutate(correlation = round(correlation,2)) %>%
   nest(-indicator)
 
@@ -253,38 +256,42 @@ univ_glmm <- univ_glmm %>%
 
 glmm_pvalfilt_dayscience <- glmm_pvalfilt_dayscience %>%
   filter(!is.na(label)) %>%
+  mutate(label = ifelse(grepl("Vector control measure|interior",label), paste0(label, " (comp. to ",unit,")"),paste0(label, " (by add. ",unit,")"))) %>%
   mutate(effect = case_when(estimate < 1 & indicator != "abundance" ~ "negative",
                                                    estimate >= 1 & indicator != "abundance" ~ "positive",
                                                    estimate >= 0 & indicator == "abundance" ~ "positive",
                                                    estimate < 0  & indicator == "abundance" ~ "negative")) %>%
-  mutate(estimate = ifelse(p.value >= 0.05, NA, estimate)) %>%
+  mutate(estimate = ifelse(p.value >= 0.05 & !grepl("Vector control measure",label), NA, estimate)) %>%
   nest(-indicator)
 
 glmm_pvalfilt_nightscience <- glmm_pvalfilt_nightscience %>%
   filter(!is.na(label)) %>%
+  mutate(label = paste0(label, " (by add. ",unit,")")) %>%
   mutate(effect = case_when(estimate < 1 & indicator != "abundance" ~ "negative",
                             estimate >= 1 & indicator != "abundance" ~ "positive",
                             estimate >= 0 & indicator == "abundance" ~ "positive",
                             estimate < 0  & indicator == "abundance" ~ "negative")) %>%
-  mutate(estimate = ifelse(p.value >= 0.05, NA, estimate)) %>%
+  mutate(estimate = ifelse(p.value >= 0.05 & !grepl("Vector control measure",label), NA, estimate)) %>%
   nest(-indicator)
 
 glmm_spearmanfilt_dayscience <- glmm_spearmanfilt_dayscience %>%
   filter(!is.na(label)) %>%
+  mutate(label = paste0(label, " (by add. ",unit,")")) %>%
   mutate(effect = case_when(estimate < 1 & indicator != "abundance" ~ "negative",
                             estimate >= 1 & indicator != "abundance" ~ "positive",
                             estimate >= 0 & indicator == "abundance" ~ "positive",
                             estimate < 0  & indicator == "abundance" ~ "negative")) %>%
-  mutate(estimate = ifelse(p.value >= 0.05, NA, estimate)) %>%
+  mutate(estimate = ifelse(p.value >= 0.05 & !grepl("Vector control measure",label), NA, estimate)) %>%
   nest(-indicator)
 
 glmm_spearmanfilt_nightscience <- glmm_spearmanfilt_nightscience %>%
   filter(!is.na(label)) %>%
+  mutate(label = paste0(label, " (by add. ",unit,")")) %>%
   mutate(effect = case_when(estimate < 1 & indicator != "abundance" ~ "negative",
                             estimate >= 1 & indicator != "abundance" ~ "positive",
                             estimate >= 0 & indicator == "abundance" ~ "positive",
                             estimate < 0  & indicator == "abundance" ~ "negative")) %>%
-  mutate(estimate = ifelse(p.value >= 0.05, NA, estimate)) %>%
+  mutate(estimate = ifelse(p.value >= 0.05 & !grepl("Vector control measure",label), NA, estimate)) %>%
   nest(-indicator)
 
 
@@ -323,11 +330,11 @@ glmm_spearmanfilt_nightscience <- glmm_spearmanfilt_nightscience %>%
   dplyr::select(-data)
 
 rf_dayscience <- rf_dayscience %>%
-  mutate(plot_rf_dayscience = map2(data, indicator, ~fun_plot_tile(df = .x, type = "rf", fillvar = "importance", metric_name = "importance", indicator = .y, model_type = "Random forest"))) %>%
+  mutate(plot_rf_dayscience = map2(data, indicator, ~fun_plot_tile(df = .x, type = "rf", fillvar = "importance", metric_name = "importance", indicator = .y, model_type = "Random forest - feature importance (permutation)"))) %>%
   dplyr::select(-data)
 
 rf_nightscience <- rf_nightscience %>%
-  mutate(plot_rf_nightscience = map2(data, indicator, ~fun_plot_tile(df = .x, type = "rf", fillvar = "importance", metric_name = "importance", indicator = .y, model_type = "Random forest"))) %>%
+  mutate(plot_rf_nightscience = map2(data, indicator, ~fun_plot_tile(df = .x, type = "rf", fillvar = "importance", metric_name = "importance", indicator = .y, model_type = "Random forest - feature importance (permutation)"))) %>%
   dplyr::select(-data)
 
 plots <- univ_spearmancorr %>%
@@ -340,12 +347,18 @@ plots <- univ_spearmancorr %>%
   left_join(rf_nightscience)
 
 
-# pdps
-plots_interpret_rf <- model_results %>%
-  mutate(plots_rf_dayscience = furrr::future_pmap(list(multiv_rf_dayscience, mod, response_var, rf_dayscience_perf) , ~fun_plot_pdp(..1$mod$fit, ..1$df_mod, ..2, ..3, ..4))) #%>%
-  mutate(plots_rf_nightscience = furrr::future_pmap(list(multiv_rf_nightscience, mod, response_var, rf_nightscience_perf) , ~fun_plot_pdp(..1$mod$fit,..1$df_mod,..2,..3, ..4))) %>%
-  dplyr::select(response_var,code_pays,mod,plots_rf_dayscience,plots_rf_nightscience)
+# save plots
 
+plots <- plots %>%
+  mutate(plot_multiv = purrr::pmap(list(plot_univ_glmm, plot_glmm_pvalfilt_dayscience), ~patchwork::wrap_plots(..1,..2) ))
+
+# pdps
+plots_interpret_rf <- model_results[6,] %>%
+  filter(mod %in% c("presence","abundance")) %>%
+  mutate(plots_rf_dayscience = furrr::future_pmap(list(multiv_rf_dayscience, mod, response_var, rf_dayscience_perf) , ~fun_plot_pdp(..1$mod$fit, ..1$df_mod, ..2, ..3, ..4))) %>%
+  dplyr::select(response_var,code_pays,mod,plots_rf_dayscience)
+  #mutate(plots_rf_nightscience = furrr::future_pmap(list(multiv_rf_nightscience, mod, response_var, rf_nightscience_perf) , ~fun_plot_pdp(..1$mod$fit,..1$df_mod,..2,..3, ..4))) %>%
+  #dplyr::select(response_var,code_pays,mod,plots_rf_dayscience,plots_rf_nightscience)
 
 
 

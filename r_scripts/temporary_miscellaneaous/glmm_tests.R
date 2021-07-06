@@ -24,7 +24,7 @@ results <- expand_grid(dep_var,ind_vars)
 p_value <- function(dep_var, ind_var, data){
   formule <- as.formula(paste(dep_var," ~ ", ind_var, "+ (1|codevillage/pointdecapture)")) # write the formula for the model
   res <- data %>%
-    glmmTMB::glmmTMB(formule, data = ., family = nbinom2(link = "log")) %>% # fit the model
+    glmmTMB::glmmTMB(formule, data = ., family = truncated_nbinom2) %>% # fit the model
     Anova() %>% # test the significance of the variable
     nth(3) # get the p-value
   return(res)
@@ -35,9 +35,9 @@ results <- results %>%
   mutate(pvalue = map_dbl(ind_vars, ~p_value(dep_var, ., df_abundance))) %>% 
   filter(pvalue < 0.05)
 
-var_to_keep <- c(results$ind_vars,"int_ext","VCM")
+var_to_keep <- c(results$ind_vars,"int_ext")
 
-df_abundance <- df_abundance[,c("resp_var","codevillage","pointdecapture",var_to_keep)]
+df_abundance <- df_abundance[,c("resp_var","codevillage","pointdecapture","VCM",var_to_keep)]
 
 ## ggpairs pour voir distributions statistiques
 # pm1 <- ggpairs(df_abundance[,var_model], columns = c(1,2:5), upper = "blank") + theme_bw()
@@ -57,11 +57,11 @@ df_abundance <- df_abundance[,c("resp_var","codevillage","pointdecapture",var_to
 # ci dessous : un GLMM avec (1|codevillage/pointdecapture) en effet mixte, en intégrant uniquement 1 variable uniquement (rainfall)
 
 
-form <- as.formula(paste("resp_var ~ ",paste(var_to_keep, collapse = "+"), "+ (1|codevillage/pointdecapture)"))
+form <- as.formula(paste("resp_var ~ ",paste(var_to_keep, collapse = "+")))
 
-mod <- buildglmmTMB(form, data = df_abundance, family = nbinom2(link = "log"))
+mod2 <- buildglmmTMB(form, include = ~ VCM + (1|codevillage/pointdecapture), data = df_abundance, family = truncated_nbinom2)
 
-summary(mod)
+summary(mod2)
 
 
 summary(glm3)
@@ -70,10 +70,10 @@ Anova(glm3)# quelle covar est signif
 emmeans(glm3, "RFD1_F_2000_8_12")# a ameliorer 
 
 # validation des résidus du modèle. (package DHARMa). 
-res <- simulateResiduals(glm3)
+res <- simulateResiduals(mod2)
 plot(res)# je suis dubitative ... il me semblent bon ces résidus, mais la ligne est décallé. 
 
-resc <- residuals(glm3)
+resc <- residuals(mod2)
 plot(resc)
 
 resb <- simulateResiduals(glm3)
@@ -122,9 +122,12 @@ df_presence <- df_presence[,c("resp_var","codevillage","pointdecapture",var_to_k
 # pm1 <- ggpairs(df_presence[,var_model], columns = c(1,2:5), upper = "blank") + theme_bw()
 # pm1
 
-form <- as.formula(paste("resp_var ~ ",paste(var_to_keep, collapse = "+"), "+ (1|codevillage/pointdecapture)"))
+form <- as.formula(paste("resp_var ~ ",paste(var_to_keep, collapse = "+")))
 
-mod <- buildglmmTMB(form, data = df_presence, family = binomial(link = "logit"))
+mod <- buildglmmTMB(form, include = ~ VCM + (1|codevillage/pointdecapture), data = df_presence, family = binomial(link = "logit"))
+
+
+predict(mod, type = "response")
 
 summary(mod)
 res <- simulateResiduals(mod)

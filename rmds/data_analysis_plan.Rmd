@@ -327,9 +327,9 @@ L'objectif ici est donc de définir une méthode pour corréler la variable à e
 
 - absence de prise en compte de la non-indépendance des données 
 - impossibilité de détecter des relations non-monotones (pearson détécte uniquement les relations linéaires, spearman détecte les relations non-linéaires mais pas les relations non-monotones)
-- fonctionne pour la corrélation entre deux variables quantitatives (modèles de présence/absence) mais pas pour une variable binomiale et une variable quantitative (modèle d'abondance)
+- fonctionne pour la corrélation entre deux variables quantitatives (modèles de d'abondance) mais pas pour une variable binomiale et une variable quantitative (modèle de présence/absence)
 
-A titre d'exemple, lLa figure suivante donne la CCM pour la série "abondance tous Anopheles confondus" et la variable "précipitations quotidiennes" en utilisant un simple coefficient de Spearman :
+A titre d'exemple, la figure suivante donne la CCM pour la série "abondance tous Anopheles confondus" et la variable "précipitations quotidiennes" en utilisant un simple coefficient de Spearman :
 
 ```{r }
 knitr::include_graphics("figures/plot_zoom_png2.png")
@@ -337,9 +337,9 @@ knitr::include_graphics("figures/plot_zoom_png2.png")
 
 **Les questions auxquelles nous devons répondre quand à la séléction des variables explicatives temporelles sont donc les suivantes :**
 
-**- Quel(s) test(s) statistique(s) implémenter pour séléctionner la(es) variable(s) à retenir dans le modèle multivarié de présence / absence ?**
+**- Quel(s) test(s) ou modèles statistique(s) implémenter pour séléctionner la(es) variable(s) à retenir dans le modèle multivarié de présence / absence ?**
 
-**- Quel(s) test statistique(s) implémenter pour séléctionner la(es) variable(s) à retenir dans le modèle multivarié d'abondance ?**
+**- Quel(s) test ou modèles statistique(s) implémenter pour séléctionner la(es) variable(s) à retenir dans le modèle multivarié d'abondance ?**
 
 ##### Modèle de présence/absence
 

@@ -43,11 +43,11 @@ react_gpkg <- DBI::dbConnect(RSQLite::SQLite(),dbname = path_to_db)
 entomo_csh_metadata_l1 <- dbReadTable(react_gpkg, 'entomo_csh_metadata_l1') %>% filter(!(nummission %in% c("11","12","13","15")))
 
 ## table containing the response variables (ie variables to model)
-trmetrics_entomo_postedecapture <- dbReadTable(react_gpkg, 'trmetrics_entomo_postedecapture') %>% dplyr::select(-fid) %>% left_join(entomo_csh_metadata_l1 %>% dplyr::select(idpointdecapture, codevillage, pointdecapture, codepays, nummission)) %>% filter(!is.na(codevillage))
+trmetrics_entomo_postedecapture <- dbReadTable(react_gpkg, 'trmetrics_entomo_postedecapture') %>% dplyr::select(-fid) %>% left_join(entomo_csh_metadata_l1 %>% dplyr::select(idpointdecapture, codevillage, pointdecapture, codepays, nummission, period_interv)) %>% filter(!is.na(codevillage))
 
 ## tables containing the explanatory variables
 # spatiotemporal explanatory variables
-env_spatiotemporal <- dbReadTable(react_gpkg, 'env_spatiotemporal') %>% dplyr::select(-fid) %>% mutate(date = as.Date(date)) %>% dplyr::rename(idpointdecapture = id) %>% filter(var %in% c("SMO1","TMIN1","TMAX1","TAMP1","VNV8","RFD1_F","EVT8","LIG30","WVV10","WVH10"), buffer==2000, lag_time <= 60)
+env_spatiotemporal <- dbReadTable(react_gpkg, 'env_spatiotemporal') %>% dplyr::select(-fid) %>% mutate(date = as.Date(date)) %>% dplyr::rename(idpointdecapture = id) %>% filter(var %in% c("SMO1","TMIN1","TMAX1","TAMP1","VNV8","RFD1_F","EVT8","WVV10","WVH10"), buffer==2000, lag_time <= 60)
 
 fun_summarize_week <- function(var_to_summarize){
   
@@ -70,6 +70,9 @@ env_spatiotemporal <- env_spatiotemporal %>%
   bind_rows(fun_summarize_week("TAMP1")) %>%
   bind_rows(fun_summarize_week("SMO1"))
 
+# extract ligth from satellite data
+LIG <- dbReadTable(react_gpkg, 'env_spatiotemporal') %>% dplyr::select(-fid) %>% mutate(date = as.Date(date)) %>% dplyr::rename(idpointdecapture = id) %>% filter(var == "LIG30", lag_n == 3) %>% dplyr::select(idpointdecapture,buffer,val,var)
+
 # spatial-only explanatory variables
 env_spatial <- dbReadTable(react_gpkg,'env_spatial') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id)
 
@@ -83,9 +86,8 @@ env_nightcatch <-  dbReadTable(react_gpkg, 'env_nightcatch') %>% dplyr::select(-
 env_nightcatch_postedecapture <- dbReadTable(react_gpkg,"env_nightcatch_postedecapture") %>% dplyr::select(-fid)
 
 # landcover variables
-env_landcover <-  dbReadTable(react_gpkg, 'env_landcover') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id) %>% filter(buffer>100, !(metric %in% c("ed","np")))
+env_landcover <-  dbReadTable(react_gpkg, 'env_landcover') %>% dplyr::select(-fid) %>% dplyr::rename(idpointdecapture = id) %>% filter(buffer > 250, !(metric %in% c("ed","np")))
 
-mean_date_mission <- entomo_csh_metadata_l1 %>% mutate(date_capture = as.Date(date_capture)) %>% group_by(codepays,nummission) %>% summarise(mean_date_mission=mean(date_capture)) %>% as_tibble()
 
 
 ## table of exhaustive definitions of the explanatory variables
@@ -148,7 +150,7 @@ env_landcover_ci <- env_landcover %>%
   mutate_all(funs(replace_na(.,0)))
 
 # all other data
-env_spatial <- env_spatial %>% pivot_wider(names_from = c("var","buffer"), values_from = val) %>% mutate_all(~ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x))
+env_spatial <- env_spatial %>%bind_rows(LIG) %>% pivot_wider(names_from = c("var","buffer"), values_from = val) %>% mutate_all(~ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x))
 th_env_nightcatch_postedecapture <- env_nightcatch_postedecapture %>% pivot_wider(names_from = var, values_from = val) %>% mutate_all(~ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x))
 th_env_nightcatch  <- env_nightcatch %>% pivot_wider(names_from = var, values_from = val) %>% mutate_all(~ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x))
 th_env_static <- env_static %>% pivot_wider(names_from = var, values_from = val) %>% mutate_all(~ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x)) %>% mutate(VCT=as.numeric(VCT), WMD=as.numeric(WMD),BDE=as.numeric(BDE),VCP=ifelse(VCP=="TRUE",1,0))
@@ -178,17 +180,69 @@ mean_coords_points_32630 = st_drop_geometry(mean_coords_points_32630) %>% as_tib
 ###### input parameters
 response_var <- "ma_funestus_ss"  # "ma_gambiae_ss"
 code_pays <- "BF"            # "BF"
-mod <- "presence" # abundance
-model_type <- "glmm"
-model_purpose <- "explicative"  # explicative  or predictive
+mod <- "abundance" # abundance, presence        si abondance + GLMM : glmm negatif binomial zero tronqué ; si présence + GLMM : glmm binomial ; si abondance + RF : RF regression ; si abondance + RF : RF classification 
+model_type <- "glmm"  # glmm, rf       si RF : VCM en dummy variables
+intervention <- "pre_intervention"  # pre_intervention, post_intervention, all
 predictive_type <- "roi_villages" #  "roi_villages" (within the ROI, for the sampled villages)  or "roi_notvillages" (within the ROI, for the not sampled villages) or  "notroi" (outside the roi)
 
 
+df_input_params_glmm <- data.frame(response_var = character(), code_pays = character(), mod = character(), model_type = character(), intervention = character(), predictive_type = character())
+df_input_params_glmm <- input_params_df %>%
+  add_row(response_var = "ma_funestus_ss", code_pays = "BF", mod = "abundance", model_type = "glmm", intervention = "pre_intervention", predictive_type = "roi_villages") %>%
+  add_row(response_var = "ma_funestus_ss", code_pays = "BF", mod = "presence", model_type = "glmm", intervention = "pre_intervention", predictive_type = "roi_villages") %>%
+  add_row(response_var = "ma_funestus_ss", code_pays = "BF", mod = "abundance", model_type = "glmm", intervention = "post_intervention", predictive_type = "roi_villages") %>%
+  add_row(response_var = "ma_funestus_ss", code_pays = "BF", mod = "presence", model_type = "glmm", intervention = "post_intervention", predictive_type = "roi_villages") %>%
+  add_row(response_var = "ma_funestus_ss", code_pays = "BF", mod = "abundance", model_type = "glmm", intervention = "all", predictive_type = "roi_villages") %>%
+  add_row(response_var = "ma_funestus_ss", code_pays = "BF", mod = "presence", model_type = "glmm", intervention = "all", predictive_type = "roi_villages") %>%
+  
+df_input_params_rf <- df_input_params_glmm
+df_input_params_rf <- df_input_params_rf %>%
+  add_row(response_var = "ma_funestus_ss", code_pays = "BF", mod = "abundance", model_type = "rf", intervention = "all", predictive_type = "roi_villages") %>%
+  add_row(response_var = "ma_funestus_ss", code_pays = "BF", mod = "presence", model_type = "rf", intervention = "all", predictive_type = "roi_villages")
+  
 
+# en sortie pour les glmm (colonnes supplémentaires dans le dataframe input_params_df) : 
+  # - timevars_univariate : variables temporelles retenues à la fin de la séléction univariée (avec infos additionelles)
+  # - spacevars_univariate : variables spatiales retenues à la fin de la séléction univariée (avec infos additionelles)
+  # - df : dataframe retenu à la fin de la séléction univariée
+  # - model : modele final multivarié
+  # - vars : variables retenues par le modèle multivarié (vecteur)
+  # - residual_analysis : analyse des résidus du modèle (fonction simulateResiduals(mod2) )
+  # - perf_llo : performance predictive en leave-location-out
+  # - perf_lto : performance predictive en leave-time-out
+  # - perf_llto : performance predictive en leave-location-and-time-out
+  
+
+# fun_get_timevars : fonction pour obtenir les variables temporelles. entrée : rien , sortie : 
+# fun_get_spacevars : fonction pour obtenir les variables spatiales
+# fun_get_df_for_multivmod : fonction pour extraire le dataset pour les modèles multivarié (à partir des outputs de fun_get_timevars et fun_get_timevars). entrée : sortie de fun_get_timevars et fun_get_spacevars ;  sortie : dataset à mettre en entrée du modèle multivarié
+# fun_multivmod : fonction pour calculer le modèle multivarié. entrée : sortie de fun_get_df_for_multivmod  ; sortie : modèle multivarié 
+
+# en sortie pour les rf (colonnes supplémentaires dans le dataframe input_params_df) : 
+# - timevars_univariate : variables temporelles retenues à la fin de la séléction univariée (avec infos additionelles)
+# - spacevars_univariate : variables spatiales retenues à la fin de la séléction univariée (avec infos additionelles)
+# - df : dataframe retenu à la fin de la séléction univariée
+# - model_llo : modele final multivarié en llo
+# - model_lto : modele final multivarié en lto
+# - perf_llto : modele final multivarié en llto
+# - vars_llo : variables retenues par le modèle multivarié llo
+# - vars_lto : variables retenues par le modèle multivarié lto
+# - vars_llto : variables retenues par le modèle multivarié llto
+# - perf_llo : performance predictive en leave-location-out
+# - perf_lto : performance predictive en leave-time-out
+# - perf_llto : performance predictive en leave-location-and-time-out
+  
+mean_date_mission <- entomo_csh_metadata_l1 %>% mutate(date_capture = as.Date(date_capture)) %>% group_by(codepays,nummission) %>% summarise(mean_date_mission=mean(date_capture)) %>% as_tibble()
 mean_date_mission <- mean_date_mission %>% filter(codepays==code_pays) %>% dplyr::select(-codepays)
 
 th_trmetrics_entomo_postedecapture <- trmetrics_entomo_postedecapture %>% filter(codepays==code_pays)
 th_trmetrics_entomo_postedecapture$resp_var <- th_trmetrics_entomo_postedecapture[,response_var]
+
+if(intervention == "pre_intervention"){
+  th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>% filter(period_interv == "pre_intervention")
+} else if(intervention == "post_intervention"){
+  th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>% filter(period_interv == "post_intervention")
+}
 
 if(mod == "abundance" ){
   th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>% filter(resp_var > 0 )
@@ -196,7 +250,7 @@ if(mod == "abundance" ){
   th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>% mutate(resp_var = ifelse(resp_var == 0,0,1 ))
 }
 
-if(model_purpose == "predictive"){
+if(model_type == "rf"){
   th_env_static <- th_env_static %>% mutate(v = 1) %>% pivot_wider(names_from = VCM,  values_from = v, values_fill = list(v = 0), names_prefix = "VCM_")
 }
 
@@ -231,9 +285,23 @@ th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>%
 
 ######## feature forward selection
 
-# keep rainfall time lag with highest spearman coeff
-expl_vars_to_test =  colnames(th_trmetrics_entomo_postedecapture[which(grepl("RFD1",colnames(th_trmetrics_entomo_postedecapture)))])
-corr_rainfall <- fun_feature_forward_selection(
+
+if(mod == "abundance"){
+  logtransform_resp_var = TRUE
+    time_vars <- c("RFD1","TMAX1","TMIN1","TAMP1","SMO1","EVT8","VNV8","WVV10","WVH10")
+} else if (mod == "presence"){
+  logtransform_resp_var = FALSE
+    time_vars <- c("RFD1","TMAX7","TMIN7","TAMP7","SMO7","EVT8","VNV8","WVV10","WVH10")
+}
+
+
+df_temporal <- data.frame(var = character(), col_to_keep = character(), correlation = numeric())
+
+for(i in 1:length(time_vars)){
+
+  cat("Calculating CCM for variable ",time_vars[i],"\n")
+  expl_vars_to_test =  colnames(th_trmetrics_entomo_postedecapture[which(grepl(time_vars[i],colnames(th_trmetrics_entomo_postedecapture)))])
+  corr <- fun_feature_forward_selection(
                               stat_method = "spearman", 
                               spearman_factor = "codevillage", 
                               mod = mod, 
@@ -241,23 +309,39 @@ corr_rainfall <- fun_feature_forward_selection(
                               expl_vars_to_keep = NULL, 
                               expl_vars_to_test = expl_vars_to_test)
 
-corr_rainfall$time_lag_1 <- as.numeric(sub('.*\\_', '', corr_rainfall$name))
-corr_rainfall$time_lag_2 <- as.numeric(stringr::str_match( corr_rainfall$name, '([^_]+)(?:_[^_]+){1}$')[,2])
-corr_rainfall$diff_lag <- corr_rainfall$time_lag_1 - corr_rainfall$time_lag_2
-corr_rainfall <- arrange(corr_rainfall, time_lag_1, time_lag_2)
+  corr$time_lag_1 <- as.numeric(sub('.*\\_', '', corr$name))
+  corr$time_lag_2 <- as.numeric(stringr::str_match( corr$name, '([^_]+)(?:_[^_]+){1}$')[,2])
+  corr$diff_lag <- corr$time_lag_1 - corr$time_lag_2
+  corr <- arrange(corr, time_lag_1, time_lag_2)
 
-corr_rainfall$correlation[which(corr_rainfall$pval > 0.05)] <- NA
+  corr$correlation[which(corr$pval > 0.05)] <- NA
 
 # plot the CCM
-#fun_ccm_plot(corr_rainfall, "max", "Spearman\ncorrelation")
+#fun_ccm_plot(corr, "max", "Spearman\ncorrelation")
 
 # keep best time lag
-corr_rainfall <- corr_rainfall %>% filter(!is.na(correlation), diff_lag >= 8, pval <= 0.05) 
-if(nrow(corr_rainfall) > 0){
-  col_to_keep_rainfall <- corr_rainfall$name[which.max(abs(corr_rainfall$abs_corr))]
-} else {
-  col_to_keep_rainfall <- NULL
+  if(time_vars[i] %in% c("RFD1","TMAX1","TMIN1","TAMP1","SMO1")){
+    corr <- corr %>% filter(diff_lag >= 7)
+  }
+  corr <- corr %>% filter(!is.na(correlation), pval <= 0.05) 
+  
+  if(nrow(corr) > 0){
+    col_to_keep <- corr$name[which.max(abs(corr$abs_corr))]
+    correlation <- corr$correlation[which.max(abs(corr$abs_corr))]
+  } else {
+    col_to_keep <- NA
+    correlation <- NA
+  }
+  
+  th_df_temporal <- data.frame(var = time_vars[i], col_to_keep = col_to_keep, correlation = correlation)
+  
+  df_temporal <- rbind(df_temporal, th_df_temporal)
+  
 }
+  
+
+best_time_var <- as.character(df_temporal$var[which.max(abs(df_temporal$correlation))])
+col_to_keep_best_time_var <- as.character(df_temporal$col_to_keep[which.max(abs(df_temporal$correlation))])
 
 
 # same but calculated with a random forest
@@ -280,42 +364,32 @@ if(nrow(corr_rainfall) > 0){
 
 ### keep temperature max
 # using glmm
-if(model_type == "glmm"){ 
+if(model_type == "glmm"){
   
-  expl_vars_to_test =  colnames(th_trmetrics_entomo_postedecapture[which(grepl("TMAX8",colnames(th_trmetrics_entomo_postedecapture)))])
-  glm_base <- glmmTMB(as.formula(paste0("resp_var ~ ",col_to_keep_rainfall," + (1|codevillage/pointdecapture)")), data = df, family = nbinom2(link = "log"))
-  
+  expl_vars_to_test =  colnames(th_trmetrics_entomo_postedecapture[which(grepl("VNV8",colnames(th_trmetrics_entomo_postedecapture)))])
+
   modcomp_temp <- fun_feature_forward_selection(
     stat_method = "glmm", 
     mod = mod, 
     type = "model_comparison", 
-    expl_vars_to_keep = col_to_keep_rainfall, 
+    expl_vars_to_keep = col_to_keep_best_time_var, 
     expl_vars_to_test = expl_vars_to_test)
   
-  colnames(modcomp_temp)[8] <- "pval"
+  #colnames(modcomp_temp)[8] <- "pval"
   modcomp_temp$time_lag_1 <- as.numeric(sub('.*\\_', '', modcomp_temp$name))
   modcomp_temp$time_lag_2 <- as.numeric(stringr::str_match(modcomp_temp$name, '([^_]+)(?:_[^_]+){1}$')[,2])
   modcomp_temp$diff_lag <- modcomp_temp$time_lag_1 - modcomp_temp$time_lag_2
-  
+  modcomp_temp$abs_corr <- modcomp_temp$AIC
+  modcomp_temp$correlation <- modcomp_temp$AIC
+    
   modcomp_temp_select <- modcomp_temp %>% filter(pval < 0.05, diff_aic < 0)
+  
+  #fun_ccm_plot(modcomp_temp_select, "min", "diff AIC")
+  
   
 } else if (model_type == "rf"){
   
-  if(mod == "abundance"){
-    logtransform_resp_var = TRUE
-    if(model_purpose == "predictive"){
-      time_vars <- c("TMAX1","TMIN1","TAMP1","SMO1","EVT8","VNV8","LIG30","WVV10","WVH10")
-    } else if(model_purpose == "explicative"){
-      time_vars <- c("TMAX1","TMIN1","TAMP1","SMO1","EVT8","VNV8","LIG30")
-    }
-  } else if (mod == "presence"){
-    logtransform_resp_var = FALSE
-    if(model_purpose == "predictive"){
-     time_vars <- c("TMAX7","TMIN7","TAMP7","SMO7","EVT8","VNV8","LIG30","WVV10","WVH10")
-    } else if (model_purpose == "explicative"){
-      time_vars <- c("TMAX7","TMIN7","TAMP7","SMO7","EVT8","VNV8","LIG30")
-    }
-  }
+  time_vars <- setdiff(time_vars, best_time_var)
   
   fun_rf_time_comp <- function(var_to_test){
     
@@ -324,15 +398,18 @@ if(model_type == "glmm"){
       mod = mod, 
       type = "univariate_selection", 
       expl_vars_to_test = colnames(th_trmetrics_entomo_postedecapture[which(grepl(var_to_test,colnames(th_trmetrics_entomo_postedecapture)))]),
-      expl_vars_to_keep =  c(col_to_keep_rainfall,"X_32630", "Y_32630"),
+      expl_vars_to_keep =  c(col_to_keep_best_time_var,"X_32630", "Y_32630"),
       cross_validation_type = "temporal",
       logtransform_resp_var = logtransform_resp_var)
     
      modcomp$time_lag_1 <- as.numeric(sub('.*\\_', '', modcomp$name))
      modcomp$time_lag_2 <- as.numeric(stringr::str_match( modcomp$name, '([^_]+)(?:_[^_]+){1}$')[,2])
      modcomp$diff_lag <- modcomp$time_lag_1 - modcomp$time_lag_2
-
-       if(var_to_test %in% c("TMAX1","TMIN1","TAMP1","SMO1")){
+     # modcomp$abs_corr <- modcomp$res
+     # modcomp$correlation <- modcomp$res
+     # fun_ccm_plot(modcomp, "max", "rsquared")
+     
+       if(var_to_test %in% c("RFD1_F","TMAX1","TMIN1","TAMP1","SMO1")){
          modcomp <- modcomp %>% filter(diff_lag >= 7)
        }
        
@@ -357,8 +434,8 @@ if(model_type == "glmm"){
     cat('calculating column to keep for temporal variable ',time_vars[i],"\n")
     th_col_to_keep_temporal <- fun_rf_time_comp(time_vars[i])
     df_cols_to_keep_temporal <- rbind(df_cols_to_keep_temporal, th_col_to_keep_temporal)
-    # for funestus abundance : cols_to_keep_temporal <- c("RFD1_F_2000_8_16", "TMAX1_2000_28_55", "TMIN1_2000_32_40", "TAMP1_2000_2_19",  "SMO1_2000_6_25" ,  "EVT8_2000_1_1"  ,  "VNV8_2000_0_2"   , "LIG30_2000_2_2" ,  "WVV10_2000_0_0" ,  "WVH10_2000_3_3")
-    # for funestus presence : cols_to_keep_temporal <- c("RFD1_F_2000_11_22", "TMAX7_2000_7_10" ,  "TMIN7_2000_5_7" ,   "TAMP7_2000_5_8"  ,  "SMO7_2000_0_2" ,    "EVT8_2000_2_2"  ,   "VNV8_2000_0_0"   ,  "LIG30_2000_2_2"  ,  "WVV10_2000_4_5"   , "WVH10_2000_4_4")
+    # for funestus abundance / explicative: cols_to_keep_temporal <- c("RFD1_F_2000_8_16" ,"TMAX1_2000_39_46", "LIG30_2000_2_1")  
+    # for funestus presence / explicative: cols_to_keep_temporal <- c("RFD1_F_2000_11_22" ,"TMAX7_2000_5_5"    ,"TMIN7_2000_3_9"  ,  "TAMP7_2000_2_4" ,   "SMO7_2000_1_1" ,    "EVT8_2000_4_6"    , "LIG30_2000_3_3" )
   }
   
   
@@ -397,7 +474,7 @@ if(model_type == "glmm"){
     df_cols_to_keep_temporal <- df_cols_to_keep_temporal %>% filter(!(col_to_keep %in% var_to_remove))
   }
 
-    cols_to_keep_temporal <- c(col_to_keep_rainfall, as.character(df_cols_to_keep_temporal$col_to_keep))
+    cols_to_keep_temporal <- c(col_to_keep_best_time_var, as.character(df_cols_to_keep_temporal$col_to_keep))
 
 }
 
@@ -418,6 +495,7 @@ lco_metadata <- lco_metadata %>% left_join(lco_priority)
 
 expl_vars_to_test =  colnames(th_trmetrics_entomo_postedecapture[which(grepl("lsm",colnames(th_trmetrics_entomo_postedecapture)))])
 expl_vars_to_test_lcid <- as.numeric(word(gsub("_"," ",expl_vars_to_test),5))
+expl_vars_to_test_buffer <- as.numeric(word(gsub("_"," ",expl_vars_to_test),4))
 
   if(predictive_type == "notroi"){
     expl_vars_to_test <- expl_vars_to_test[which(expl_vars_to_test_lcid %in% c(11,12))]
@@ -617,10 +695,13 @@ df_corr <- rbind(corr_lsm, corr_env_spatial, corr_env_nightcatch_postedecapture,
 
 
 #### 
-predictors_multivariate <- c(cols_to_keep_temporal,df_corr$name,"X_32630","Y_32630","int_ext","VCP",colnames(th_trmetrics_entomo_postedecapture[which(grepl("VCM_",colnames(th_trmetrics_entomo_postedecapture)))]))
+predictors_multivariate <- c(cols_to_keep_temporal,df_corr$name,"X_32630","Y_32630","int_ext","VCP",colnames(th_trmetrics_entomo_postedecapture[which(grepl("VCM",colnames(th_trmetrics_entomo_postedecapture)))]))
 
-
-
+# 
+# funestus_abundance <- th_trmetrics_entomo_postedecapture[,c("resp_var","codevillage","pointdecapture","nummission",predictors_multivariate)]
+# write.csv(funestus_abundance,"/home/ptaconet/abundance_bf_funestus.csv", row.names = F)
+# 
+# 
 
 if(model_purpose == "predictive"){
   

@@ -31,6 +31,7 @@ require(landscapemetrics)
 
 resp_var <- "ma_gambiae_ss"  # "ma_gambiae_ss"
 code_pays <- "BF"            # "BF"
+mod <- "abundance" 
 
 ### connect to the database
 path_to_db <- "data/react_db/react_db.gpkg" 
@@ -68,7 +69,7 @@ prediction_vars <- googlesheets4::read_sheet("https://docs.google.com/spreadshee
 
 
 ### source home-made functions 
-source("r_scripts/data_exploration/functions.R")
+source("r_scripts/data_analysis_tests/functions_script_data_analysis.R")
 
 ####################################################################################################
 ####################################################################################################
@@ -122,7 +123,7 @@ env_spatiotemporal2 <- env_spatiotemporal2 %>% filter(buffer==2000, codepays==co
 # above, the functions used in each "map" function are available in the script functions.R .
 env_spatiotemporal2 <- env_spatiotemporal2 %>%
   mutate(predictive_df = pmap(list(predictive_df, var, buffer, fun_summarize_ccm), ~fun_ccm_df(..1, ..2, ..3, function_to_apply = ..4))) %>% # function "fun_ccm_df" prepares the data for the CCM (ie calculates the mean or sum of the explanatory variable for each available time lag)
-  mutate(ccm_corrmat_sup0 = map(predictive_df, ~fun_ccm_corrmat_sup0_spearman(., trmetrics_entomo_postedecapture, resp_var))) %>%  # function "fun_ccm_corrmat_sup0" creates the CCM by using the spearman correlation coefficient 
+  mutate(ccm_corrmat_sup0 = map(predictive_df, ~fun_ccm_corrmat_sup0(., trmetrics_entomo_postedecapture, resp_var, method = "spearman"))) %>%  # function "fun_ccm_corrmat_sup0" creates the CCM by using the spearman correlation coefficient 
   mutate(ccm_plot_sup0 = pmap(list(ccm_corrmat_sup0, var, buffer, codepays), ~fun_ccm_plot(..1,..2,..3,..4))) %>% # function "fun_ccm_plot" plots the CCM
   mutate(ccm_maxcorr_vcor = map_dbl(ccm_corrmat_sup0, function(x) ifelse( !all(is.na(x$correlation)), x$correlation[which.max(abs(x$abs_corr))], NA))) %>% # get max correlation value (wether positive or negative) for the CCM
   mutate(ccm_maxcorr_lag1 = map_dbl(ccm_corrmat_sup0, function(x) ifelse( !all(is.na(x$correlation)), x$time_lag_1[which.max(abs(x$abs_corr))], NA))) %>% # get time lag 1 for max correlation value
@@ -134,14 +135,14 @@ env_spatiotemporal2
 # plot the CCM alone
 # here we choose to plot the CCM for the rainfall (var=="RFD1_F"). 
 # possible_vars = unique(env_spatiotemporal2$var)
-env_spatiotemporal2$ccm_plot_sup0[[which(env_spatiotemporal2$var=="RFD1_F")]]
+######### env_spatiotemporal2$ccm_plot_sup0[[which(env_spatiotemporal2$var=="RFD1_F")]]
 # red framed dot is the highest correlation coeff (either positive or negative). black framed dots are the top 3% highest correlation coeffs. grey dots are when the p-value of the spearman coefficient is not significative (>0.05)
 # so here for example here the highest coefficient is 0.6 at a time lag r(0,46), meaning that : the sum of the rainfall between 0 days and 46 days before the HLC misssion is best correlated with the positive counts of An. gambiae ss in BF.
 
 # other informative plots related to the time series and the CCM
-plots <- fun_spatiotemparal_plots(resp_var,"RFD1_F",code_pays)  # function "fun_spatiotemparal_plots" is available in the script functions.R  . uses datasets such as env_spatiotemporal2, etc.
-plots$plot1  # time series of positive counts of ma_gambiae_ss overlaid with rainfall (BF)
-plots$plot2  # plot of ma_gambiae_ss against the rainfall data for the highest correlation coeff of the CCM
+#plots <- fun_spatiotemparal_plots(resp_var,"RFD1_F",code_pays)  # function "fun_spatiotemparal_plots" is available in the script functions.R  . uses datasets such as env_spatiotemporal2, etc.
+#plots$plot1  # time series of positive counts of ma_gambiae_ss overlaid with rainfall (BF)
+#plots$plot2  # plot of ma_gambiae_ss against the rainfall data for the highest correlation coeff of the CCM
 
 
 ################

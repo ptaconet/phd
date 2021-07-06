@@ -34,13 +34,14 @@ library(mapview)
 library(stringr)
 library(emo)
 library(facetscales)
+library(ggmap)
 ```
 
 ```{r db_connect}
 # connect to database
 code_pays = "CI"
 
-path_to_db <- "data/react_db/react_db.gpkg"
+path_to_db <- "data/react_db/react_db_light.gpkg"
 react_gpkg <- DBI::dbConnect(RSQLite::SQLite(),dbname = path_to_db)
 
 periodes_interv <-  dbReadTable(react_gpkg, 'entomo_csh_metadata_l1') %>% dplyr::select(-geom)
@@ -71,9 +72,239 @@ if(code_pays=="BF"){
 
 ```
 
-## Map of sampled villages and dates of entomological missions
+## Timeline of the project
+
+```{r }
 
 
+ 
+fun_map <- function(codepayss,tit){
+ ## map
+ roi <- sf::st_read(path_to_db,"contexte_frontieresreact") %>% 
+     filter(codepays == codepayss) %>%
+     sf::st_transform(4326) %>%
+     sf::st_bbox() %>%
+     as.numeric()
+  
+  myLocation <- c(roi[1], roi[2], roi[3], roi[4])
+  myMap <- get_map(location=myLocation, source="osm",crop=FALSE)
+  
+  if(codepayss=="BF"){
+    n_mission <- 7
+    n_vil <- 27
+    date_interv <- 3
+  } else if(codepayss=="CI") {
+    n_mission <- 8
+    n_vil <- 28
+    date_interv <- 4
+  }
+    villages <- dbReadTable(react_gpkg, 'recensement_villages_l1') %>%
+    dplyr::select(-geom) %>%
+    dplyr::filter(!is.na(intervention),codepays == codepayss) %>%
+      filter(!(codevillage %in% c("TAK","MOR","KAG","NOK"))) %>%
+      mutate(intervention = case_when(intervention == "Ctrle" ~ "LLIN",
+                                      intervention == "IEC" ~ "LLIN + Information, Education, Communication",
+                                      intervention == "IRS" ~ "LLIN + Indoor residual spraying",
+                                      intervention == "IVM" ~ "LLIN + Ivermectine",
+                                       intervention == "Larvicide" ~ "LLIN + Larvicide")) %>%
+      dplyr::select(codevillage,codepays,intervention,X,Y) %>%
+      slice(rep(1:n(), each = n_mission)) %>%
+      mutate(nummission = rep(seq(1,n_mission) , n_vil)) %>%
+      mutate(intervention = ifelse(nummission <= date_interv,"LLIN",intervention)) %>%
+      add_row(codevillage = "b", codepays=ifelse(codepayss=="BF","CI","BF"),intervention=ifelse(codepayss=="BF","LLIN + Larvicide","LLIN + Ivermectine"),X=0,Y=0,nummission=1)
+  
+  
+  m <- ggmap(myMap) + geom_point(aes(x = X, y = Y, shape = intervention), data = villages, size = 2)  + facet_grid(.~nummission) + labs(colour = "Vector control tool") + theme(legend.position = ifelse(codepayss=="BF", 'bottom','none'),axis.title.x=element_blank(),axis.title.y=element_blank()) + ggtitle(tit)
+  
+  return(m)
+}
+
+m1 <- fun_map("CI","Korhogo (IC)")
+m2 <- fun_map("BF","Diébougou (BF)")
+
+m1/m2 + plot_annotation(title = 'Vector control tool implemented in each village and entomological survey')
+
+  #  library(tmaptools)
+ #  library(tmap)
+  # osm <- read_osm(roi, type = "stamen-terrain")
+  # osm = as(osm,"Raster")
+  # 
+  # sf_villages <- st_read(path_to_db, 'recensement_villages_l1', stringsAsFactors = F) %>%
+  #  filter(codepays==codepayss[i],!is.na(intervention))
+  # 
+  # p = tm_shape(osm) + tm_rgb() + tm_shape(sf_villages) + tm_symbols(col = "black", size = 0.5) + tm_scale_bar()
+
+dates_entomo <- dbReadTable(react_gpkg, 'entomo_csh_metadata_l1') %>% 
+  dplyr::select(-geom) %>%
+  group_by(nummission, codepays) %>%
+  summarise(date = mean(as.Date(date_capture))) %>%
+  mutate(nummission = as.numeric(nummission)) %>%
+  filter(nummission < 10) %>%
+  rename(survey_num = nummission) %>%
+  as_tibble() %>%
+  mutate(Surveys = "Anopheles behaviour survey")
+
+dates_recensement <- dbReadTable(react_gpkg, 'recensement_menages_l0') %>% 
+  dplyr::select(-geom) %>%
+  group_by(codepays) %>%
+  summarise(date = min(as.Date(dateenq))) %>%
+  mutate(survey_num = NA) %>%
+  mutate(Surveys = "Human + animal census")
+
+dates_cpthumain <- dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
+  dplyr::select(-geom) %>%
+  group_by(codepays,survey) %>%
+  rename(survey_num = survey) %>%
+  summarise(date = mean(as.Date(dateenquete))) %>%
+  as_tibble() %>%
+  mutate(survey_num=case_when(codepays=="BF" ~ survey_num,
+                              codepays=="CI" & survey_num==2 ~ 1,
+                              codepays=="CI" & survey_num==3 ~ 2)) %>%
+  mutate(Surveys = "Human behaviour survey")
+
+dates_llin <- data.frame(codepays=c("BF","CI"),date=c(as.Date("2016-07-01"),as.Date("2017-06-01")), stringsAsFactors = F)%>%
+  mutate(Surveys = "LLIN distribution", survey_num = NA)
+
+dates_add_vc <- dbReadTable(react_gpkg, 'recensement_villages_l1') %>% dplyr::select(-geom) %>%
+  filter(intervention %in% c("IRS","IVM","IEC","Larvicide")) %>%
+    group_by(codepays) %>%
+   summarise(date = mean(as.Date(date_debut_interv))) %>%
+    as_tibble() %>%
+  mutate(Surveys = "Implementation of complementary VC tool", survey_num = NA)
+
+dates_epi_active <- dbReadTable(react_gpkg, 'epidemio_active_l1') %>% 
+  dplyr::select(-geom) %>%
+  group_by(codepays,codenquete) %>%
+  rename(survey_num = codenquete) %>%
+  summarise(date = mean(as.Date(datenquete))) %>%
+  as_tibble() %>%
+  mutate(Surveys = "Epidemio - active")
+
+dates_to_plot <- rbind(dates_entomo,dates_recensement,dates_cpthumain,dates_epi_active,dates_llin,dates_add_vc) %>%
+  mutate(Surveys = forcats::fct_relevel(Surveys, c("Human + animal census","Anopheles behaviour survey","Human behaviour survey","Epidemio - active","LLIN distribution","Implementation of complementary VC tool"))) %>%
+  filter(Surveys %in% c("Human + animal census","Anopheles behaviour survey","Human behaviour survey","Implementation of complementary VC tool","LLIN distribution")) %>% 
+  mutate(position = case_when(codepays=="BF" & Surveys %in% c("Human + animal census","Anopheles behaviour survey","Human behaviour survey","Epidemio - active") ~ 0.5,
+                              codepays=="CI" & Surveys %in% c("Human + animal census","Anopheles behaviour survey","Human behaviour survey","Epidemio - active") ~ -0.5,
+                              codepays=="BF" & Surveys %in% c("Implementation of complementary VC tool","LLIN distribution") ~ 0.3,
+                              codepays=="CI" & Surveys %in% c("Implementation of complementary VC tool","LLIN distribution") ~ -0.3,
+                              )) %>%
+  mutate(direction = ifelse(codepays=="BF" , 1, -1))
+
+text_offset <- 0.2
+
+# Let's use the absolute value since we want to add the text_offset and increase space away from the scatter points 
+absolute_value<-(abs(dates_to_plot$position)) 
+text_position<- absolute_value + text_offset
+
+# Let's keep the direction above or below for the labels to match the scatter points
+dates_to_plot$text_position<- text_position * dates_to_plot$direction 
+
+
+month_buffer <- 1 
+
+month_date_range <- seq(min(dates_to_plot$date), max(dates_to_plot$date) + months(month_buffer), by='month')
+
+# We are adding one month before and one month after the earliest and latest milestone in the clinical course.
+## We want the format of the months to be in the 3 letter abbreviations of each month.
+lct <- Sys.getlocale("LC_TIME"); Sys.setlocale("LC_TIME", "C")
+month_format <- format(month_date_range, '%b') 
+month_df <- data.frame(month_date_range, month_format)
+
+
+year_date_range <- seq(min(dates_to_plot$date) - months(month_buffer), max(dates_to_plot$date) + months(month_buffer), by='year')
+
+# We will only show the years for which we have a december to january transition.
+year_date_range <- as.Date(
+    intersect(
+        lubridate::ceiling_date(year_date_range, unit="year"),
+        lubridate::floor_date(year_date_range, unit="year")),  
+        origin = "1970-01-01") 
+
+# We want the format to be in the four digit format for years.
+year_format <- format(year_date_range, '%Y') 
+year_df <- data.frame(year_date_range, year_format) %>%
+  add_row(year_date_range=as.Date("2016-08-01"),year_format="2016") %>%
+  add_row(year_date_range=as.Date("2018-01-01"),year_format="2018")
+
+
+# Create timeline coordinates with an x and y axis
+ timeline_plot <- ggplot(dates_to_plot,aes(x=date, y= position, col=Surveys)) +
+   theme_classic() +
+   geom_text(aes(y=text_position,label=survey_num)) + 
+   geom_hline(yintercept=0, color = "black", size=0.3) +
+   geom_segment(data=dates_to_plot, aes(y=position,yend=0,xend=date), color='black', size=0.2) +
+   geom_point(aes(y=position), size=3) + 
+   theme(axis.line.y=element_blank(),
+                  axis.text.y=element_blank(),
+                  axis.title.x=element_blank(),
+                  axis.title.y=element_blank(),
+                  axis.ticks.y=element_blank(),
+              axis.text.x =element_blank(),
+                  axis.ticks.x =element_blank(),
+                  axis.line.x =element_blank(),
+                legend.position = "bottom"
+                 ) + 
+   guides(col=guide_legend(nrow=2,byrow=TRUE)) +
+   labs(col = "Event") + 
+   geom_text(data=month_df, aes(x=month_date_range,y=-0.15,label=month_format),size=3.5,vjust=0.5, color='black', angle=90) +
+   geom_text(data=year_df, aes(x=year_date_range+30,y=0.08,label=year_format, fontface="bold"),size=3.5, color='black') + 
+   #scale_color_manual(values = c("black","blue","red")) +
+   scale_color_brewer(palette = "Dark2") +
+   annotate(geom="label", x=min(dates_to_plot$date)-30, y=0.2, label="BF")  +
+   annotate(geom="label", x=min(dates_to_plot$date)-30, y=-0.2, label="IC") 
+
+# Print plot
+timeline_plot
+
+
+ timeline_plot_bf <- ggplot(dates_to_plot %>% filter(codepays == "BF"),aes(x=date, y= 1, col=Surveys, label=survey_num)) +
+   theme_classic() +
+   geom_text(vjust=7) + 
+   geom_hline(yintercept=0, color = "black", size=0.3) +
+   geom_segment(data=dates_to_plot %>% filter(codepays == "BF"), aes(y=position,yend=0,xend=date), color='black', size=0.2) +
+   geom_point(aes(y=position), size=3) + 
+   theme(axis.line.y=element_blank(),
+                  axis.text.y=element_blank(),
+                  axis.title.x=element_blank(),
+                  axis.title.y=element_blank(),
+                  axis.ticks.y=element_blank(),
+                  axis.text.x =element_blank(),
+                  axis.ticks.x =element_blank(),
+                  axis.line.x =element_blank(),
+                  legend.position = "bottom"
+                 ) + 
+     # guides(col=guide_legend(nrow=2,byrow=TRUE)) +
+   labs(col = "") + 
+   geom_text(data=month_df, aes(x=month_date_range,y=-0.15,label=month_format),size=3.5,vjust=0.5, color='black', angle=90) +
+   geom_label(data=year_df, aes(x=year_date_range+30,y=0.08,label=year_format, fontface="bold"),size=3.5, color='black') + 
+   #scale_color_manual(values = c("black","blue","red")) +
+   scale_color_brewer(palette = "Dark2")
+
+ timeline_plot_ci <- ggplot(dates_to_plot %>% filter(codepays == "CI"),aes(x=date, y= 1, col=Surveys, label=survey_num)) +
+     theme_classic() +
+     geom_text(vjust=7) + 
+     geom_hline(yintercept=0, color = "black", size=0.3) +
+     geom_segment(data=dates_to_plot %>% filter(codepays == "CI"), aes(y=0,yend=-position,xend=date), color='black', size=0.2) +
+     geom_point(aes(y=-position), size=3) + 
+     theme(axis.line.y=element_blank(),
+           axis.text.y=element_blank(),
+           axis.title.x=element_blank(),
+           axis.title.y=element_blank(),
+           axis.ticks.y=element_blank(),
+           axis.text.x =element_blank(),
+           axis.ticks.x =element_blank(),
+           axis.line.x =element_blank(),
+           legend.position = "bottom"
+     ) + 
+      #guides(col=guide_legend(nrow=2,byrow=TRUE)) +
+     labs(col = "") + 
+     geom_text(data=month_df, aes(x=month_date_range,y=-0.15,label=month_format),size=3.5,vjust=0.5, color='black', angle=90) +
+     geom_label(data=year_df, aes(x=year_date_range+30,y=0.08,label=year_format, fontface="bold"),size=3.5, color='black') + 
+     #scale_color_manual(values = c("black","blue","red")) +
+     scale_color_brewer(palette = "Dark2")
+
+timeline_plot_ci + timeline_plot_bf + plot_layout(guides = 'collect') & theme(legend.position='bottom')
+```
 
 ## Presence / absence of bites
 
@@ -246,7 +477,7 @@ plot_abundance_byvillagemission_allspecies <- ggplot(df, aes(x = as.factor(nummi
 plot_abundance_bymission <- ggplot(df, aes(x = as.factor(nummission), y = n)) + 
     geom_boxplot(outlier.shape=NA) +
     geom_jitter(position=position_jitter(0.1), cex=0.4) + 
-    #stat_summary(fun.data = stat_box_data, geom = "text", hjust = 0.5,vjust = 0.9,size = 2.5) +
+    stat_summary(fun.data = stat_box_data, geom = "text", hjust = 0.5,vjust = 0.9,size = 2.5) +
   facet_wrap(as.formula(paste(".~", col_filter))) +
   #facet_wrap(.~pcr_espece) +
     labs(x = NULL) +
@@ -331,6 +562,7 @@ exo <- dbReadTable(react_gpkg, 'entomo_idmoustiques_l0') %>%
   mutate(tot = e+i) %>%
   mutate(exophagy = e / tot * 100)
 
+
 ## proportion des piqures en exterieur par mission et par espèce
 plot_exophagy_bymission <- ggplot(exo, aes(x=as.factor(nummission), y = exophagy, label = tot)) + 
   geom_bar(stat="identity") +  
@@ -340,7 +572,8 @@ plot_exophagy_bymission <- ggplot(exo, aes(x=as.factor(nummission), y = exophagy
   ylab("frequency of bites") +
     labs(x = NULL) +
     labs(y = NULL) +
-  ggtitle("by mission (all villages combined)")
+  geom_hline(yintercept=50, linetype="dashed", color = "red") +
+  ggtitle("% bites outdoor by mission (all villages combined)")
 
 ## proportion des piqures en exterieur par village et par espèce
 exo2 <- dbReadTable(react_gpkg, 'entomo_idmoustiques_l0') %>%
@@ -361,7 +594,8 @@ plot_exophagy_byvillage <- ggplot(exo2, aes(x=as.factor(codevillage), y = exopha
     labs(x = NULL) +
     labs(y = NULL) +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
-  ggtitle("by village (all missions combined)")
+    geom_hline(yintercept=50, linetype="dashed", color = "red") +
+  ggtitle("% bites outdoor by village (all missions combined)")
 
 
 exo_byvillage <- dbReadTable(react_gpkg, 'entomo_idmoustiques_l0') %>%
@@ -373,7 +607,7 @@ exo_byvillage <- dbReadTable(react_gpkg, 'entomo_idmoustiques_l0') %>%
   mutate_all(funs(replace_na(., 0))) %>%
   mutate(tot = e+i) %>%
   mutate(exophagy = e / tot * 100) %>%
-  full_join(df2) %>%
+  #full_join(df2) %>%
   mutate(exophagy = ifelse(is.na(exophagy),0,exophagy))
 
 ## proportion des piqures en exterieur par mission, par espèce et par village
@@ -406,7 +640,102 @@ plot_exophagy_byvillagemission_gambiae <-  ggplot(exo_byvillage %>% filter((!!sy
 ```
 
 
-## Bahavioral resistance : number of bites by hour, early and late aggressiveness
+## Bahavioral resistance : number of bites by hour, early and late biting
+
+```{r }
+
+entomo_csh_metadata_l1 <- dbReadTable(react_gpkg, 'entomo_csh_metadata_l1') %>% dplyr::select(-geom) %>% filter(!(nummission %in% c("11","12","13","15")))
+
+th_trmetrics_entomo_postedecapture <- dbReadTable(react_gpkg, 'entomo_idmoustiques_l0') %>% 
+              dplyr::select(-fid) %>% 
+              left_join(entomo_csh_metadata_l1 %>% dplyr::select(idpointdecapture, period_interv)) %>% 
+              filter(codepays == code_pays, nummission <= 8)
+
+  
+source("r_scripts/data_analysis_tests/functions_script_data_analysis.R")
+
+HB_data <- load_hmnbehav_data(code_pays,entomo_csh_metadata_l1)$hum_behav_4_exophagy
+
+ELB <- th_trmetrics_entomo_postedecapture %>%
+             left_join(HB_data) %>%
+             mutate(ELB = case_when(HBB > 50 ~ "nocturnal",
+                                    HBB < 50 & heuredecapture > 15 ~ "early_biting",
+                                    HBB < 50 & heuredecapture < 10 ~ "late_biting")) %>%
+             mutate(ELB = forcats::fct_relevel(ELB,c("nocturnal","early_biting","late_biting")))
+          
+df_ELB_bymission <- ELB %>%
+  filter((!!sym(col_filter)) %in% species) %>%
+  group_by(nummission, ELB,(!!sym(col_filter))) %>%
+  summarise(n=n()) %>%
+  pivot_wider(names_from = ELB, values_from = n, values_fill = 0) %>%
+  mutate(tot = nocturnal+early_biting+late_biting) %>%
+  mutate(perc_early_biting = early_biting / tot * 100, perc_late_biting = late_biting / tot * 100, perc_earlylatebiting = (early_biting + late_biting)/tot * 100)
+
+
+plot_earlybiting_bymission <- ggplot(df_ELB_bymission, aes(x=as.factor(nummission), y = perc_early_biting, label = tot)) + 
+  geom_bar(stat="identity") +  
+  geom_text(vjust = 2, size = 3, position = position_dodge(width = 1)) +
+  facet_grid(as.formula(paste(".~", col_filter))) +
+  ylim(0, 100) + 
+  ggtitle("% early bites (before 50% of pop. is indoor) (all villages combined)")
+
+plot_latebiting_bymission <- ggplot(df_ELB_bymission, aes(x=as.factor(nummission), y = perc_late_biting, label = tot)) + 
+  geom_bar(stat="identity") +  
+  geom_text(vjust = 2, size = 3, position = position_dodge(width = 1)) +
+  facet_grid(as.formula(paste(".~", col_filter))) +
+  ylim(0, 100) + 
+  ggtitle("% late bites (after 50% of pop. is outdoor) (all villages combined)")
+
+plot_earlylatebiting_bymission <- ggplot(df_ELB_bymission, aes(x=as.factor(nummission), y = perc_earlylatebiting, label = tot)) + 
+  geom_bar(stat="identity") +  
+  geom_text(vjust = 2, size = 3, position = position_dodge(width = 1)) +
+  facet_grid(as.formula(paste(".~", col_filter))) +
+  ylim(0, 100) + 
+  ggtitle("% early or late bites (before / after 50% of pop. is indoor/outdoor) (all villages combined)")
+
+
+df_ELB_byvillage <- ELB %>%
+  filter((!!sym(col_filter)) %in% species) %>%
+  group_by(codevillage, ELB,(!!sym(col_filter))) %>%
+  summarise(n=n()) %>%
+  pivot_wider(names_from = ELB, values_from = n, values_fill = 0) %>%
+  mutate(tot = nocturnal+early_biting+late_biting) %>%
+  mutate(perc_early_biting = early_biting / tot * 100, perc_late_biting = late_biting / tot * 100, perc_earlylatebiting = (early_biting + late_biting)/tot * 100)
+
+
+plot_earlybiting_byvillage <- ggplot(df_ELB_byvillage, aes(x=as.factor(codevillage), y = perc_early_biting, label = tot)) + 
+  geom_bar(stat="identity") +  
+  geom_text(vjust = 2, size = 3, position = position_dodge(width = 1)) +
+  facet_grid(as.formula(paste(".~", col_filter))) +
+  ylim(0, 100) + 
+  ggtitle("% early bites (before 50% of pop. is intdoor) (all missions combined)")
+
+plot_latebiting_byvillage <- ggplot(df_ELB_byvillage, aes(x=as.factor(codevillage), y = perc_late_biting, label = tot)) + 
+  geom_bar(stat="identity") +  
+  geom_text(vjust = 2, size = 3, position = position_dodge(width = 1)) +
+  facet_grid(as.formula(paste(".~", col_filter))) +
+  ylim(0, 100) + 
+  ggtitle("% late bites (after 50% of pop. is outdoor) (all missions combined)")
+
+plot_earlylatebiting_byvillage <- ggplot(df_ELB_byvillage, aes(x=as.factor(codevillage), y = perc_earlylatebiting, label = tot)) + 
+  geom_bar(stat="identity") +  
+  geom_text(vjust = 2, size = 3, position = position_dodge(width = 1)) +
+  facet_grid(as.formula(paste(".~", col_filter))) +
+  ylim(0, 100) + 
+  ggtitle("% early or late bites (before / after 50% of pop. is indoor/outdoor) (all missions combined)")
+
+
+plot_earlybiting_bymission + plot_earlybiting_byvillage
+plot_latebiting_bymission + plot_latebiting_byvillage
+plot_earlylatebiting_bymission + plot_earlylatebiting_byvillage
+
+```
+
+
+
+
+
+
 
 ```{r }
 
@@ -601,7 +930,9 @@ plot_kdrw_byvillage <- ggplot(kdrw_byvillage_allmissions, aes(x=as.factor(codevi
     labs(x = NULL) +
     labs(y = NULL) +
   ylim(0,100) + 
-  theme(legend.position = "bottom",axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) 
+    geom_hline(yintercept=50, linetype="dashed", color = "red") +
+  theme(legend.position = "bottom",axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))  +
+  ggtitle("Allelic freq. kdre by village (all missions combined)")
 
 
 # par mission, tous villages
@@ -613,7 +944,8 @@ plot_kdrw_bymission <- ggplot(kdrw_bymission_allvillages, aes(x=as.factor(nummis
     labs(x = NULL) +
     labs(y = NULL) +
     ylim(0,100) + 
-  ggtitle("by mission (all villages combined)")
+    geom_hline(yintercept=50, linetype="dashed", color = "red") +
+  ggtitle("Allelic freq. kdre by mission (all villages combined)")
 
 # par village et par mission
 plot_kdrw_byvillagemission_coluzzi <- ggplot(kdrw_byvillage %>% filter(pcr_espece=="An.coluzzii"), aes(x=as.factor(nummission), y = freq_allel)) + 
@@ -642,36 +974,106 @@ plot_kdrw_byvillagemission_gambiae <- ggplot(kdrw_byvillage %>% filter(pcr_espec
 ## LAV
 
 
-## LLIN use
+## LLIN use and human pop. behaviour
 ```{r }
-tab = dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>%
+lct <- Sys.getlocale("LC_TIME"); Sys.setlocale("LC_TIME", "C")
+mean_dates_lus = dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>%
   dplyr::select(-geom) %>%
-  filter(codepays==code_pays) %>%
-  mutate(dateenquete = as.Date(dateenquete)) %>%
-  mutate(dateenquete = lubridate::floor_date(dateenquete, "month")) %>%
-  group_by(codevillage,dateenquete,dormirssmoust) %>%
+  group_by(codepays,survey) %>%
+  summarise(date = mean(as.Date(dateenquete))) %>%
+  mutate(mois = lubridate::month(date,label=T)) %>%
+  mutate(annee = lubridate::year(date)) %>%
+  mutate(date = paste0(annee," - ",mois))
+
+
+lus_byvillage = dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>%
+  dplyr::select(-geom) %>%
+  group_by(codevillage,codepays,survey,dormirssmoust) %>%
   summarise(n=n()) %>%
   as_tibble() %>%
   pivot_wider(names_from = dormirssmoust, values_from = n, values_fill = list(n = 0)) %>%
   mutate(perc_users_llin = oui / (non + oui) * 100) %>%
-  mutate(dateenquete = as.Date(dateenquete)) %>%
-  pivot_longer(c("non","oui"))
+  pivot_longer(c("non","oui")) %>%
+  filter(name == "oui") %>%
+  group_by(survey,codepays) %>%
+  summarise(sd_perc_users_llin=sd(perc_users_llin))
+
+lus_bymission = dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>%
+  dplyr::select(-geom) %>%
+  group_by(codepays,survey,dormirssmoust) %>%
+  summarise(n=n()) %>%
+  as_tibble() %>%
+  pivot_wider(names_from = dormirssmoust, values_from = n, values_fill = list(n = 0)) %>%
+  mutate(perc_users_llin = oui / (non + oui) * 100) %>%
+  pivot_longer(c("non","oui"))  %>%
+  filter(name == "oui")
 
 
-tab2 <- tab %>%
-  group_by(dateenquete, name) %>%
-  summarise(value = sum(value))
+lus <- left_join(lus_byvillage,lus_bymission) %>% 
+  left_join(mean_dates_lus) %>%
+  mutate(survey = case_when(codepays=="CI" & survey == 2 ~ 1,
+                            codepays=="CI" & survey == 3 ~ 2,
+                            codepays=="BF" ~ survey)) %>%
+    mutate(survey = as.factor(survey)) %>%
+  mutate(codepays = ifelse(codepays=="CI","Korhogo (IC)","Diébougou (BF)")) %>%
+  mutate(codepays = forcats::fct_relevel(codepays,"Korhogo (IC)","Diébougou (BF)")) %>%
+  mutate(lower = perc_users_llin - sd_perc_users_llin, upper = perc_users_llin + sd_perc_users_llin) %>%
+  mutate(upper = ifelse(upper>100,100,upper))
 
-plot_llin_use <- ggplot(tab2 , aes(x=dateenquete, y = value, fill = name)) +
-  geom_bar(stat="identity") + 
-  ggtitle("by month")
+plot_lus <- ggplot(lus , aes(x=survey, y = perc_users_llin, fill = name)) +
+  geom_col(fill = "grey") + 
+   ylim(c(0,100)) +
+   geom_errorbar(aes(ymin = lower, ymax = upper), position = position_dodge(0.9), width = 0.25) +
+   facet_grid(.~codepays, scales = "free_x") + 
+   theme(legend.position = "none") + 
+   ylab("% of users of LLIN")+ 
+   xlab("Human behaviour survey") + 
+   theme_bw() + 
+   labs(title = "% of LLIN users for each study area and human behaviour survey", 
+           caption = "Values were averaged over all the sampled villages. \nError bars indicate the mean +- sd for all the study villages for the considered survey")
 
-plot_llin_use_byvillage <- ggplot(tab , aes(x=dateenquete, y = value, fill = name)) + 
-geom_bar(stat="identity") + 
-  facet_wrap(.~codevillage) + 
-  ggtitle("by village (all missions combined) and month")
 
-plot_llin_use + plot_llin_use_byvillage + plot_annotation(title = "LLIN use", subtitle = 'number of persons that use LLIN')
+####### early / late biting
+
+
+
+HBI <- dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
+  dplyr::select(-geom) %>%
+     mutate(hintmaison = as.numeric(substr(hintmaison,1,2)),hsortiemaison=as.numeric(substr(hsortiemaison,1,2))) %>%
+     mutate(hintmaison = ifelse(hintmaison <=16, 19, hintmaison), hsortiemaison=ifelse(hsortiemaison>=11 | hsortiemaison<=3,6,hsortiemaison)) %>%
+   mutate(hcoucher = as.numeric(substr(hcoucher,1,2)),hlever=as.numeric(substr(hlever,1,2))) %>%
+   mutate(hcoucher = ifelse(hcoucher <=17, 20, hcoucher), hlever=ifelse(hlever>=11 | hlever<=3,6,hlever))
+
+ggplot(data = HBI) +
+  stat_ecdf(aes(hintmaison, colour = as.factor(survey)), geom = "step") + 
+  facet_wrap(.~codepays)
+
+# ggplot(data = HBI) +
+#   geom_line(aes(x = hintmaison, colour = as.factor(survey)), stat='ecdf') +
+#   facet_wrap(.~codepays)
+
+
+source("r_scripts/data_analysis_tests/functions_script_data_analysis.R")
+
+entomo_csh_metadata_l1 <- dbReadTable(react_gpkg, 'entomo_csh_metadata_l1') %>% dplyr::select(-geom) %>% filter(!(nummission %in% c("11","12","13","15")))
+
+## BF
+th_trmetrics_entomo_postedecapture <- dbReadTable(react_gpkg, 'entomo_idmoustiques_l0') %>% 
+  dplyr::select(-fid) %>% 
+  left_join(entomo_csh_metadata_l1 %>% dplyr::select(idpointdecapture, period_interv)) %>% 
+  filter(codepays == "BF", nummission <= 8)
+
+HB_data <- load_hmnbehav_data("BF",entomo_csh_metadata_l1)$hum_behav_4_exophagy
+HB_data <- HB_data %>%
+  mutate(nummission = substr(idpointdecapture,0,1), codevillage = substr(idpointdecapture,2,4)) %>%
+  dplyr::select(-idpointdecapture) %>%
+  distinct() %>%
+  
+  mutate(heuredecapture = as.factor(heuredecapture)) %>%
+  mutate(heuredecapture=forcats::fct_relevel(heuredecapture,c("16", "17", "18", "19" ,"20", "21", "22", "23", "0", "1" ,"2", "3", "4", "5", "6", "7", "8", "9", "10")))
+
+
+
 ```
 
 
@@ -689,47 +1091,46 @@ env_spatiotemporal <- dbReadTable(react_gpkg, 'env_spatiotemporal') %>%
   mutate( week = sprintf("%02d", lubridate::week(date)), year = lubridate::year(date), month = lubridate::month(date)) %>%
   mutate( week = ifelse(week == 53,52,week)) %>%
   left_join(periodes_interv) %>%
-  filter(codepays == code_pays, as.numeric(nummission)<10) %>%
+  filter( as.numeric(nummission)<10) %>%
   mutate(date = as.Date(paste0(year,week,"1"),"%Y%U%u"))
 
 rfd <- env_spatiotemporal %>%
   filter(var == "RFD1F", !is.na(date)) %>%
-  group_by(var, codevillage, lag_time, nummission, date) %>%
+  group_by(var, codepays,codevillage, lag_time, nummission, date) %>%
   summarise(val = mean(val,na.rm = TRUE)) %>%
   as_tibble() %>%
-  group_by(codevillage, date, var) %>%
+  group_by(codepays,codevillage, date, var) %>%
   summarise(val=sum(val))
 
 oth <- env_spatiotemporal %>%
   filter(var != "RFD1F") %>%
-  group_by(var, codevillage, date) %>%
+  group_by(var,codepays, codevillage, date) %>%
   summarise(val=mean(val, na.rm = T))
 
 env_spatiotemporal <- rbind(rfd,oth) %>%
-  group_by(date,var) %>%
+  group_by(codepays,date,var) %>%
   summarise(vale=mean(val), upper = mean(val) - sd(val), lower = mean(val) + sd(val)) %>%
   as_tibble() %>%
   left_join(prediction_vars %>% dplyr::select(code,short_name,unit), by=c("var"="code")) %>%
   mutate(variable = paste0(short_name," (", unit,")")) %>%
-  mutate(variable = gsub("LST", "land surface temperature",variable))
+  mutate(variable = gsub("LST", "land surface temperature",variable)) %>%
+  mutate(codepays = ifelse(codepays=="CI","Korhogo (IC)","Diébougou (BF)"))
+  mutate(codepays = forcats::fct_relevel(codepays,"Korhogo (IC)","Diébougou (BF)"))
 
 # BF only
-if(code_pays=="BF"){
-env_spatiotemporal$vale[which(env_spatiotemporal$date=="2017-07-03")] <- NaN
-env_spatiotemporal$upper[which(env_spatiotemporal$date=="2017-07-03")] <- NaN
-env_spatiotemporal$lower[which(env_spatiotemporal$date=="2017-07-03")] <- NaN
-}
-if(code_pays=="CI"){
+env_spatiotemporal$vale[which(env_spatiotemporal$date=="2017-07-03" & env_spatiotemporal$codepays=="BF")] <- NaN
+env_spatiotemporal$upper[which(env_spatiotemporal$date=="2017-07-03" & env_spatiotemporal$codepays=="BF")] <- NaN
+env_spatiotemporal$lower[which(env_spatiotemporal$date=="2017-07-03" & env_spatiotemporal$codepays=="BF")] <- NaN
 
-}
 
 mean_date_by_mission <- periodes_interv %>%
   mutate(nummission = as.numeric(nummission)) %>%
-  filter(codepays == code_pays, nummission < 10) %>%
+  filter(nummission < 10) %>%
   mutate(date_capture = as.Date(date_capture)) %>%
-  group_by(nummission) %>%
-  summarise(date=mean(date_capture))
-  
+  group_by(codepays,nummission) %>%
+  summarise(date=mean(date_capture)) %>%
+  mutate(codepays = ifelse(codepays=="CI","Korhogo (IC)","Diébougou (BF)"))
+
 
 plot_climate_byvillagemission <- ggplot(env_spatiotemporal , aes(x=date, y = val, fill = codevillage)) + 
   geom_line(size = 0.2) + 
@@ -739,17 +1140,17 @@ plot_climate_byvillagemission <- ggplot(env_spatiotemporal , aes(x=date, y = val
   geom_vline(data = mean_date_by_mission, aes(xintercept = date, color = "red"),linetype=2, size = 0.5)
 
 
-plot_climate_byvillagemission <- ggplot(env_spatiotemporal , aes(x=date, y = vale)) + 
-    scale_x_date() +
-    facet_wrap(.~variable, scales = "free_y", nrow = 3, ncol = 1) +
-    geom_ribbon(aes(ymin=lower, ymax=upper), linetype=2, alpha=0.7, fill = "grey70") +
-    geom_line(size = 0.2) + 
+plot_climate_byvillagemission <- ggplot(env_spatiotemporal) + 
+    scale_x_date(aes(x=date, y = vale)) +
+    facet_wrap(codepays~variable, scales = "free_y", nrow = 2, ncol = 3) +
+    geom_ribbon(aes(x=date, y = vale,ymin=lower, ymax=upper), linetype=2, alpha=0.7, fill = "grey70") +
+    geom_line(aes(x=date, y = vale),size = 0.2) + 
     theme_bw() +
-    geom_vline(data = mean_date_by_mission, aes(xintercept = date, color = "red"),linetype=2, size = 0.5) +    
-    geom_text(data = mean_date_by_mission, mapping = aes(x=date, y = 0, label = nummission, vjust = -0.3, hjust = -1), colour = "red", alpha = 0.7) +
+    geom_vline(data = mean_date_by_mission, aes(xintercept = date, color = "red"),linetype=2, size = 0.5)  +     
+    geom_rect(data = mean_date_by_mission, aes(xmin = date - 30, xmax = date), ymin = -Inf, ymax = Inf, alpha = 0.2, fill = "blue" ) + 
+    geom_label(data = mean_date_by_mission, mapping = aes(x=date, y = 0, label = nummission, vjust = -0.3), colour = "red") +
     theme(legend.position= "none") +
-    labs(y = NULL, title = "Meteorological conditions", subtitle = "Weekly mean (for land surface temperature) and sum (for rainfall) in a 2 km buffer around each collection point.\nRed vertical lines indicate the dates of the entomological surveys.\nRibbons indicate the mean +/- 1 sd. of values over the study villages", caption = "data sources : GPM (rainfall), MODIS (temperature)")
-
+    labs(y = NULL, title = "Meteorological conditions", subtitle = "Weekly mean (for land surface temperature) and sum (for rainfall) in a 2 km buffer around each collection point.\nRed vertical lines indicate the dates of the entomological surveys.\nGrey Ribbons indicate the mean +/- 1 sd. of values over the study villages\nBlue ribbons indicate a time frame of 1 month before each entomological survey.", caption = "data sources : GPM (rainfall), MODIS (temperature)")
 
 plot_climate_byvillagemission
 
@@ -806,7 +1207,7 @@ plot_landcover_byvillage2 <- ggplot(env_lc2, aes(x=reorder(pixlabel_english,-val
   xlab("")
 
 
-plot_landcover_byvillage
+plot_landcover_byvillage2
 ```
 
 
@@ -815,32 +1216,33 @@ plot_landcover_byvillage
 oth_spatial <- dbReadTable(react_gpkg, 'env_spatial') %>% 
     rename(idpointdecapture = id) %>%
     left_join(periodes_interv %>% dplyr::select(idpointdecapture,codevillage,codepays)) %>%
-  filter(buffer == 2000, codepays == "BF") %>%
-    group_by(codevillage, var) %>%
+  filter(buffer == 2000) %>%
+    group_by(codepays,codevillage, var) %>%
   summarise(val=mean(val)) %>%
       left_join(prediction_vars %>% dplyr::select(code,short_name,unit), by=c("var"="code"))
 
 oth_spatial2 <- dbReadTable(react_gpkg, 'env_spatial') %>% 
     rename(idpointdecapture = id) %>%
     left_join(periodes_interv %>% dplyr::select(idpointdecapture,codevillage,codepays)) %>%
-  filter(buffer == 500, var %in% c("BCH","POP"), codepays == "BF") %>%
-    group_by(codevillage, var) %>%
+  filter(buffer == 500, var %in% c("BCH","POP")) %>%
+    group_by(codepays,codevillage, var) %>%
   summarise(val=mean(val)) %>%
       left_join(prediction_vars %>% dplyr::select(code,short_name,unit), by=c("var"="code"))
   
 env_static <- dbReadTable(react_gpkg, 'env_static') %>%
     dplyr::rename(idpointdecapture = id) %>% 
     left_join(periodes_interv %>% dplyr::select(idpointdecapture,codevillage,codepays)) %>%
-    filter(codepays == "BF", var %in% c("WMD")) %>%
-    group_by(codevillage, var) %>%
+    filter(var %in% c("WMD","BDE")) %>%
+    group_by(codepays,codevillage, var) %>%
     summarise(val=mean(as.numeric(val))) %>%
-    left_join(prediction_vars %>% dplyr::select(code,short_name,unit), by=c("var"="code"))
+    left_join(prediction_vars %>% dplyr::select(code,short_name,unit), by=c("var"="code")) %>%
+  filter(!is.na(codepays))
 
 oth_spatial <- rbind(oth_spatial,oth_spatial2,env_static)
   
 plot_othspa_byvillage <- ggplot(oth_spatial, aes(x=as.factor(codevillage), y=val)) +
   geom_bar(stat="identity") +
-  facet_wrap(.~short_name, scales="free") +
+  facet_wrap(codepays~short_name, scales="free") +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=0.5)) + 
   labs(x = NULL) +
   labs(y = NULL) +
@@ -849,22 +1251,40 @@ plot_othspa_byvillage <- ggplot(oth_spatial, aes(x=as.factor(codevillage), y=val
 plot_othspa_byvillage
 
 
+crops_bf <- dbReadTable(react_gpkg, 'env_landcover') %>% 
+  filter(buffer == 2000, layer_id==3, pixval %in% c(1,11), metric=="pland") %>%
+  mutate(codevillage = substr(id,2,4)) %>%
+  dplyr::group_by(codevillage) %>%
+  summarise(val = mean(val)) %>%
+  mutate(codepays="BF",var="crop",short_name="Surface of crops", unit="% of landscape\nin a 2 km buffer area")
+
+
 oth_spatial2 <- oth_spatial %>%
+  bind_rows(crops_bf) %>%
   mutate(short_name = paste0(short_name," (",unit,")")) %>%
-  group_by(short_name) %>%
-  summarise(vale = mean(val, na.rm = T),sd = sd(val, na.rm = T))
+  # group_by(codepays,short_name) %>%
+  # summarise(vale = mean(val, na.rm = T),sd = sd(val, na.rm = T)) %>% 
+  filter(short_name %in% c("Human population (person)",
+                           "Shortest dist. to stream (m.)",
+                           "Degree of clustering of the households (NA)",
+                           "Distance to the edge of the village (meters)",
+                           "Surface of crops (% of landscape\nin a 2 km buffer area)")) %>%
+  mutate(short_name=gsub("m\\.","meters",short_name)) %>%
+  mutate(short_name=gsub("NA","unitless",short_name)) %>%
+  mutate(codepays = ifelse(codepays=="CI","Korhogo (IC)","Diébougou (BF)")) %>%
+  mutate(codepays = forcats::fct_relevel(codepays,c("Korhogo (IC)","Diébougou (BF)")))
 
-plot_othspa2 <- ggplot(oth_spatial2, aes(y = vale, x = short_name )) +
-  geom_bar(stat="identity", width = 0.4) + 
-  facet_wrap(.~short_name, scales = "free") + 
-  geom_errorbar(aes(ymin=vale-sd, ymax=vale+sd), width=.1,position=position_dodge(.9)) + 
-  theme(axis.text.x=element_blank(),
-        axis.title.x=element_blank(),
-        axis.title.y=element_blank(),
-        strip.text.x = element_text(size = 6))
-  
-
-
+plot_othspa2 <- ggplot(oth_spatial2, aes(y = val, x = short_name,fill=codepays )) +
+    geom_boxplot() + 
+    facet_wrap(.~short_name, scales = "free") + 
+    theme_bw() +
+    theme(axis.text.x=element_blank(),
+          axis.title.x=element_blank(),
+          axis.title.y=element_blank(),
+          legend.position = "bottom") + 
+  labs(fill = "Study area") + 
+  scale_fill_grey(start=0.3, end=0.7) + 
+  ggtitle("Landscape variables")
 
 ```
 
@@ -878,15 +1298,15 @@ th_env_nightcatch_postedecapture <- read.csv("/home/ptaconet/Bureau/data_angliqu
   mutate(date_time = lubridate::ymd_hms(date_time)) %>%
   mutate(idpointdecapture = substr(idpostedecapture,1,nchar(idpostedecapture)-1)) %>%
   left_join(periodes_interv %>% dplyr::select(idpointdecapture,codevillage,codepays, nummission)) %>%
-  filter(codepays == code_pays) %>%
+  #filter(codepays == code_pays) %>%
   pivot_longer(cols = temperature_hygro:pressure_baro, names_to = "var", values_to = "val") %>%
   mutate(date_time = lubridate::floor_date(date_time,"hour")) %>%
-  group_by(codevillage, nummission, date_time, var) %>%
+  group_by(codepays,codevillage, nummission, date_time, var) %>%
   summarise(val=mean(val))
 
 
 th_env_nightcatch_postedecapture2 <- th_env_nightcatch_postedecapture %>%
-  group_by(nummission, var) %>%
+  group_by(codepays,nummission, var) %>%
   summarise(vale = mean(val),sd = sd(val)) %>%
   filter(var %in% c("humidity_baro","temperature_baro","pressure_baro")) %>%
   mutate(var = case_when(
@@ -901,25 +1321,46 @@ plot_2 <- ggplot(th_env_nightcatch_postedecapture2, aes(y = vale, x = as.numeric
 
 th_env_nightcatch_postedecapture <- th_env_nightcatch_postedecapture %>%
   mutate(hour = lubridate::hour(date_time)) %>%
-  group_by(nummission,hour,var) %>%
-  summarise(vale = mean(val), upper = max(val), lower = min(val)) %>%
+  group_by(codepays,nummission,hour,var) %>%
+  summarise(vale = mean(val), upper = mean(val)+sd(val), lower = mean(val)-sd(val)) %>%
   mutate(date = ifelse(hour < 12, "2000-01-02","2000-01-01")) %>%
   mutate(date = lubridate::ymd_hms(paste0(date," ",hour,":00:00"))) %>%
-  filter(upper<10000)
+  filter(upper<10000) %>%
+  filter(var %in% c("luminosite_hobo","pressure_baro","temperature_hygro","humidity_hygro")) %>%
+  mutate(var = case_when(var=="luminosite_hobo" ~ "Luminosity (lux)",
+                         var=="pressure_baro" ~ "Pressure (hPa)",
+                         var=="temperature_hygro" ~ "Temperature (°C)",
+                         var=="humidity_hygro" ~ "Humidity (%)")) %>%
+  mutate(codepays = ifelse(codepays=="CI","IC","BF")) %>%
+  mutate(codepays = forcats::fct_relevel(codepays,c("IC","BF"))) %>%
+  mutate(entomo_mission="entomological mission")
   
-plot_microclimate <- ggplot(th_env_nightcatch_postedecapture, aes(x=date, y = vale)) + 
-  facet_grid(var~nummission, scales = "free") +
+plot_microclimate_bf <- ggplot(th_env_nightcatch_postedecapture %>% filter(codepays=="BF"), aes(x=date, y = vale)) + 
+  facet_grid(var~entomo_mission+nummission, scales = "free") +
   geom_ribbon(aes(ymin=lower, ymax=upper), linetype=2, alpha=0.7, fill = "grey70") +
   geom_line(size = 0.2) + 
   scale_x_datetime(labels = date_format("%H"),
                      date_breaks = "2 hours") +
   labs(y = NULL) + 
-  labs(x = "hour") + 
-  ggtitle("Micro-climate")
+  labs(x = "hour",title = "Study area : Diébougou (BF)") + 
+  theme_bw() + 
+  theme(strip.text.y = element_text(size = 7))
+  
 
-plot_microclimate
+plot_microclimate_ci <- ggplot(th_env_nightcatch_postedecapture %>% filter(codepays=="IC"), aes(x=date, y = vale)) + 
+  facet_grid(var~entomo_mission+nummission, scales = "free") +
+  geom_ribbon(aes(ymin=lower, ymax=upper), linetype=2, alpha=0.7, fill = "grey70") +
+  geom_line(size = 0.2) + 
+  scale_x_datetime(labels = date_format("%H"),
+                     date_breaks = "2 hours") +
+  labs(y = NULL) + 
+  labs(x = "hour",title = "Study area : Korhogo (IC)") + 
+  theme_bw() + 
+  theme(strip.text.y = element_text(size = 7))
 
-
-
+p <- plot_microclimate_ci / plot_microclimate_bf + plot_annotation(
+  title = 'Micro-climatic conditions during each entomological survey',
+  caption = 'Ribbons indicate the mean +- sd for all the collection points of the study area'
+) 
 
 ```

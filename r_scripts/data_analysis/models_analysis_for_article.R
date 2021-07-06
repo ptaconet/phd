@@ -65,17 +65,17 @@ univ_spearman_spatial <- do.call(rbind.data.frame, model_univanalysis_results$sp
   mutate(buffer = ifelse(is.na(buffer),"2000",buffer)) %>%
   dplyr::rename(pval = p) %>%
   mutate(correlation = ifelse(pval >= 0.2 | abs(correlation)<=0.1, NA, correlation)) %>%
-  #nest(-c(country))
   nest(-c(country))
 
 
 univ_glmm_spatial <- do.call(rbind.data.frame, model_univanalysis_results$spatial_corrs_glmm) %>% 
   mutate(model = "glmm univariate") %>%
   mutate(indicator = ifelse(indicator == "presence","Presence","Abundance")) %>%
+  mutate(indicator2 = indicator) %>%
   mutate(buffer = ifelse(is.na(buffer),"2000",buffer)) %>%
   dplyr::rename(pval = p.value, correlation = estimate) %>%
   mutate(correlation = ifelse(pval >= 0.2, NA, correlation)) %>%
-  nest(-c(country))
+  nest(-c(country,indicator2))
 
 
 univ_spearman_temporal <-  do.call(rbind.data.frame, model_univanalysis_results$temporal_corrs_spearman) %>% 
@@ -97,15 +97,16 @@ univ_glmm_temporal <-  do.call(rbind.data.frame, model_univanalysis_results$temp
 
 #### spatial univariate
 
-
 plots_univ_spearman_spatial <- univ_spearman_spatial %>%
-  mutate(univ_spatial = pmap(list(data, country), ~fun_plot_tile_univ_spatial(df = ..1,country = ..4))) %>%
+  mutate(univ_spatial = pmap(list(data, country), ~fun_plot_tile_univ_spatial(df = ..1,country = ..2))) %>%
   dplyr::select(-data)
 
 plots_univ_glmm_spatial <- univ_glmm_spatial %>%
-  mutate(univ_spatial = pmap(list(data, country), ~fun_plot_tile_univ_spatial(df = ..1,country = ..4, metric_name = "glmm"))) %>%
+  mutate(univ_spatial = pmap(list(data, country, indicator2), ~fun_plot_tile_univ_spatial(df = ..1,country = ..2, metric_name = "glmm", indicator2 = ..3))) %>%
   dplyr::select(-data)
 
+plots_univ_glmm_spatial$univ_spatial[[1]] + plots_univ_glmm_spatial$univ_spatial[[2]] # BF
+plots_univ_glmm_spatial$univ_spatial[[3]] + plots_univ_glmm_spatial$univ_spatial[[4]] # CI
 
 ###### temporal univariate
 
@@ -133,10 +134,13 @@ plots_univ_glmm_temporal <- univ_glmm_temporal %>%
 
 
 # BF : 
-wrap_plots(plots_univ_spearman_temporal$univ_temporal[1][[1]],plots_univ_spearman_temporal$univ_temporal[2][[1]], ncol = 2, nrow = 1) 
+#wrap_plots(plots_univ_spearman_temporal$univ_temporal[1][[1]],plots_univ_spearman_temporal$univ_temporal[2][[1]], ncol = 2, nrow = 1) 
+wrap_plots(plots_univ_glmm_temporal$univ_temporal[1][[1]],plots_univ_glmm_temporal$univ_temporal[2][[1]], ncol = 2, nrow = 1) 
 
 # CI : 
-wrap_plots(plots_univ_spearman_temporal$univ_temporal[3][[1]],plots_univ_spearman_temporal$univ_temporal[4][[1]], ncol = 2, nrow = 1) 
+#wrap_plots(plots_univ_spearman_temporal$univ_temporal[3][[1]],plots_univ_spearman_temporal$univ_temporal[4][[1]], ncol = 2, nrow = 1) 
+wrap_plots(plots_univ_glmm_temporal$univ_temporal[3][[1]],plots_univ_glmm_temporal$univ_temporal[4][[1]], ncol = 2, nrow = 1) 
+
 
 ######################
 ###### multivariate
@@ -165,7 +169,8 @@ model_validation <- res %>%
   mutate(response_var = case_when(
     response_var == "ma_funestus_ss" ~ "An. funestus",
     response_var == "ma_gambiae_ss" ~ "An. gambiae ss.",
-    response_var == "ma_coluzzi" ~ "An. coluzzii")) %>%
+    response_var == "ma_coluzzi" ~ "An. coluzzii",
+    response_var == "ma_an" ~ "all Anopheles")) %>%
   mutate(df_cv = map(rf_llo, ~pluck(.,"df_cv"))) %>%
   dplyr::select(response_var, code_pays, mod, df_cv) %>%
   mutate(df_cv = map(df_cv, ~dplyr::select(., pred,obs, codevillage, nummission, pointdecapture, int_ext))) %>%
@@ -203,7 +208,7 @@ wrap_plots(list(plots_validation_presence$plots_validation[[1]],
 wrap_plots(list(plots_validation_abundance$plots_validation[[1]],
                  plots_validation_abundance$plots_validation[[2]],
                  plots_validation_abundance$plots_validation[[3]], 
-                 model_validation$plot_validation[[2]][[2]],
+                model_validation$plot_validation[[2]][[2]],
                  model_validation$plot_validation[[2]][[3]],
                  model_validation$plot_validation[[2]][[1]]),
             nrow = 2, ncol = 3) + plot_layout(guides = 'collect', heights = c(1, 2))
@@ -214,7 +219,69 @@ wrap_plots(list(plots_validation_abundance$plots_validation[[1]],
 ######################
 
 
-res <-  readRDS("/home/ptaconet/Bureau/data_analysis/model_results_resistances7.rds")
+res <-  readRDS("/home/ptaconet/Bureau/data_analysis/model_results_resistances10.rds")
+
+glmm_plots <- res %>%
+  filter(!(response_var == "ma_gambiae_ss" & code_pays=="BF" & mod == "early_biting")) %>%
+  filter(!(response_var == "ma_funestus_ss" & code_pays=="CI" & mod == "early_biting")) %>%
+  mutate(response_var = case_when(
+    response_var == "ma_funestus_ss" ~ "An. funestus",
+    response_var == "ma_gambiae_ss" ~ "An. gambiae ss.",
+    response_var == "ma_coluzzi" ~ "An. coluzzii",
+    response_var == "ma_gambiae_sl" ~ "An. gambiae s.l.")) %>%
+  mutate(model_plots = pmap(list(rf,glmm_aic, mod,response_var,code_pays), ~fun_plot_pdp4(..1,..2,..3,..4,..5,get_all_plots=TRUE)))
+
+
+# varimplot
+glmm_plots <- glmm_plots %>%
+  filter(!(response_var == "An. coluzzii" & code_pays=="BF" & mod == "early_biting")) %>%
+  mutate(df_varimp = map(model_plots, ~pluck(.,"df_varimp")))
+  
+df_varimp = do.call(rbind.data.frame, glmm_plots$df_varimp) %>%
+  mutate(model = paste0(country," - ", species))
+
+ ggplot(df_varimp , aes(y=reorder(label, value), x = value, fill = name,group = name, label = label)) + 
+  geom_bar(position="dodge", stat="identity") + 
+  scale_fill_manual("model", values = c("GLMM" = "#E69F00", "RF" = "#009E73")) + 
+  theme_light() + 
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        legend.position = "bottom") + 
+  facet_grid(label_group~model, scales = "free_y")
+
+
+ p1=ggplot(df_varimp %>% filter(name == "RF") , aes(y=label, x = value, label = label)) + 
+   geom_bar(position="dodge", stat="identity") + 
+   scale_fill_manual("model", values = c("GLMM" = "#E69F00", "RF" = "#009E73")) + 
+   theme_light() + 
+   theme(axis.title.y = element_blank(),
+         axis.title.x = element_blank(),
+         legend.position = "bottom") + 
+   facet_grid(label_group~model, scales = "free_y")
+ 
+ p2=ggplot(df_varimp %>% filter(name == "GLMM") , aes(y=label, x = value, label = label)) + 
+   geom_bar(position="dodge", stat="identity") + 
+   scale_fill_manual("model", values = c("GLMM" = "#E69F00", "RF" = "#009E73")) + 
+   theme_light() + 
+   theme(axis.title.y = element_blank(),
+         axis.title.x = element_blank(),
+         legend.position = "bottom") + 
+   facet_grid(label_group~model, scales = "free_y")
+ 
+
+pmap(list(glmm_plots$model_plots,glmm_plots$response_var,glmm_plots$code_pays,glmm_plots$mod),~ggsave(paste(..2,..3,..4,sep="_"),..1,"png",paste0("plots_resistance5/",..4))) #, width = 15, height = 12
+
+glmm_plots_selectvar <- res %>% 
+  filter(!(response_var == "ma_gambiae_ss" & code_pays=="BF" & mod == "early_biting")) %>%
+  filter(!(response_var == "ma_funestus_ss" & code_pays=="CI" & mod == "early_biting")) %>%
+  mutate(response_var = case_when(
+    response_var == "ma_funestus_ss" ~ "An. funestus",
+    response_var == "ma_gambiae_ss" ~ "An. gambiae ss.",
+    response_var == "ma_coluzzi" ~ "An. coluzzii",
+    response_var == "ma_gambiae_sl" ~ "An. gambiae s.l.")) %>%
+  mutate(model_plots = pmap(list(rf,glmm_aic, mod,response_var,code_pays), ~fun_plot_pdp4(..1,..2,..3,..4,..5,get_all_plots=FALSE)))
+
+pmap(list(glmm_plots_selectvar$model_plots,glmm_plots_selectvar$response_var,glmm_plots_selectvar$code_pays,glmm_plots_selectvar$mod),~ggsave(paste(..2,..3,..4,sep="_"),..1,"png",paste0("plots_resistance5_selectvar/",..4)))
 
 
 to_rm <- NULL
@@ -229,17 +296,23 @@ res <- res[-to_rm,]
 
 ## glmm + RF
 glmm_plots <- res %>% 
+  filter(periodinterv=="all") %>%
   mutate(response_var = case_when(
     response_var == "ma_funestus_ss" ~ "An. funestus",
-    response_var == "ma_gambiae_ss" ~ "An. gambiae ss.",
-    response_var == "ma_coluzzi" ~ "An. coluzzii")) %>%
+    response_var == "ma_gambiae_ss" ~ "An. gambiae s.s.",
+    response_var == "ma_coluzzi" ~ "An. coluzzii",
+    response_var == "ma_gambiae_sl" ~ "An. gambiae s.l.")) %>%
   mutate(glmm_multiv = map2(glmm, mod, ~broom.mixed::tidy(.x$mod@model, conf.int = TRUE, exponentiate = ifelse(.y == "abundance", FALSE, TRUE)))) %>%
   mutate(glmm_multiv = map(glmm_multiv, ~fun_get_predictors_labels(table = ., vector_predictors_name = "term"))) %>%
   mutate(glmm_multiv_auc = map(glmm, ~MLmetrics::AUC(.$df_cv_llo$pred, .$df_cv_llo$obs))) %>%
   mutate(glmm_univ = map(glmms_univs, ~fun_get_predictors_labels(table = ., vector_predictors_name = "term"))) %>%
-  mutate(glmm_multiv_plot = pmap(list(glmm_multiv,mod,response_var,period_interv,glmm_multiv_auc), ~fun_glmm_dotpoint(..1,..2,..3,..4,..5,"multivariate"))) %>%
-  mutate(glmm_univ_plot = pmap(list(glmm_univ,mod,response_var,period_interv), ~fun_glmm_dotpoint(..1,..2,..3,..4,NA,"univariate"))) %>%
-  mutate(rf_nightscience_plots = pmap(list(rf_nightscience,mod,response_var,period_interv,glmm_univ_plot,glmm_multiv_plot), ~fun_plot_pdp2(..1,..2,..3,..4,"nightscience",..5,..6)))
+  mutate(glmm_multiv_plot = pmap(list(glmm_multiv,mod,response_var,periodinterv,glmm_multiv_auc), ~fun_glmm_dotpoint(..1,..2,..3,..4,..5,"multivariate"))) %>%
+  mutate(glmm_univ_plot = pmap(list(glmm_univ,mod,response_var,periodinterv), ~fun_glmm_dotpoint(..1,..2,..3,..4,NA,"univariate"))) %>%
+  mutate(rf_nightscience_auc = map(rf_nightscience, ~MLmetrics::AUC(.$df_cv$pred, .$df_cv$obs))) %>%
+  mutate(rf_allpredictors_auc = map(rf_allpredictors, ~MLmetrics::AUC(.$df_cv$pred, .$df_cv$obs))) %>%
+  mutate(rf_nightscience_plots = pmap(list(rf_nightscience,mod,response_var,periodinterv,glmm_univ_plot,glmm_multiv_plot), ~fun_plot_pdp2(..1,..2,..3,..4,..5,..6))) %>%
+  mutate(rf_allpredictors_plots = pmap(list(rf_allpredictors,mod,response_var,periodinterv,glmm_univ_plot,glmm_multiv_plot), ~fun_plot_pdp2(..1,..2,..3,..4,..5,..6)))
+
 
 
 
@@ -254,9 +327,9 @@ glmm_plots <- res %>%
   mutate(glmm_multiv = map(glmm_multiv, ~fun_get_predictors_labels(table = ., vector_predictors_name = "term"))) %>%
   mutate(glmm_multiv_auc = map(glmm, ~MLmetrics::AUC(.$df_cv_llo$pred, .$df_cv_llo$obs))) %>%
   mutate(glmm_univ = map(glmms_univs, ~fun_get_predictors_labels(table = ., vector_predictors_name = "term"))) %>%
-  mutate(glmm_multiv_plot = pmap(list(glmm_multiv,mod,response_var,period_interv,glmm_multiv_auc), ~fun_glmm_dotpoint(..1,..2,..3,..4,..5,"multivariate"))) %>%
-  mutate(glmm_univ_plot = pmap(list(glmm_univ,mod,response_var,period_interv), ~fun_glmm_dotpoint(..1,..2,..3,..4,NA,"univariate"))) %>%
-  mutate(rf_nightscience_plots = pmap(list(rf_nightscience,mod,response_var,period_interv,glmm_univ_plot,glmm_multiv_plot), ~fun_plot_pdp2(..1,..2,..3,..4,"nightscience",..5,..6)))
+  mutate(glmm_multiv_plot = pmap(list(glmm_multiv,mod,response_var,periodinterv,glmm_multiv_auc), ~fun_glmm_dotpoint(..1,..2,..3,..4,..5,"multivariate"))) %>%
+  mutate(glmm_univ_plot = pmap(list(glmm_univ,mod,response_var,periodinterv), ~fun_glmm_dotpoint(..1,..2,..3,..4,NA,"univariate"))) %>%
+  mutate(rf_nightscience_plots = pmap(list(rf_nightscience,mod,response_var,periodinterv,glmm_univ_plot,glmm_multiv_plot), ~fun_plot_pdp2(..1,..2,..3,..4,"nightscience",..5,..6)))
 
 
 
@@ -273,8 +346,8 @@ pdps_resistances <- res %>%
     response_var == "ma_funestus_ss" ~ "An. funestus",
     response_var == "ma_gambiae_ss" ~ "An. gambiae ss.",
     response_var == "ma_coluzzi" ~ "An. coluzzii")) %>%
- # mutate(rf_dayscience_plots = pmap(list(rf_dayscience ,mod,response_var,period_interv), ~fun_plot_pdp2(..1,..2,..3,..4,"dayscience"))) %>%
-  mutate(rf_nightscience_plots = pmap(list(rf_nightscience,mod,response_var,period_interv), ~fun_plot_pdp2(..1,..2,..3,..4,"nightscience")))
+ # mutate(rf_dayscience_plots = pmap(list(rf_dayscience ,mod,response_var,periodinterv), ~fun_plot_pdp2(..1,..2,..3,..4,"dayscience"))) %>%
+  mutate(rf_nightscience_plots = pmap(list(rf_nightscience,mod,response_var,periodinterv), ~fun_plot_pdp2(..1,..2,..3,..4,"nightscience")))
 
 
 pmap(list(pdps_resistances$rf_dayscience_plots,pdps_resistances$response_var,pdps_resistances$code_pays,pdps_resistances$mod,pdps_resistances$period_interv),~ggsave(paste(..2,..3,..4,..5,"dayscience",sep="_"),..1$pdps,"png",paste0("plots_resistance2/",..4)))
@@ -290,10 +363,10 @@ model_validation <- res %>%
     response_var == "ma_gambiae_ss" ~ "An. gambiae ss.",
     response_var == "ma_coluzzi" ~ "An. coluzzii")) %>%
   mutate(df_cv = map(rf_nightscience, ~pluck(.,"df_cv"))) %>%
-  dplyr::select(response_var, code_pays, mod, period_interv, df_cv) %>%
+  dplyr::select(response_var, code_pays, mod, periodinterv, df_cv) %>%
   mutate(df_cv = map(df_cv, ~dplyr::select(., pred,obs, codevillage, nummission, pointdecapture, int_ext))) %>%
   mutate(df_cv = map2(df_cv,response_var, ~mutate(.x, species = .y))) %>%
-  nest(-c(mod,code_pays,period_interv))%>%
+  nest(-c(mod,code_pays,periodinterv))%>%
   mutate(df_cv2 = map(data, ~do.call(rbind.data.frame, .$df_cv))) %>%
   mutate(df_val = map2(df_cv2,mod, ~fun_prepare_df_perf(.x,.y))) %>%
   mutate(perf_metric = map2(df_cv2,mod,~fun_compute_perf_metric(..1,..2))) %>%
@@ -314,11 +387,11 @@ glmm_plots <- res %>%
   mutate(glmm_multiv = map(glmm_multiv, ~fun_get_predictors_labels(table = ., vector_predictors_name = "term"))) %>%
   mutate(glmm_multiv_auc = map(glmm, ~MLmetrics::AUC(.$df_cv_llo$pred, .$df_cv_llo$obs))) %>%
   mutate(glmm_univ = map(glmms_univs, ~fun_get_predictors_labels(table = ., vector_predictors_name = "term"))) %>%
-  mutate(glmm_multiv_plot = pmap(list(glmm_multiv,mod,response_var,period_interv,glmm_multiv_auc), ~fun_glmm_dotpoint(..1,..2,..3,..4,..5,"multivariate"))) %>%
-  mutate(glmm_univ_plot = pmap(list(glmm_univ,mod,response_var,period_interv), ~fun_glmm_dotpoint(..1,..2,..3,..4,NA,"univariate")))
+  mutate(glmm_multiv_plot = pmap(list(glmm_multiv,mod,response_var,periodinterv,glmm_multiv_auc), ~fun_glmm_dotpoint(..1,..2,..3,..4,..5,"multivariate"))) %>%
+  mutate(glmm_univ_plot = pmap(list(glmm_univ,mod,response_var,periodinterv), ~fun_glmm_dotpoint(..1,..2,..3,..4,NA,"univariate")))
  
 
-pmap(list(glmm_plots$glmm_univ_plot,glmm_plots$glmm_multiv_plot,glmm_plots$response_var,glmm_plots$code_pays,glmm_plots$mod,glmm_plots$period_interv),~ggsave(paste(..3,..4,..5,..6,"glmm",sep="_"),wrap_plots(..1, ..2, nrow = 1, ncol = 2) ,"png",paste0("plots_resistance2/",..5)))
+pmap(list(glmm_plots$glmm_univ_plot,glmm_plots$glmm_multiv_plot,glmm_plots$response_var,glmm_plots$code_pays,glmm_plots$mod,glmm_plots$periodinterv),~ggsave(paste(..3,..4,..5,..6,"glmm",sep="_"),wrap_plots(..1, ..2, nrow = 1, ncol = 2) ,"png",paste0("plots_resistance2/",..5)))
 
 
 # get rsquared from the multivariate models

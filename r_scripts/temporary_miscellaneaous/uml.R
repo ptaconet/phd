@@ -28,7 +28,8 @@ Repos --> RechercheHôte
 Ponte --> [*]
 '
 x_plantuml <- plantuml(x_female_vector)
-plot(x_plantuml)
+plot(x_plantuml,file = "/home/ptaconet/Bureau/plantuml.png" )
+
 
 x_lav<-paste(x_female_vector,
 'Oeuf --> [*]

@@ -437,10 +437,29 @@ corr_multiv_all_period <- row_whole_period$df_corr_multiv[[1]] %>% mutate(interv
 
 
 ### results of multivariate analysis
+
+for(i in 1:nrow(model_results)){
+  plots_univ_analysis <- fun_plot_res_univanalysis(model_results, model_results$response_var[i], model_results$code_pays[i], model_results$mod[i])
+  plots_mutiv_analysis <- fun_plot_res_multivanalysis_glmm(model_results, model_results$response_var[i], model_results$code_pays[i], model_results$mod[i])
+  th_trmetrics_entomo_postedecapture_mod2 <- plots_mutiv_analysis$mod_whole_period$frame
+  plot_mod_residual <- DHARMa::simulateResiduals(plots_mutiv_analysis$mod_whole_period, n = 1000)
+  plot(plot_mod_residual)
+  plots_univ_analysis$corr_all_period_plot
+  plots_mutiv_analysis$plot_model_whole_period
+}
+
+
 plots_univ_analysis_presence <- fun_plot_res_univanalysis(model_results, "ma_coluzzi", "BF", "presence")
 plots_multiv_analysis_presence <- fun_plot_res_multivanalysis_glmm(model_results, "ma_coluzzi", "BF", "presence")
 plots_univ_analysis_abundance <- fun_plot_res_univanalysis(model_results, "ma_coluzzi", "BF", "abundance")
 plots_multiv_analysis_abundance <- fun_plot_res_multivanalysis_glmm(model_results, "ma_coluzzi", "BF", "abundance")
+
+plots_univ_analysis_exophagy <- fun_plot_res_univanalysis(model_results, "ma_coluzzi", "BF", "presence")
+plots_multiv_analysis_presence <- fun_plot_res_multivanalysis_glmm(model_results, "ma_coluzzi", "BF", "presence")
+plots_univ_analysis_abundance <- fun_plot_res_univanalysis(model_results, "ma_coluzzi", "BF", "abundance")
+plots_multiv_analysis_abundance <- fun_plot_res_multivanalysis_glmm(model_results, "ma_coluzzi", "BF", "abundance")
+
+
 
 th_trmetrics_entomo_postedecapture_mod2 <- plots_multiv_analysis_presence$mod_whole_period$frame
 residuals_plot_presence <- DHARMa::simulateResiduals(plots_multiv_analysis_presence$mod_whole_period, n = 1000)

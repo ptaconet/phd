@@ -69,6 +69,7 @@ csh_all <- rbind(csh_exterior,csh_interior) %>%
 
 # get mean date for each entomo mission in each country
 mean_date_by_mission <- entomo_csh_metadata_l1 %>%
+  dplyr::select(-geom) %>%
   group_by(codepays,nummission) %>%
   summarise(date = mean(as.Date(date_capture))) %>%
   as_tibble()
@@ -162,7 +163,7 @@ GeomFlatViolin <-
 a <- trmetrics_entomo %>%
     filter(genre == "Anopheles") %>%
   group_by(idpointdecapture, postedecapture) %>%
-  summarise(ma = sum(ma)) %>%
+  summarise(ma = sum(val)) %>%
   right_join(csh_all) %>%
   mutate(ma = ifelse(is.na(ma), 0, ma)) %>%
   left_join(mean_date_by_mission) %>%

@@ -777,11 +777,17 @@ load_spatial_data <- function(code_pays, landcover_layers_to_keep, mod, landcove
     # th_env_nightcatch_postedecapture2 <- rbind(th_env_nightcatch_postedecapture2,th_env_nightcatch_postedecapture3)
     
     
-    
-    th_env_nightcatch_postedecapture_wsp_rfh <-  read.csv("/home/ptaconet/phd/data/diebougou/wsp_rfh_hourly.csv")
+      th_env_nightcatch_postedecapture_wsp_rfh <-  bind_rows(read.csv("/home/ptaconet/phd/data/diebougou/wsp_rfh_hourly.csv"), read.csv("/home/ptaconet/phd/data/korhogo/wsp_rfh_hourly.csv"))
+
+      th_env_nightcatch_postedecapture_wsp_rfh <- th_env_nightcatch_postedecapture_wsp_rfh %>%
+      mutate(RFH = ifelse(RFH == 0,"Absence","Presence")) %>%
+        rename(RFHP = RFH)
     
     th_env_nightcatch_postedecapture <- th_env_nightcatch_postedecapture2 %>%
       left_join(th_env_nightcatch_postedecapture_wsp_rfh) %>%
+      mutate(RFHP = ifelse(is.na(RFHP),"Absence",RFHP)) %>%
+      mutate(WSP = ifelse(is.na(WSP),0,WSP)) %>%
+      mutate(RFHP=fct_relevel(RFHP,"Absence","Presence")) %>%
       mutate(NMTI = ifelse(NMTI<10,NA,NMTI),NMA = ifelse(NMA<800,NA,NMA),NMLI = ifelse(NMLE>2000,2000,NMLE),DNML = ifelse(DNML< -2000,-2000,DNML), DNML = ifelse(DNML> 2000,2000,DNML))
     
    } else if (mod %in% c("physiological_resistance_kdrw_reg","physiological_resistance_kdre_reg","physiological_resistance_ace1_reg","exophagy_reg","early_biting_reg","late_biting_reg")){
@@ -833,8 +839,8 @@ load_spatial_data <- function(code_pays, landcover_layers_to_keep, mod, landcove
        as_tibble() %>%
        mutate(idpostedecapture=as.character(idpostedecapture))
      
-     th_env_nightcatch_postedecapture <- th_env_nightcatch_postedecapture2 %>%
-       mutate(NMT = ifelse(NMT<10,NA,NMT),NMA = ifelse(NMA<800,NA,NMA),NML = ifelse(NML>2000,2000,NML),DNML = ifelse(DNML< -2000,-2000,DNML), DNML = ifelse(DNML> 2000,2000,DNML))
+     th_env_nightcatch_postedecapture <- th_env_nightcatch_postedecapture %>%
+       mutate(NMT = ifelse(NMT<10,NA,NMT),NMA = ifelse(NMA<800,NA,NMA),NML = ifelse(NML>2000,2000,NML))
    } else if( mod %in% c("presence","abundance")){
        
      th_env_nightcatch_postedecapture <- read.csv("/home/ptaconet/Bureau/data_anglique.csv") %>%
@@ -1139,8 +1145,8 @@ load_csh_sp_coord <- function(){
     sf::st_drop_geometry() %>%
     sf::st_as_sf(coords = c("X_4326", "Y_4326"), crs = 4326)
   
-  mean_coords_points_4326$X_4326 = as.numeric(sf::st_coordinates(mean_coords_points_4326)[,1])
-  mean_coords_points_4326$Y_4326 = as.numeric(sf::st_coordinates(mean_coords_points_4326)[,2])
+  mean_coords_points_4326$X4326 = as.numeric(sf::st_coordinates(mean_coords_points_4326)[,1])
+  mean_coords_points_4326$Y4326 = as.numeric(sf::st_coordinates(mean_coords_points_4326)[,2])
   mean_coords_points_4326 = sf::st_drop_geometry(mean_coords_points_4326) %>% as_tibble() %>% mutate(codevillage=as.character(codevillage), pointdecapture=as.character(pointdecapture))
   
   mean_coords_points_32630 = st_read(path_to_db, 'entomo_csh_metadata_l1', crs = 4326) %>%
@@ -1245,7 +1251,7 @@ fun_ffs_tempvar <- function(df, model_type, mod, time_vars, cols_to_keep, spearm
 }
 
 
-fun_glmm_cross_validation <- function(indices_cv, th_mod, mod, df, ind_vars_to_center){
+fun_glmm_cross_validation <- function(cv_col, th_mod, mod, df, ind_vars_to_center){
 
   #df <- df %>% dplyr::select(c("resp_var","codevillage","pointdecapture2","int_ext","VCM",ind_vars_to_center))
     
@@ -1253,6 +1259,47 @@ fun_glmm_cross_validation <- function(indices_cv, th_mod, mod, df, ind_vars_to_c
   
   df$pred <- NA
   metric <- NULL
+  
+  if(!(cv_col %in% c("by_ptcapt","by_ptcapt2","strat_10fold"))){
+    indices_cv <- CAST::CreateSpacetimeFolds(df, spacevar = cv_col,k = length(unique(unlist(df[,cv_col]))))  # k = length(unique(df[,cv_col])
+    # also works with : indices_cv <- groupKFold(df[,cv_col], k =  length(unique(df[,cv_col])))
+  }
+  if(cv_col == "by_ptcapt"){
+    uniques_pointdepcapt <- table(df$idpointdecapture)
+    uniques_pointdepcapt <- sort(uniques_pointdepcapt, decreasing = T)
+    uniques_pointdepcapt <- names(uniques_pointdepcapt)
+    indices_cv <- NULL
+    for(i in 1:length(uniques_pointdepcapt)){
+      indices_cv$index[[i]] <- which(df$codevillage != substr(uniques_pointdepcapt[i],2,4))
+      indices_cv$indexOut[[i]] <- which(df$idpointdecapture == uniques_pointdepcapt[i])
+    }
+  }
+  if(cv_col == "by_ptcapt2"){
+    uniques_pointdepcapt <- table(df$idpointdecapture)
+    uniques_pointdepcapt <- sort(uniques_pointdepcapt, decreasing = T)
+    uniques_pointdepcapt <- names(uniques_pointdepcapt)
+    indices_cv <- NULL
+    df$ptcapt_nummiss <- paste0(df$nummission,df$codevillage)
+    for(i in 1:length(uniques_pointdepcapt)){
+      indices_cv$index[[i]] <- which(df$ptcapt_nummiss != substr(uniques_pointdepcapt[i],1,4))
+      indices_cv$indexOut[[i]] <- which(df$idpointdecapture == uniques_pointdepcapt[i])
+    }
+  }
+  if(cv_col == "strat_10fold"){
+    df=groupdata2::fold(df,cat_col="resp_var",k=10) %>% ungroup()
+    indices_cv <- CAST::CreateSpacetimeFolds(df, spacevar = ".folds",k = 10)
+  }
+  # 
+  # ind_to_rm=NULL
+  # for(i in 1:length(indices_cv$indexOut)){
+  #   if(length(indices_cv$indexOut[[i]]) <= 2){
+  #     ind_to_rm <- c(ind_to_rm,i)
+  #   }
+  # }
+  # indices_cv$index[ind_to_rm] <- NULL
+  # indices_cv$indexOut[ind_to_rm] <- NULL
+  
+  
   for (i in 1:length(indices_cv$index)){
     df_train <- df[indices_cv$index[[i]],]
     df_test <- df[indices_cv$indexOut[[i]],]
@@ -1278,7 +1325,9 @@ fun_glmm_cross_validation <- function(indices_cv, th_mod, mod, df, ind_vars_to_c
   
   mean_metric <- mean(metric,na.rm = TRUE)
   
-  df <- df %>% dplyr::select(resp_var,pred,codevillage,nummission,pointdecapture2,int_ext) %>% dplyr::rename(obs = resp_var)
+  df <- df %>% dplyr::select(resp_var,pred,codevillage,nummission,idpointdecapture,pointdecapture2,int_ext) %>% dplyr::rename(obs = resp_var)
+  
+  df <- df %>% dplyr::filter(!is.na(pred))
   
   #return(list(mean_metric = mean_metric, df_cv = df))
   return(df)
@@ -1423,16 +1472,10 @@ fun_multicollinearity <- function(df, vars_to_test){
 }
 
 
-fun_compute_glmm <- function(df, predictors, predictors_forced = NULL, mod, cv_type = NULL, predictors_interaction = NULL){
+fun_compute_glmm <- function(df, predictors, predictors_forced = NULL, mod, cv_col = NULL, predictors_interaction = NULL, crit_selection = "LRT"){
   
-  ###### create indices for cross-validation
-  indices_spatial <- CAST::CreateSpacetimeFolds(df, spacevar = "codevillage", k = length(unique(df$codevillage)))
-  indices_temporal <- CAST::CreateSpacetimeFolds(df, timevar = "nummission", k = length(unique(df$nummission)))
-  indices_spatiotemporal <- CAST::CreateSpacetimeFolds(df, timevar = "nummission", spacevar = "codevillage", k = ifelse(mod=="abundance",3,4), seed = 10) # set seed for reproducibility as folds of spatiotemporal cv can change 
-  #indices_spatiotemporal2 <- CAST::CreateSpacetimeFolds(df, spacevar = "col_folds", k =  length(unique(df$col_folds))) 
-  
-  df <- df %>% mutate(int_ext = fct_relevel(int_ext,c("i","e")))
-  df <- df %>% dplyr::select(resp_var,codevillage,pointdecapture,int_ext,nummission,predictors,predictors_forced) %>% mutate_if(is.character, as.factor)
+
+  df <- df %>% dplyr::select(resp_var,codevillage,pointdecapture,int_ext,nummission,idpointdecapture,predictors,predictors_forced) %>% mutate_if(is.character, as.factor)
   df$pointdecapture2 <- as.factor(paste0(df$codevillage,df$pointdecapture))
 
   if(!is.null(predictors_interaction)){
@@ -1450,46 +1493,25 @@ fun_compute_glmm <- function(df, predictors, predictors_forced = NULL, mod, cv_t
     form_forc <- as.formula("~ (1|codevillage/pointdecapture2)")
   }
   
-  predictors_to_scale <- setdiff(c(predictors, predictors_forced, predictors_interaction), c("VCM","IEH","int_ext","kdre","kdrw","ace1"))
+  predictors_to_scale <- setdiff(c(predictors, predictors_forced, predictors_interaction), c("VCM","IEH","int_ext","kdre","kdrw","ace1","RFHP"))
   df_mod <- df %>% mutate_at(predictors_to_scale, ~scale(., center = TRUE, scale = FALSE)) %>% dplyr::select(c("resp_var","codevillage","pointdecapture2",predictors,predictors_forced,predictors_interaction))
   
   if(mod == "abundance"){
-    th_mod <- buildglmmTMB(form, include = form_forc, data = df_mod, family = truncated_nbinom2)
+    th_mod <- buildglmmTMB(form, include = form_forc, data = df_mod, family = truncated_nbinom2, crit = crit_selection)
     #df_mod_results <- broom.mixed::tidy(th_mod@model, conf.int = TRUE)
   } else if (mod %in% c("presence","abundance", "early_late_biting","late_biting","early_biting", "exophagy", "physiological_resistance_kdrw","physiological_resistance_kdre","physiological_resistance_ace1","late_biting_reg","early_biting_reg", "exophagy_reg", "physiological_resistance_kdrw_reg","physiological_resistance_kdre_reg","physiological_resistance_ace1_reg")){
-    th_mod <- buildglmmTMB(form, include = form_forc, data = df_mod, family = binomial(link = "logit"))
+    th_mod <- buildglmmTMB(form, include = form_forc, data = df_mod, family = binomial(link = "logit"),crit = crit_selection) #crit = "AIC"
     #df_mod_results <- broom.mixed::tidy(th_mod@model, conf.int = TRUE, exponentiate = TRUE)
   }
   
-  df_cv_llo <- df_cv_lto <- df_cv_llto <- df_cv_llto2 <- NULL
-  
-  if(is.null(cv_type)){
-    cv <- NULL
+  if(is.null(cv_col)){
+    df_cv <- NULL
   } else {
-   #leave-one-village-out : predict on a new village but on known missions
-   if("llo" %in% cv_type){
-     df_cv_llo <- fun_glmm_cross_validation(indices_spatial, th_mod, mod, df, predictors_to_scale)
-    }
-    if ("lto" %in% cv_type){
-      # leave-one-mission-out : predict on known villages but on unknown missions
-      df_cv_lto <- fun_glmm_cross_validation(indices_temporal, th_mod, mod, df, predictors_to_scale)
-    }
-    if ("llto" %in% cv_type){
-     #  leave-one-village-and-mission-out : predict on unknown villages and on unknown missions
-      df_cv_llto <- fun_glmm_cross_validation(indices_spatiotemporal, th_mod, mod, df, predictors_to_scale)
-    }
-    if ("llto2" %in% cv_type){
-        df_cv_llto2 <- fun_glmm_cross_validation(indices_spatiotemporal2, th_mod, mod, df, predictors_to_scale)
-    }
+     df_cv <- fun_glmm_cross_validation(cv_col, th_mod, mod, df, predictors_to_scale)
   }
   
   return(list(mod = th_mod, 
-              df_cv_llo = df_cv_llo,
-              df_cv_lto = df_cv_lto,
-              df_cv_llto = df_cv_llto,
-              df_cv_llto2 = df_cv_llto2
-              
-              ))
+              df_cv = df_cv))
   
 }
 
@@ -1688,19 +1710,57 @@ fun_compute_rf_old <- function(df, predictors, cv_type, mod, featureselect){
 
 
 
-fun_compute_rf <- function(df, predictors, cv_col, mod, featureselect){
+fun_compute_rf <- function(df, predictors, cv_col, mod, featureselect, species){
+  
+  library(doParallel)
+  cl <- makePSOCKcluster(8)
+  registerDoParallel(cl)
   
   ###### create indices for cross-validation
   #indices_cv <- CAST::CreateSpacetimeFolds(df, spacevar = "codevillage",timevar = "nummission", k = 10, seed = 29)
-  
+  if(!(cv_col %in% c("by_ptcapt","by_ptcapt2","strat_10fold"))){
    indices_cv <- CAST::CreateSpacetimeFolds(df, spacevar = cv_col,k = length(unique(unlist(df[,cv_col]))))  # k = length(unique(df[,cv_col])
 # also works with : indices_cv <- groupKFold(df[,cv_col], k =  length(unique(df[,cv_col])))
-  
-  if("int_ext" %in% colnames(df)){
-    df <- df %>% mutate(int_ext = ifelse(int_ext %in% c("int.","i"),"i","e"))
   }
-   df <- df %>% dplyr::select(resp_var,predictors,codevillage,nummission,pointdecapture,int_ext) %>% mutate_if(is.character, as.factor)
+   if(cv_col == "by_ptcapt"){
+     uniques_pointdepcapt <- table(df$idpointdecapture)
+     uniques_pointdepcapt <- sort(uniques_pointdepcapt, decreasing = T)
+     uniques_pointdepcapt <- names(uniques_pointdepcapt)
+     indices_cv <- NULL
+     for(i in 1:length(uniques_pointdepcapt)){
+      indices_cv$index[[i]] <- which(df$codevillage != substr(uniques_pointdepcapt[i],2,4))
+      indices_cv$indexOut[[i]] <- which(df$idpointdecapture == uniques_pointdepcapt[i])
+    }
+   }
+   if(cv_col == "by_ptcapt2"){
+     uniques_pointdepcapt <- table(df$idpointdecapture)
+     uniques_pointdepcapt <- sort(uniques_pointdepcapt, decreasing = T)
+     uniques_pointdepcapt <- names(uniques_pointdepcapt)
+     indices_cv <- NULL
+     df$ptcapt_nummiss <- paste0(df$nummission,df$codevillage)
+     for(i in 1:length(uniques_pointdepcapt)){
+       indices_cv$index[[i]] <- which(df$ptcapt_nummiss != substr(uniques_pointdepcapt[i],1,4))
+       indices_cv$indexOut[[i]] <- which(df$idpointdecapture == uniques_pointdepcapt[i])
+     }
+   }
+   if(cv_col == "strat_10fold"){
+     df=groupdata2::fold(df,cat_col="resp_var",k=10) %>% ungroup()
+     indices_cv <- CAST::CreateSpacetimeFolds(df, spacevar = ".folds",k = 10)
+   }
+  
+  # if(featureselect==TRUE){
+  #   ind_to_rm=NULL
+  #   for(i in 1:length(indices_cv$indexOut)){
+  #     if(length(indices_cv$indexOut[[i]]) <= 2){
+  #       ind_to_rm <- c(ind_to_rm,i)
+  #     }
+  #   }
+  #   indices_cv$index[ind_to_rm] <- NULL
+  #   indices_cv$indexOut[ind_to_rm] <- NULL
+  # }
    
+     df <- df %>% dplyr::select(resp_var,predictors,codevillage,nummission,pointdecapture,idpointdecapture,int_ext) %>% mutate_if(is.character, as.factor)
+
   
   if(mod %in% c("presence","abundance")){
     rownames(df)<- paste0(df$nummission,df$codevillage,df$pointdecapture,df$int_ext)
@@ -1742,8 +1802,9 @@ fun_compute_rf <- function(df, predictors, cv_col, mod, featureselect){
       return(out)
     }
     
-    
-    if(mod != "physiological_resistance_kdrw"){
+    if(mod=='presence' & species=="ma_gambiae_sl"){
+      df$resp_var <- ifelse(df$resp_var==0,"Presence","Absence")
+    } else if(mod != "physiological_resistance_kdrw"){
     df$resp_var <- ifelse(df$resp_var==0,"Absence","Presence")
     } else {
       df$resp_var <- ifelse(df$resp_var==0,"Presence","Absence")
@@ -1757,6 +1818,9 @@ fun_compute_rf <- function(df, predictors, cv_col, mod, featureselect){
     } else if(mod %in% c("exophagy")){
     met =  "ROC_AUC"
     }
+    
+
+    
     # met="brier"
 
     d <- as.data.frame(table(df$resp_var))
@@ -1767,14 +1831,19 @@ fun_compute_rf <- function(df, predictors, cv_col, mod, featureselect){
       samp <- NULL
     }
     
+    if(mod=="presence" & ratio_obs > 1){
+      met =  "ROC_AUC"
+    }
+    
       tr = trainControl(method="cv",
                         sampling = samp,
                         index = indices_cv$index, 
                         indexOut = indices_cv$indexOut,
                         summaryFunction = comboSummary,
                         classProbs = TRUE,
-                        savePredictions = 'final',
-                        verboseIter = TRUE)
+                        savePredictions = 'final'#,
+                        #verboseIter = TRUE
+                        )
     
     # if(cv_type == "random"){
     #   rfFuncs$summary <- prSummary
@@ -1817,15 +1886,17 @@ fun_compute_rf <- function(df, predictors, cv_col, mod, featureselect){
   } else {
     
     if(featureselect == TRUE){
-      th_mod <- CAST::ffs(predictors = df[,predictors], response = df$resp_var, method = "ranger", tuneLength = 5, trControl = tr, metric = met, maximize = ifelse(met %in% c("RMSE", "logLoss", "MAE", "brier","Dist"), FALSE,TRUE),  preProcess = c("center","scale"),importance = "permutation", local.importance = TRUE)
+      th_mod <- CAST::ffs(predictors = df[,predictors], response = df$resp_var, method = "ranger", tuneLength = 3, trControl = tr, metric = met, maximize = ifelse(met %in% c("RMSE", "logLoss", "MAE", "brier","Dist"), FALSE,TRUE),  preProcess = c("center","scale"),importance = "permutation", local.importance = TRUE)
     } else {
       #th_mod <- caret::train(x = df[,predictors], y = df$resp_var, method = "rf", tuneLength = 10, trControl = tr, metric = met, maximize = ifelse(met %in% c("RMSE", "logLoss", "MAE", "brier","Dist"), FALSE,TRUE), importance = T, keep.forest=TRUE, keep.inbag=TRUE)
-      th_mod <- caret::train(x = df[,predictors], y = df$resp_var, method = "ranger", tuneLength = 5, trControl = tr, metric = met, maximize = ifelse(met %in% c("RMSE", "logLoss", "MAE", "brier","Dist"), FALSE,TRUE),  preProcess = c("center","scale"),importance = "permutation", local.importance = TRUE) #importance = "impurity_corrected" 
+      th_mod <- caret::train(x = df[,predictors], y = df$resp_var, method = "ranger", tuneLength = 7, trControl = tr, metric = met, maximize = ifelse(met %in% c("RMSE", "logLoss", "MAE", "brier","Dist"), FALSE,TRUE),  preProcess = c("center","scale"),importance = "permutation", local.importance = TRUE) #importance = "impurity_corrected" 
       
     }
     
   }
-
+   
+   stopCluster(cl)
+   
   df$rowIndex <- seq(1,nrow(df),1)
   
   if (mod %in% c("presence","early_biting","late_biting", "exophagy","physiological_resistance_kdrw","physiological_resistance_kdre","physiological_resistance_ace1")){
@@ -1840,7 +1911,6 @@ fun_compute_rf <- function(df, predictors, cv_col, mod, featureselect){
       left_join(df) %>%
       dplyr::select(pred,obs,codevillage,nummission,pointdecapture,int_ext)
   }
-  
   
   
   return(list(mod = th_mod, df_mod = df, df_cv = df_cv))
@@ -1872,7 +1942,10 @@ fun_multicol <- function(th_trmetrics_entomo_postedecapture, preds){
   predictors_character <- th_trmetrics_entomo_postedecapture %>%
     dplyr::select(preds) %>%
     dplyr::select_if(is.character)
-  predictors_character <- colnames(predictors_character)
+  predictors_factors <- th_trmetrics_entomo_postedecapture %>%
+    dplyr::select(preds) %>%
+    dplyr::select_if(is.factor)
+  predictors_character <- unique(c(colnames(predictors_character),colnames(predictors_factors)))
   
   ## multicollinearity among predictors
   lsm_vars <- predictors_numeric[grepl("lsm", predictors_numeric)]
