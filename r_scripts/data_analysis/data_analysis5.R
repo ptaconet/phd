@@ -172,13 +172,13 @@
           #   mutate(PHY_kdre = as.numeric(kdre)) %>%
           #   mutate(PHY_ace1 = as.numeric(ace1))
             
-          # t = entomo_csh_metadata_l1 %>%
-          #   filter(codepays == code_pays) %>%
-          #   mutate(periode = ifelse(period_interv=="pre_intervention","preinterv","postinterv")) %>%
-          #   mutate(date_capture = as.Date(date_capture)) %>%
-          #   mutate(month = lubridate::month(date_capture)) %>%
-          #   mutate(saison = ifelse(month <= 4 | month >=11 , "seche","pluies")) %>%
-          #   dplyr::select(idpointdecapture,codevillage,periode,saison)
+           # t = entomo_csh_metadata_l1 %>%
+           #   filter(codepays == code_pays) %>%
+           #   mutate(periode = ifelse(period_interv=="pre_intervention","preinterv","postinterv")) %>%
+           #   mutate(date_capture = as.Date(date_capture)) %>%
+           #   mutate(month = lubridate::month(date_capture)) %>%
+           #   mutate(saison = ifelse(month <= 4 | month >=11 , "seche","pluies")) %>%
+           #   dplyr::select(idpointdecapture,codevillage,periode,saison)
           # 
           # HBB <- dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
           #   dplyr::filter(codepays == code_pays) %>%
@@ -325,13 +325,17 @@
             mutate(season = case_when(nummission %in% c("3","4") ~ "wet",
                                       nummission %in% c("1","5","6") ~ "dry-cold",
                                       nummission %in% c("2","7") ~ "dry-hot")) %>%
-            mutate(season = fct_relevel(season,c("wet","dry-cold","dry-hot")))
+            mutate(season = fct_relevel(season,c("wet","dry-cold","dry-hot"))) %>%
+            mutate(period_interv = ifelse(nummission %in% c("1","2","3"),'pre-intervention','post-intervention')) %>% 
+            mutate(period_interv = fct_relevel(period_interv,c("pre-intervention","post-intervention")))
         } else if(code_pays=="CI"){
           th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>%
-            mutate(season = case_when(nummission %in% c("","") ~ "wet",
-                                      nummission %in% c("","") ~ "dry-cold",
-                                      nummission %in% c("","") ~ "dry-hot")) %>%
-            mutate(season = fct_relevel(season,c("wet","dry-cold","dry-hot")))
+            mutate(season = case_when(nummission %in% c("1","5") ~ "wet",
+                                      nummission %in% c("2","6","7") ~ "dry-cold",
+                                      nummission %in% c("3","4","8") ~ "dry-hot")) %>%
+            mutate(season = fct_relevel(season,c("wet","dry-cold","dry-hot"))) %>%
+            mutate(period_interv = ifelse(nummission %in% c("1","2","3","4"),'pre-intervention','post-intervention')) %>% 
+            mutate(period_interv = fct_relevel(period_interv,c("pre-intervention","post-intervention")))
           
         }
         
@@ -364,17 +368,17 @@
          if (mod %in% c("exophagy")){
             
             #predictors <- c("NMT","NMH","NML","NMA","DNMT","DNMH","DNML","WSP","RFH","LMN","VCM","VCT","VCT2","HBB","HBI","LUS","LIG30_2000","RFD1F_2000_0_30","TMIN1_2000_0_30","TMAX1_2000_0_30","TMAX1_2000_0_0","RFD1F_2000_0_0","POP","ANI","POPANI","BDE","WMD","lsm_c_pland_2000_3_9")
-            predictors <- c("NMTI","NMHI","NMLE","NMA","DNMT","DNMH","DNML","WSP","RFHP","VCM","VCT2","HBB","HBI","LUS","LMN","RFD1F_2000_0_30","TMAX1_2000_0_30","TMIN1_2000_0_30","TMAX1_2000_0_0","RFD1F_2000_0_0","BDE","BCH_2000","WMD","POP")  # predictors = same as dayscience + some landscape and meteorological variables + physiological resistances
+            predictors <- c("NMTI","NMHI","NMLE","NMA","DNMT","DNMH","DNML","WSP","RFHP","VCM","VCT","HBB","HBI","LUS","LMN","TMAX1_2000_0_0","RFD1F_2000_0_0","BDE","BCH_2000","WMD","POP", "RFD1F_2000_0_30","TMAX1_2000_0_30","TMIN1_2000_0_30")
             
             if(response_var != "An.funestus_ss" & code_pays=="BF"){
               predictors <- c(predictors,"kdre","kdrw")
             }
-            if(code_pays=="BF"){
-              predictors <- c(predictors,"POPANI","VCT")
-            }
+             # if(code_pays=="BF"){
+             #   predictors <- c(predictors,"POPANI")
+             # }
     
-               glmm_varstoforce <- NULL
-            
+              glmm_varstoforce <- c("VCM","VCT")
+
                # correct RFH
                th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>%
                  mutate(RFHP=ifelse(RFHP ==2, "Presence","Absence")) %>%
@@ -384,21 +388,20 @@
                
           } else if (mod %in% c("early_late_biting","early_biting","late_biting")){
             
-            predictors <- c("VCM","VCT2","HBB2","HBI2","LUS","RFD1F_2000_0_30","TMAX1_2000_0_30","TMIN1_2000_0_30","TMAX1_2000_0_0","RFD1F_2000_0_0","BDE","BCH_2000","WMD","int_ext","POP") 
+            predictors <- c("VCM","VCT","HBB2","HBI2","TMAX1_2000_0_0","RFD1F_2000_0_0","BDE","BCH_2000","WMD","int_ext","POP","RFD1F_2000_0_30","TMAX1_2000_0_30","TMIN1_2000_0_30")
   
             if(response_var != "An.funestus_ss" & code_pays=="BF"){
               predictors <- c(predictors,"kdre","kdrw")
             }
             if(mod == "late_biting"){
-              predictors <- c(predictors,"NMT","NMH","NML","NMA","RFH","WSP")
+              predictors <- c(predictors,"NMT","NMH","NML","NMA","RFH","WSP","LUS")
             }
-            if(code_pays=="BF"){
-              predictors <- c(predictors,"POPANI","VCT")
-            }
+             # if(code_pays=="BF"){
+             #   predictors <- c(predictors,"POPANI")
+             # }
             
-            
-            glmm_varstoforce <- NULL
-            
+              glmm_varstoforce <- c("VCM","VCT")
+
             
             } else if(mod %in% c("physiological_resistance_kdrw","physiological_resistance_kdre","physiological_resistance_ace1")){
             
@@ -411,12 +414,12 @@
                 lsm_agri <- c("lsm_c_pland_2000_8_4","lsm_c_pland_2000_8_7","lsm_c_pland_2000_8_8")
             }
             
-            glmm_varstoforce <- NULL
-            predictors <-c(lsm_agri,"VCM","VCT2","LUS","HBB","HBI","MA","NMT","NMH","NMA","NML","POP")  # enlever int_ext  # ajouter abondance de moustique sur la nuit de capture (si ++ de pop -> mutation favorable   cout de la mutation )   # ajouter micro-clim
+            glmm_varstoforce <- c("VCM","VCT")
+            predictors <-c(lsm_agri,"VCM","VCT","HBB","HBI","MA","NMT","NMH","NMA","NML","POP","LUS")  #   enlever int_ext  # ajouter abondance de moustique sur la nuit de capture (si ++ de pop -> mutation favorable   cout de la mutation )   # ajouter micro-clim
             
-            if(code_pays=="BF"){
-              predictors <- c(predictors,"VCT","POPANI")
-            }
+             # if(code_pays=="BF"){
+             #   predictors <- c(predictors,"POPANI")
+             # }
             
             if(mod == "physiological_resistance_kdre"){
               predictors <- c(predictors,"kdrw")
@@ -446,7 +449,11 @@
         rf_selectvar <- NULL
         rf_allpredictors <- NULL
         
-
+       if(response_var=="An.funestus" & code_pays=="CI"){
+         th_trmetrics_entomo_postedecapture = th_trmetrics_entomo_postedecapture %>% filter(VCM %in% c("LLIN","LLIN + IRS"))
+       }
+        
+        
         ###### univariate models ######
         # glmms
         df <- th_trmetrics_entomo_postedecapture %>% 
@@ -574,9 +581,21 @@
             pvals_filts <- rbind(pvals_filts, pvals_filt_rfh)
           }
           
+          pvals_filt_periodinterv <- glmms_univs %>% filter(p.value <= 0.2, grepl("period_interv",term))
+          if(nrow(pvals_filt_periodinterv)>0){
+            predictors <- c(predictors, "period_interv")
+            pvals_filts <- rbind(pvals_filts, pvals_filt_periodinterv)
+          }
+          
+          pvals_filt_season <- glmms_univs %>% filter(p.value <= 0.2, grepl("season",term))
+          if(nrow(pvals_filt_season)>0){
+            predictors <- c(predictors, "season")
+            pvals_filts <- rbind(pvals_filts, pvals_filt_season)
+          }
+          
           tictoc::tic()
           if(length(predictors)>=1){
-            glmm_aic <- fun_compute_glmm(th_trmetrics_entomo_postedecapture, unique(predictors), mod = mod, predictors_interaction = predictors_microclim,cv_col = "by_ptcapt", crit_selection = "AIC")
+            glmm_aic <- fun_compute_glmm(df = th_trmetrics_entomo_postedecapture, predictors = unique(predictors), mod = mod,predictors_forced = glmm_varstoforce, crit_selection = "AIC",cv_col = NULL) # cv_col = "by_ptcapt"
           }
           tictoc::toc()
           
@@ -587,9 +606,18 @@
           #   th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>% mutate(resp_var = ifelse(resp_var==0.5,1,resp_var))   ###### tenter avec 1 ligne par allèle
           # }
           
+          predictors <- c(predictors,glmm_varstoforce)
+          
           tictoc::tic()
+          
+          if(code_pays=="CI" & response_var== "An.gambiae s.l."){
+            tlength <- 2
+          } else {
+            tlength <- 7
+          }
+          
           if(length(predictors)>2){
-            rf <- fun_compute_rf(th_trmetrics_entomo_postedecapture, unique(predictors), cv_col = "by_ptcapt", mod, featureselect = FALSE, species = response_var)
+            rf <- fun_compute_rf(th_trmetrics_entomo_postedecapture, unique(predictors), cv_col = "by_ptcapt", mod, featureselect = FALSE, species = response_var,tune_length = tlength)
           }
           tictoc::toc()
           
@@ -603,7 +631,7 @@
           #######################rf_allpredictors <- fun_compute_rf(th_trmetrics_entomo_postedecapture, all_predictors, cv_col = "by_ptcapt", mod, featureselect = FALSE)
 
             
-           return(list(glmms_univs = pvals_filts,
+           return(list(glmms_univs = glmms_univs,
                        #glmm_multiv_lrt = glmm_lrt, 
                        glmm_multiv_aic = glmm_aic, 
                        rf = rf
@@ -619,23 +647,23 @@
         add_row(response_var = "ma_funestus_ss", code_pays = "BF", mod = "exophagy", periodinterv = "all") %>%
         add_row(response_var = "ma_gambiae_ss", code_pays = "BF", mod = "exophagy", periodinterv = "all") %>%
         add_row(response_var = "ma_coluzzi", code_pays = "BF", mod = "exophagy", periodinterv = "all") %>%
-        add_row(response_var = "ma_funestus_ss", code_pays = "BF", mod = "early_biting", periodinterv = "all") %>%
-        add_row(response_var = "ma_gambiae_ss", code_pays = "BF", mod = "early_biting", periodinterv = "all") %>%
-        add_row(response_var = "ma_coluzzi", code_pays = "BF", mod = "early_biting", periodinterv = "all")%>%
+        #add_row(response_var = "ma_funestus_ss", code_pays = "BF", mod = "early_biting", periodinterv = "all") %>%
+        #add_row(response_var = "ma_gambiae_ss", code_pays = "BF", mod = "early_biting", periodinterv = "all") %>%
+        #add_row(response_var = "ma_coluzzi", code_pays = "BF", mod = "early_biting", periodinterv = "all")%>%
         add_row(response_var = "ma_funestus_ss", code_pays = "BF", mod = "late_biting", periodinterv = "all") %>%
-        add_row(response_var = "ma_gambiae_ss", code_pays = "BF", mod = "late_biting", periodinterv = "all") %>%
-        add_row(response_var = "ma_coluzzi", code_pays = "BF", mod = "late_biting", periodinterv = "all")  %>%
+        #add_row(response_var = "ma_gambiae_ss", code_pays = "BF", mod = "late_biting", periodinterv = "all") %>%
+        #add_row(response_var = "ma_coluzzi", code_pays = "BF", mod = "late_biting", periodinterv = "all")  %>%
         add_row(response_var = "ma_gambiae_ss", code_pays = "BF", mod = "physiological_resistance_kdrw", periodinterv = "all") %>%
         add_row(response_var = "ma_coluzzi", code_pays = "BF", mod = "physiological_resistance_kdrw", periodinterv = "all") %>%
         add_row(response_var = "ma_gambiae_ss", code_pays = "BF", mod = "physiological_resistance_kdre", periodinterv = "all") %>%
         add_row(response_var = "ma_coluzzi", code_pays = "BF", mod = "physiological_resistance_kdre", periodinterv = "all") %>%
         add_row(response_var = "ma_gambiae_ss", code_pays = "BF", mod = "physiological_resistance_ace1", periodinterv = "all") %>%
-        add_row(response_var = "ma_coluzzi", code_pays = "BF", mod = "physiological_resistance_ace1", periodinterv = "all") %>%
+        #add_row(response_var = "ma_coluzzi", code_pays = "BF", mod = "physiological_resistance_ace1", periodinterv = "all") %>%
         add_row(response_var = "ma_funestus_ss", code_pays = "CI", mod = "exophagy", periodinterv = "all") %>%
-        add_row(response_var = "ma_gambiae_sl", code_pays = "CI", mod = "exophagy", periodinterv = "all") %>%
         add_row(response_var = "ma_funestus_ss", code_pays = "CI", mod = "early_biting", periodinterv = "all") %>%
+        #add_row(response_var = "ma_funestus_ss", code_pays = "CI", mod = "late_biting", periodinterv = "all") %>%
+        add_row(response_var = "ma_gambiae_sl", code_pays = "CI", mod = "exophagy", periodinterv = "all") %>%
         add_row(response_var = "ma_gambiae_sl", code_pays = "CI", mod = "early_biting", periodinterv = "all") %>%
-        add_row(response_var = "ma_funestus_ss", code_pays = "CI", mod = "late_biting", periodinterv = "all") %>%
         add_row(response_var = "ma_gambiae_sl", code_pays = "CI", mod = "late_biting", periodinterv = "all")
 
              
@@ -682,19 +710,19 @@
                   th_model_results11 <- df_input_params_glmm[11,] %>%
                     mutate(results = pmap(list(response_var, code_pays, mod,periodinterv), ~fun_workflow_model(..1,..2,..3,..4)))
                   saveRDS(th_model_results11,"/home/ptaconet/Bureau/data_analysis/th_model_results11.rds")
-                  
-                  th_model_results12 <- df_input_params_glmm[12,] %>%
-                    mutate(results = pmap(list(response_var, code_pays, mod,periodinterv), ~fun_workflow_model(..1,..2,..3,..4)))
-                  saveRDS(th_model_results12,"/home/ptaconet/Bureau/data_analysis/th_model_results12.rds")
                     
-                    th_model_results13 <- df_input_params_glmm[13,] %>%
+                    th_model_results12 <- df_input_params_glmm[12,] %>%
                       mutate(results = pmap(list(response_var, code_pays, mod,periodinterv), ~fun_workflow_model(..1,..2,..3,..4)))
-                    saveRDS(th_model_results13,"/home/ptaconet/Bureau/data_analysis/th_model_results13.rds")
-                    
-                    th_model_results14 <- df_input_params_glmm[14,] %>%
-                      mutate(results = pmap(list(response_var, code_pays, mod,periodinterv), ~fun_workflow_model(..1,..2,..3,..4)))
-                    saveRDS(th_model_results14,"/home/ptaconet/Bureau/data_analysis/th_model_results14.rds")
-                    
+                    saveRDS(th_model_results12,"/home/ptaconet/Bureau/data_analysis/th_model_results12.rds")
+                      
+                      th_model_results13 <- df_input_params_glmm[13,] %>%
+                        mutate(results = pmap(list(response_var, code_pays, mod,periodinterv), ~fun_workflow_model(..1,..2,..3,..4)))
+                      saveRDS(th_model_results13,"/home/ptaconet/Bureau/data_analysis/th_model_results13.rds")
+                      
+                      th_model_results14 <- df_input_params_glmm[14,] %>%
+                        mutate(results = pmap(list(response_var, code_pays, mod,periodinterv), ~fun_workflow_model(..1,..2,..3,..4)))
+                      saveRDS(th_model_results14,"/home/ptaconet/Bureau/data_analysis/th_model_results14.rds")
+                      
                     th_model_results15 <- df_input_params_glmm[15,] %>%
                       mutate(results = pmap(list(response_var, code_pays, mod,periodinterv), ~fun_workflow_model(..1,..2,..3,..4)))
                     saveRDS(th_model_results15,"/home/ptaconet/Bureau/data_analysis/th_model_results15.rds")
@@ -765,7 +793,7 @@
         #mutate(rf_allpredictors = map(results, ~pluck(.,"rf_allpredictors"))) %>%
         dplyr::select(-results)
       
-      saveRDS(model_results,"/home/ptaconet/Bureau/data_analysis/model_results_resistances10.rds")
+      saveRDS(model_results,"/home/ptaconet/Bureau/data_analysis/model_results_resistances12.rds")
       
       # model_results_resistances4.rds : glmm + rf   
     # model_results_resistances5.rds : rf only

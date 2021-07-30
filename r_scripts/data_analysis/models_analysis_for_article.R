@@ -218,19 +218,39 @@ wrap_plots(list(plots_validation_abundance$plots_validation[[1]],
 ###### resistances
 ######################
 
+res <-  readRDS("/home/ptaconet/Bureau/data_analysis/model_results_resistances12.rds") %>%
+  mutate(response_var = case_when(
+  response_var == "ma_funestus_ss" ~ "An. funestus",
+  response_var == "ma_gambiae_ss" ~ "An. gambiae ss.",
+  response_var == "ma_coluzzi" ~ "An. coluzzii",
+  response_var == "ma_gambiae_sl" ~ "An. gambiae s.l."))
+  
 
-res <-  readRDS("/home/ptaconet/Bureau/data_analysis/model_results_resistances10.rds")
+
+fun_plot_distrib_resist <- function(df,response_var,code_pays,mod){
+  
+  df <- df %>%
+    filter(resp_var==1) %>%
+    count(resp_var,  codevillage) %>%
+    mutate(Freq = n/sum(n))
+  
+  p <- ggplot(df,aes(y=Freq,x=reorder(codevillage,-Freq))) +  geom_col() + ylim(0,1) + ggtitle(paste0(mod," - ",code_pays," - ",response_var)) + theme_classic() + xlab("villages") + ylab("Frequency of the resistant class") + theme(axis.text.x = element_blank(),   axis.ticks.x = element_blank())
+  
+  return(p)
+  
+}
+
+
+res <- res %>%
+  mutate(df_mod = map(glmm_aic,~.$mod@model$frame)) %>%
+  mutate(df_mod_plot = pmap(list(df_mod, response_var, code_pays, mod), ~fun_plot_distrib_resist(..1, ..2, ..3, ..4)))
+wrap_plots(res$df_mod_plot)
+
 
 glmm_plots <- res %>%
-  filter(!(response_var == "ma_gambiae_ss" & code_pays=="BF" & mod == "early_biting")) %>%
-  filter(!(response_var == "ma_funestus_ss" & code_pays=="CI" & mod == "early_biting")) %>%
-  mutate(response_var = case_when(
-    response_var == "ma_funestus_ss" ~ "An. funestus",
-    response_var == "ma_gambiae_ss" ~ "An. gambiae ss.",
-    response_var == "ma_coluzzi" ~ "An. coluzzii",
-    response_var == "ma_gambiae_sl" ~ "An. gambiae s.l.")) %>%
-  mutate(model_plots = pmap(list(rf,glmm_aic, mod,response_var,code_pays), ~fun_plot_pdp4(..1,..2,..3,..4,..5,get_all_plots=TRUE)))
+  mutate(model_plots = pmap(list(rf,glmm_aic, mod,response_var,code_pays), ~fun_plot_pdp5(..1,..2,..3,..4,..5,get_all_plots=FALSE)))
 
+  pmap(list(glmm_plots$model_plots,glmm_plots$response_var,glmm_plots$code_pays,glmm_plots$mod),~ggsave(paste(..2,..3,..4,"2",sep="_"),..1,"png",paste0("plots_resistance5_selectvar/",..4),width = 1.4, height = 10, units = "in"))
 
 # varimplot
 glmm_plots <- glmm_plots %>%

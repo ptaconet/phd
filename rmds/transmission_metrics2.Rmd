@@ -41,7 +41,7 @@ library(ggmap)
 # connect to database
 code_pays = "CI"
 
-path_to_db <- "data/react_db/react_db_light.gpkg"
+path_to_db <- "data/react_db/react_db.gpkg"
 react_gpkg <- DBI::dbConnect(RSQLite::SQLite(),dbname = path_to_db)
 
 periodes_interv <-  dbReadTable(react_gpkg, 'entomo_csh_metadata_l1') %>% dplyr::select(-geom)
@@ -114,7 +114,7 @@ fun_map <- function(codepayss,tit){
       add_row(codevillage = "b", codepays=ifelse(codepayss=="BF","CI","BF"),intervention=ifelse(codepayss=="BF","LLIN + Larvicide","LLIN + Ivermectine"),X=0,Y=0,nummission=1)
   
   
-  m <- ggmap(myMap) + geom_point(aes(x = X, y = Y, shape = intervention), data = villages, size = 2)  + facet_grid(.~nummission) + labs(colour = "Vector control tool") + theme(legend.position = ifelse(codepayss=="BF", 'bottom','none'),axis.title.x=element_blank(),axis.title.y=element_blank()) + ggtitle(tit)
+  m <- ggmap(myMap) + geom_point(aes(x = X, y = Y, shape = intervention), data = villages, size = 2)  + facet_grid(.~nummission) + labs(shape = "Vector control tool") + theme(legend.position = ifelse(codepayss=="BF", 'bottom','none'),axis.title.x=element_blank(),axis.title.y=element_blank()) + ggtitle(tit)
   
   return(m)
 }
@@ -122,8 +122,10 @@ fun_map <- function(codepayss,tit){
 m1 <- fun_map("CI","Korhogo (IC)")
 m2 <- fun_map("BF","Diébougou (BF)")
 
-m1/m2 + plot_annotation(title = 'Vector control tool implemented in each village and entomological survey')
+m <- m1/m2 + plot_annotation(title = 'Vector control', subtitle = "Vector control tool in use for each village and entomological survey")
 
+  ggsave(filename="vc_vctool.png",plot=m,path="/home/ptaconet/phd/articles/article2",dpi = 300)
+  
   #  library(tmaptools)
  #  library(tmap)
   # osm <- read_osm(roi, type = "stamen-terrain")
@@ -170,7 +172,7 @@ dates_add_vc <- dbReadTable(react_gpkg, 'recensement_villages_l1') %>% dplyr::se
     group_by(codepays) %>%
    summarise(date = mean(as.Date(date_debut_interv))) %>%
     as_tibble() %>%
-  mutate(Surveys = "Implementation of complementary VC tool", survey_num = NA)
+  mutate(Surveys = "Implementation of complementary VC strategy", survey_num = NA)
 
 dates_epi_active <- dbReadTable(react_gpkg, 'epidemio_active_l1') %>% 
   dplyr::select(-geom) %>%
@@ -181,12 +183,12 @@ dates_epi_active <- dbReadTable(react_gpkg, 'epidemio_active_l1') %>%
   mutate(Surveys = "Epidemio - active")
 
 dates_to_plot <- rbind(dates_entomo,dates_recensement,dates_cpthumain,dates_epi_active,dates_llin,dates_add_vc) %>%
-  mutate(Surveys = forcats::fct_relevel(Surveys, c("Human + animal census","Anopheles behaviour survey","Human behaviour survey","Epidemio - active","LLIN distribution","Implementation of complementary VC tool"))) %>%
-  filter(Surveys %in% c("Human + animal census","Anopheles behaviour survey","Human behaviour survey","Implementation of complementary VC tool","LLIN distribution")) %>% 
-  mutate(position = case_when(codepays=="BF" & Surveys %in% c("Human + animal census","Anopheles behaviour survey","Human behaviour survey","Epidemio - active") ~ 0.5,
-                              codepays=="CI" & Surveys %in% c("Human + animal census","Anopheles behaviour survey","Human behaviour survey","Epidemio - active") ~ -0.5,
-                              codepays=="BF" & Surveys %in% c("Implementation of complementary VC tool","LLIN distribution") ~ 0.3,
-                              codepays=="CI" & Surveys %in% c("Implementation of complementary VC tool","LLIN distribution") ~ -0.3,
+  mutate(Surveys = forcats::fct_relevel(Surveys, c("Human + animal census","Anopheles behaviour survey","Human behaviour survey","Epidemio - active","LLIN distribution","Implementation of complementary VC strategy"))) %>%
+  filter(Surveys %in% c("Human + animal census","Anopheles behaviour survey","Human behaviour survey","Implementation of complementary VC strategy","LLIN distribution")) %>% 
+  mutate(position = case_when(codepays=="BF" & Surveys %in% c("Human + animal census","Anopheles behaviour survey","Human behaviour survey","Epidemio - active") ~ 0.3,
+                              codepays=="CI" & Surveys %in% c("Human + animal census","Anopheles behaviour survey","Human behaviour survey","Epidemio - active") ~ -0.3,
+                              codepays=="BF" & Surveys %in% c("Implementation of complementary VC strategy","LLIN distribution") ~ 0.1,
+                              codepays=="CI" & Surveys %in% c("Implementation of complementary VC strategy","LLIN distribution") ~ -0.1,
                               )) %>%
   mutate(direction = ifelse(codepays=="BF" , 1, -1))
 
@@ -226,7 +228,7 @@ year_df <- data.frame(year_date_range, year_format) %>%
   add_row(year_date_range=as.Date("2016-08-01"),year_format="2016") %>%
   add_row(year_date_range=as.Date("2018-01-01"),year_format="2018")
 
-
+library("ggsci")
 # Create timeline coordinates with an x and y axis
  timeline_plot <- ggplot(dates_to_plot,aes(x=date, y= position, col=Surveys)) +
    theme_classic() +
@@ -259,7 +261,7 @@ timeline_plot
 
  timeline_plot_bf <- ggplot(dates_to_plot %>% filter(codepays == "BF"),aes(x=date, y= 1, col=Surveys, label=survey_num)) +
    theme_classic() +
-   geom_text(vjust=7) + 
+   geom_text(vjust=10) + 
    geom_hline(yintercept=0, color = "black", size=0.3) +
    geom_segment(data=dates_to_plot %>% filter(codepays == "BF"), aes(y=position,yend=0,xend=date), color='black', size=0.2) +
    geom_point(aes(y=position), size=3) + 
@@ -271,18 +273,20 @@ timeline_plot
                   axis.text.x =element_blank(),
                   axis.ticks.x =element_blank(),
                   axis.line.x =element_blank(),
-                  legend.position = "bottom"
+                  legend.position = "bottom",
+                  legend.text=element_text(size=10)
                  ) + 
      # guides(col=guide_legend(nrow=2,byrow=TRUE)) +
    labs(col = "") + 
    geom_text(data=month_df, aes(x=month_date_range,y=-0.15,label=month_format),size=3.5,vjust=0.5, color='black', angle=90) +
    geom_label(data=year_df, aes(x=year_date_range+30,y=0.08,label=year_format, fontface="bold"),size=3.5, color='black') + 
    #scale_color_manual(values = c("black","blue","red")) +
-   scale_color_brewer(palette = "Dark2")
+   #scale_color_brewer(palette = "Dark2")
+    scale_color_jco()
 
  timeline_plot_ci <- ggplot(dates_to_plot %>% filter(codepays == "CI"),aes(x=date, y= 1, col=Surveys, label=survey_num)) +
      theme_classic() +
-     geom_text(vjust=7) + 
+     geom_text(vjust=10) + 
      geom_hline(yintercept=0, color = "black", size=0.3) +
      geom_segment(data=dates_to_plot %>% filter(codepays == "CI"), aes(y=0,yend=-position,xend=date), color='black', size=0.2) +
      geom_point(aes(y=-position), size=3) + 
@@ -294,14 +298,16 @@ timeline_plot
            axis.text.x =element_blank(),
            axis.ticks.x =element_blank(),
            axis.line.x =element_blank(),
-           legend.position = "bottom"
+           legend.position = "bottom",
+           legend.text=element_text(size=10)
      ) + 
       #guides(col=guide_legend(nrow=2,byrow=TRUE)) +
      labs(col = "") + 
      geom_text(data=month_df, aes(x=month_date_range,y=-0.15,label=month_format),size=3.5,vjust=0.5, color='black', angle=90) +
      geom_label(data=year_df, aes(x=year_date_range+30,y=0.08,label=year_format, fontface="bold"),size=3.5, color='black') + 
      #scale_color_manual(values = c("black","blue","red")) +
-     scale_color_brewer(palette = "Dark2")
+     #scale_color_brewer(palette = "Dark2")
+    scale_color_jco()
 
 timeline_plot_ci + timeline_plot_bf + plot_layout(guides = 'collect') & theme(legend.position='bottom')
 ```
@@ -1029,29 +1035,101 @@ plot_lus <- ggplot(lus , aes(x=survey, y = perc_users_llin, fill = name)) +
    ylab("% of users of LLIN")+ 
    xlab("Human behaviour survey") + 
    theme_bw() + 
-   labs(title = "% of LLIN users for each study area and human behaviour survey", 
-           caption = "Values were averaged over all the sampled villages. \nError bars indicate the mean +- sd for all the study villages for the considered survey")
+   labs(title = "Human behaviour", subtitle = "% of population that use LLIN for each study area and human behaviour survey", 
+        caption = "Values were averaged over all the villages. \nError bars indicate the mean +- sd for all the study villages for the considered survey")
 
+ggsave(filename="humbehav_lus.png",plot=plot_lus,path="/home/ptaconet/phd/articles/article2",dpi = 300)
 
 ####### early / late biting
 
 
 
 HBI <- dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
-  dplyr::select(-geom) %>%
-     mutate(hintmaison = as.numeric(substr(hintmaison,1,2)),hsortiemaison=as.numeric(substr(hsortiemaison,1,2))) %>%
-     mutate(hintmaison = ifelse(hintmaison <=16, 19, hintmaison), hsortiemaison=ifelse(hsortiemaison>=11 | hsortiemaison<=3,6,hsortiemaison)) %>%
-   mutate(hcoucher = as.numeric(substr(hcoucher,1,2)),hlever=as.numeric(substr(hlever,1,2))) %>%
-   mutate(hcoucher = ifelse(hcoucher <=17, 20, hcoucher), hlever=ifelse(hlever>=11 | hlever<=3,6,hlever))
+    dplyr::select(-geom) %>%
+  filter(dormirssmoust=="oui") %>%
+     mutate(hintmaison_h = as.numeric(substr(hintmaison,1,2)),hsortiemaison_h=as.numeric(substr(hsortiemaison,1,2))) %>%
+     mutate(hintmaison_h = ifelse(hintmaison_h <=16, 19, hintmaison_h), hsortiemaison_h=ifelse(hsortiemaison_h>=11 | hsortiemaison_h<=3,6,hsortiemaison_h)) %>%
+   mutate(hcoucher_h = as.numeric(substr(hcoucher,1,2)),hlever_h=as.numeric(substr(hlever,1,2))) %>%
+   mutate(hcoucher_h = ifelse(hcoucher_h <=17, 20, hcoucher_h), hlever_h=ifelse(hlever_h>=11 | hlever_h<=3,6,hlever_h)) %>%
+  mutate(hintmaison_m = as.numeric(substr(hintmaison,4,5)),hsortiemaison_m=as.numeric(substr(hsortiemaison,4,5)),hlever_m = as.numeric(substr(hlever,4,5)),hcoucher_m=as.numeric(substr(hcoucher,4,5))) %>%
+    mutate(hintmaison_m = case_when(hintmaison_m >=0 & hintmaison_m <30 ~ 0,
+                                    hintmaison_m > 30 ~ 0.75,
+                                    hintmaison_m == 30 ~ 0.5)) %>%
+      mutate(hsortiemaison_m = case_when(hsortiemaison_m >=0 & hsortiemaison_m <30 ~ 0,
+                                    hsortiemaison_m > 30 ~ 0.75,
+                                    hsortiemaison_m == 30 ~ 0.5)) %>%
+      mutate(hlever_m = case_when(hlever_m >=0 & hlever_m <30 ~ 0,
+                                    hlever_m > 30 ~ 0.75,
+                                    hlever_m == 30 ~ 0.5)) %>%
+      mutate(hcoucher_m = case_when(hcoucher_m >=0 & hcoucher_m <30 ~ 0,
+                                    hcoucher_m > 30 ~ 0.75,
+                                    hcoucher_m == 30 ~ 0.5)) %>%
+ mutate(hintmaison = hintmaison_h + hintmaison_m, hcoucher = hcoucher_h + hcoucher_m, hlever = hlever_h +hlever_m, hsortiemaison = hsortiemaison_h + hsortiemaison_m) %>%
+  mutate(survey = case_when(codepays=="CI" & survey == 2 ~ 1,
+                            codepays=="CI" & survey == 3 ~ 2,
+                            codepays=="BF" ~ survey)) %>%
+    mutate(survey = as.factor(survey)) %>%
+  mutate(codepays = ifelse(codepays=="CI","Korhogo (IC)","Diébougou (BF)")) %>%
+  mutate(codepays = forcats::fct_relevel(codepays,"Korhogo (IC)","Diébougou (BF)"))
 
-ggplot(data = HBI) +
-  stat_ecdf(aes(hintmaison, colour = as.factor(survey)), geom = "step") + 
-  facet_wrap(.~codepays)
 
+HBI_hmedian <- HBI %>%
+  group_by(codepays,survey) %>%
+  summarize(med_hintmaison = median(hintmaison),
+            med_hsortiemaison = median(hsortiemaison),
+            med_hcoucher = median(hcoucher),
+            med_hlever = median(hlever))
+
+
+p_hintmaison <- ggplot(data = HBI) +
+  stat_ecdf(aes(hintmaison), geom = "line") + 
+  geom_vline(data = HBI_hmedian, aes(xintercept = med_hintmaison), linetype = "dashed", color = "red") + 
+  geom_label(data = HBI_hmedian, mapping = aes(x = med_hintmaison, y = 0.1, label = med_hintmaison), color = "red" ) + 
+  facet_wrap(codepays~survey, ncol = 5, nrow = 1) + 
+  ggtitle("indoor (night)") + 
+  theme_bw() + 
+  ylab("Pop. freq.") + 
+  xlab("time (hour)")
+
+p_hsortiemaison <- ggplot(data = HBI) +
+  stat_ecdf(aes(hsortiemaison), geom = "line") + 
+  geom_vline(data = HBI_hmedian, aes(xintercept = med_hsortiemaison), linetype = "dashed", color = "red") + 
+  geom_label(data = HBI_hmedian, mapping = aes(x = med_hsortiemaison, y = 0.1, label = med_hsortiemaison), color = "red" ) + 
+  facet_wrap(codepays~survey, ncol = 5, nrow = 1) + 
+  ggtitle("outdoor (morning)") + 
+  theme_bw() + 
+  ylab("Pop. freq.") + 
+  xlab("time (hour)")
+
+p_hcoucher <- ggplot(data = HBI) +
+  stat_ecdf(aes(hcoucher), geom = "step") + 
+  geom_vline(data = HBI_hmedian, aes(xintercept = med_hcoucher), linetype = "dashed", color = "red") + 
+  geom_label(data = HBI_hmedian, mapping = aes(x = med_hcoucher, y = 0.1, label = med_hcoucher), color = "red" ) + 
+  facet_wrap(codepays~survey, ncol = 5, nrow = 1) + 
+  ggtitle("under LLIN (night)") + 
+  theme_bw() + 
+  ylab("Pop. freq.") + 
+  xlab("time (hour)")
+
+p_hlever <- ggplot(data = HBI) +
+  stat_ecdf(aes(hlever), geom = "step") + 
+  geom_vline(data = HBI_hmedian, aes(xintercept = med_hlever), linetype = "dashed", color = "red") + 
+  geom_label(data = HBI_hmedian, mapping = aes(x = med_hlever, y = 0.1, label = med_hlever), color = "red" ) + 
+  facet_wrap(codepays~survey, ncol = 5, nrow = 1) + 
+  ggtitle("out of LLIN (morning)") + 
+  theme_bw() + 
+  ylab("Pop. freq.") + 
+  xlab("time (hour)")
+
+
+p <- wrap_plots(list(p_hintmaison,p_hsortiemaison,p_hcoucher,p_hlever), nrow = 2, ncol = 2) + plot_annotation(title = 'Human behaviour',
+                                                                                                         subtitle = "% of population indoor, outdoor, under an LLIN and out of LLIN for each study area and human behaviour survey",
+                                                                                                         caption = "The red line indicates the median time.")
 # ggplot(data = HBI) +
 #   geom_line(aes(x = hintmaison, colour = as.factor(survey)), stat='ecdf') +
 #   facet_wrap(.~codepays)
 
+  ggsave(filename="humbehav_hbi.png",plot=p,path="/home/ptaconet/phd/articles/article2",dpi = 300)
 
 source("r_scripts/data_analysis_tests/functions_script_data_analysis.R")
 
@@ -1071,8 +1149,6 @@ HB_data <- HB_data %>%
   
   mutate(heuredecapture = as.factor(heuredecapture)) %>%
   mutate(heuredecapture=forcats::fct_relevel(heuredecapture,c("16", "17", "18", "19" ,"20", "21", "22", "23", "0", "1" ,"2", "3", "4", "5", "6", "7", "8", "9", "10")))
-
-
 
 ```
 
@@ -1150,9 +1226,10 @@ plot_climate_byvillagemission <- ggplot(env_spatiotemporal) +
     geom_rect(data = mean_date_by_mission, aes(xmin = date - 30, xmax = date), ymin = -Inf, ymax = Inf, alpha = 0.2, fill = "blue" ) + 
     geom_label(data = mean_date_by_mission, mapping = aes(x=date, y = 0, label = nummission, vjust = -0.3), colour = "red") +
     theme(legend.position= "none") +
-    labs(y = NULL, title = "Meteorological conditions", subtitle = "Weekly mean (for land surface temperature) and sum (for rainfall) in a 2 km buffer around each collection point.\nRed vertical lines indicate the dates of the entomological surveys.\nGrey Ribbons indicate the mean +/- 1 sd. of values over the study villages\nBlue ribbons indicate a time frame of 1 month before each entomological survey.", caption = "data sources : GPM (rainfall), MODIS (temperature)")
+    labs(y = NULL, title = "Past weather", subtitle = "Weekly mean (for land surface temperature) and sum (for rainfall) in a 2 km buffer around each collection point.", caption = "Solid bars indicate the mean for all the collection points in the considered week.\nGrey ribbons indicates the mean ± the standard deviation (i.e. spatial variability).\nRed vertical lines indicate the dates of the entomological surveys.\nBlue ribbons indicate a time frame of one month before each entomological survey.\ndata sources : GPM (rainfall), MODIS (temperature)")
 
-plot_climate_byvillagemission
+ggsave(filename="past_weather.png",plot=plot_climate_byvillagemission,path="/home/ptaconet/phd/articles/article2",dpi = 300)
+
 
 ```
 
@@ -1256,19 +1333,19 @@ crops_bf <- dbReadTable(react_gpkg, 'env_landcover') %>%
   mutate(codevillage = substr(id,2,4)) %>%
   dplyr::group_by(codevillage) %>%
   summarise(val = mean(val)) %>%
-  mutate(codepays="BF",var="crop",short_name="Surface of crops", unit="% of landscape\nin a 2 km buffer area")
+  mutate(codepays="BF",var="crop",short_name="Surface of crops", unit="% of landscape in a 2 km buffer area")
 
 
 oth_spatial2 <- oth_spatial %>%
   bind_rows(crops_bf) %>%
-  mutate(short_name = paste0(short_name," (",unit,")")) %>%
+  mutate(short_name = paste0(short_name,"\n(",unit,")")) %>%
   # group_by(codepays,short_name) %>%
   # summarise(vale = mean(val, na.rm = T),sd = sd(val, na.rm = T)) %>% 
-  filter(short_name %in% c("Human population (person)",
-                           "Shortest dist. to stream (m.)",
-                           "Degree of clustering of the households (NA)",
-                           "Distance to the edge of the village (meters)",
-                           "Surface of crops (% of landscape\nin a 2 km buffer area)")) %>%
+  filter(short_name %in% c("Human population\n(person)",
+                           "Shortest dist. to stream\n(m.)",
+                           "Degree of clustering of the households\n(NA)",
+                           "Distance to the edge of the village\n(meters)",
+                           "Surface of crops\n(% of landscape in a 2 km buffer area)")) %>%
   mutate(short_name=gsub("m\\.","meters",short_name)) %>%
   mutate(short_name=gsub("NA","unitless",short_name)) %>%
   mutate(codepays = ifelse(codepays=="CI","Korhogo (IC)","Diébougou (BF)")) %>%
@@ -1282,9 +1359,11 @@ plot_othspa2 <- ggplot(oth_spatial2, aes(y = val, x = short_name,fill=codepays )
           axis.title.x=element_blank(),
           axis.title.y=element_blank(),
           legend.position = "bottom") + 
-  labs(fill = "Study area") + 
+  labs(fill = "Study area",caption = 'Boxplots summarize the distribution over all the collection points for the considered study area.') + 
   scale_fill_grey(start=0.3, end=0.7) + 
-  ggtitle("Landscape variables")
+  ggtitle("Landscape", subtitle = 'Landscape variables for each study area')
+
+ggsave(filename="landscape.png",plot=plot_othspa2,path="/home/ptaconet/phd/articles/article2",dpi = 300)
 
 ```
 
@@ -1333,7 +1412,7 @@ th_env_nightcatch_postedecapture <- th_env_nightcatch_postedecapture %>%
                          var=="humidity_hygro" ~ "Humidity (%)")) %>%
   mutate(codepays = ifelse(codepays=="CI","IC","BF")) %>%
   mutate(codepays = forcats::fct_relevel(codepays,c("IC","BF"))) %>%
-  mutate(entomo_mission="entomological mission")
+  mutate(entomo_mission="entomological survey")
   
 plot_microclimate_bf <- ggplot(th_env_nightcatch_postedecapture %>% filter(codepays=="BF"), aes(x=date, y = vale)) + 
   facet_grid(var~entomo_mission+nummission, scales = "free") +
@@ -1342,7 +1421,7 @@ plot_microclimate_bf <- ggplot(th_env_nightcatch_postedecapture %>% filter(codep
   scale_x_datetime(labels = date_format("%H"),
                      date_breaks = "2 hours") +
   labs(y = NULL) + 
-  labs(x = "hour",title = "Study area : Diébougou (BF)") + 
+  labs(x = "hour",title = "Diébougou (BF)") + 
   theme_bw() + 
   theme(strip.text.y = element_text(size = 7))
   
@@ -1354,13 +1433,16 @@ plot_microclimate_ci <- ggplot(th_env_nightcatch_postedecapture %>% filter(codep
   scale_x_datetime(labels = date_format("%H"),
                      date_breaks = "2 hours") +
   labs(y = NULL) + 
-  labs(x = "hour",title = "Study area : Korhogo (IC)") + 
+  labs(x = "hour",title = "Korhogo (IC)") + 
   theme_bw() + 
   theme(strip.text.y = element_text(size = 7))
 
 p <- plot_microclimate_ci / plot_microclimate_bf + plot_annotation(
-  title = 'Micro-climatic conditions during each entomological survey',
-  caption = 'Ribbons indicate the mean +- sd for all the collection points of the study area'
+  title = 'Micro-climate',
+  subtitle = 'Micro-climatic conditions during each entomological survey',
+  caption = 'Solid bars indicate the mean for all the collection points in the considered entomological survey.\nGrey ribbons indicates the mean ± the standard deviation (i.e. spatial variability).'
 ) 
+
+ggsave(filename="microclim.png",plot=p,path="/home/ptaconet/phd/articles/article2",dpi = 300)
 
 ```

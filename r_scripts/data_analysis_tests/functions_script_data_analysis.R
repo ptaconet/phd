@@ -1167,16 +1167,29 @@ load_csh_sp_coord <- function(){
 
 load_time_since_vc <- function(code_pays, entomo_csh_metadata_l1){
   
+  # time_since_vc <- entomo_csh_metadata_l1 %>%
+  #   filter(codepays==code_pays) %>%
+  #   left_join(dbReadTable(react_gpkg, 'recensement_villages_l1') %>% dplyr::select(codevillage,date_debut_interv)) %>%
+  #   mutate(VCT = as.numeric(as.Date(date_capture)-as.Date("2016-07-15"))) %>%
+  #   mutate(VCT2 = as.numeric(as.Date(date_capture)-as.Date(date_debut_interv))) %>%
+  #   mutate(VCT2 = ifelse(VCT2<0 | VCT == VCT2 | is.na(VCT2),0,VCT2)) %>%
+  #   mutate(VCT2 = VCT2/30) %>%
+  #   mutate(VCT = VCT/30) %>%
+  #   dplyr::select(idpointdecapture,VCT,VCT2)
+    
+  if(code_pays=="BF"){
+    date_implementation_llin <- as.Date("2016-07-15")
+  } else {
+    date_implementation_llin <- as.Date("2017-06-15")
+  }
+  
   time_since_vc <- entomo_csh_metadata_l1 %>%
     filter(codepays==code_pays) %>%
-    left_join(dbReadTable(react_gpkg, 'recensement_villages_l1') %>% dplyr::select(codevillage,date_debut_interv)) %>%
-    mutate(VCT = as.numeric(as.Date(date_capture)-as.Date("2016-07-15"))) %>%
-    mutate(VCT2 = as.numeric(as.Date(date_capture)-as.Date(date_debut_interv))) %>%
-    mutate(VCT2 = ifelse(VCT2<0 | VCT == VCT2 | is.na(VCT2),0,VCT2)) %>%
-    mutate(VCT2 = VCT2/30) %>%
+    mutate(VCT = as.numeric(as.Date(date_capture)-date_implementation_llin)) %>%
+    #mutate(VCT = ifelse(VCT<0 | is.na(VCT),0,VCT)) %>%
     mutate(VCT = VCT/30) %>%
-    dplyr::select(idpointdecapture,VCT,VCT2)
-    
+    dplyr::select(idpointdecapture,VCT)
+  
   return(time_since_vc)
   
 }
@@ -1488,12 +1501,12 @@ fun_compute_glmm <- function(df, predictors, predictors_forced = NULL, mod, cv_c
   
   
   if(!is.null(predictors_forced)){
-    form_forc <- as.formula(paste(" ~", paste(predictors_forced, collapse = "+"), "+ (1|codevillage/pointdecapture2)")) 
+    form_forc <- as.formula(paste(" ~", paste(predictors_forced, collapse = "+"), " + (1|codevillage/pointdecapture2)")) 
   } else {
     form_forc <- as.formula("~ (1|codevillage/pointdecapture2)")
   }
   
-  predictors_to_scale <- setdiff(c(predictors, predictors_forced, predictors_interaction), c("VCM","IEH","int_ext","kdre","kdrw","ace1","RFHP"))
+  predictors_to_scale <- setdiff(c(predictors, predictors_forced, predictors_interaction), c("VCM","IEH","int_ext","kdre","kdrw","ace1","RFHP","period_interv","season"))
   df_mod <- df %>% mutate_at(predictors_to_scale, ~scale(., center = TRUE, scale = FALSE)) %>% dplyr::select(c("resp_var","codevillage","pointdecapture2",predictors,predictors_forced,predictors_interaction))
   
   if(mod == "abundance"){
@@ -1710,7 +1723,7 @@ fun_compute_rf_old <- function(df, predictors, cv_type, mod, featureselect){
 
 
 
-fun_compute_rf <- function(df, predictors, cv_col, mod, featureselect, species){
+fun_compute_rf <- function(df, predictors, cv_col, mod, featureselect, species, tune_length = 10){
   
   library(doParallel)
   cl <- makePSOCKcluster(8)
@@ -1878,7 +1891,7 @@ fun_compute_rf <- function(df, predictors, cv_col, mod, featureselect, species){
   
 
   if(cv_col == "random"){
-    th_mod <- caret::train(x = df[,predictors], y = df$resp_var, method = "rf", tuneLength = 10, trControl = tr, metric = met, importance = T, keep.forest=TRUE, keep.inbag=TRUE)
+    th_mod <- caret::train(x = df[,predictors], y = df$resp_var, method = "rf", tuneLength = tune_length, trControl = tr, metric = met, importance = T, keep.forest=TRUE, keep.inbag=TRUE)
     
     # rfFuncs$summary <- prSummary
     # control <- rfeControl(functions=rfFuncs, method="cv", number=10, )
@@ -1886,10 +1899,10 @@ fun_compute_rf <- function(df, predictors, cv_col, mod, featureselect, species){
   } else {
     
     if(featureselect == TRUE){
-      th_mod <- CAST::ffs(predictors = df[,predictors], response = df$resp_var, method = "ranger", tuneLength = 3, trControl = tr, metric = met, maximize = ifelse(met %in% c("RMSE", "logLoss", "MAE", "brier","Dist"), FALSE,TRUE),  preProcess = c("center","scale"),importance = "permutation", local.importance = TRUE)
+      th_mod <- CAST::ffs(predictors = df[,predictors], response = df$resp_var, method = "ranger", tuneLength =tune_length, trControl = tr, metric = met, maximize = ifelse(met %in% c("RMSE", "logLoss", "MAE", "brier","Dist"), FALSE,TRUE),  preProcess = c("center","scale"),importance = "permutation", local.importance = TRUE)
     } else {
       #th_mod <- caret::train(x = df[,predictors], y = df$resp_var, method = "rf", tuneLength = 10, trControl = tr, metric = met, maximize = ifelse(met %in% c("RMSE", "logLoss", "MAE", "brier","Dist"), FALSE,TRUE), importance = T, keep.forest=TRUE, keep.inbag=TRUE)
-      th_mod <- caret::train(x = df[,predictors], y = df$resp_var, method = "ranger", tuneLength = 7, trControl = tr, metric = met, maximize = ifelse(met %in% c("RMSE", "logLoss", "MAE", "brier","Dist"), FALSE,TRUE),  preProcess = c("center","scale"),importance = "permutation", local.importance = TRUE) #importance = "impurity_corrected" 
+      th_mod <- caret::train(x = df[,predictors], y = df$resp_var, method = "ranger", tuneLength = tune_length, trControl = tr, metric = met, maximize = ifelse(met %in% c("RMSE", "logLoss", "MAE", "brier","Dist"), FALSE,TRUE),  preProcess = c("center","scale"),importance = "permutation", local.importance = TRUE) #importance = "impurity_corrected" 
       
     }
     
