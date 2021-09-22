@@ -65,7 +65,7 @@ fun_workflow_model <- function(response_var,
                                spatial_granularity = "idpointdecapture"){
   
   
-  cat("Executing workflow for parameters : ", response_var, code_pays, mod,periodinterv,"\n")
+  cat("Executing workflow for parameters : ", response_var, code_pays, mod,"\n")
   
   ###### load the data
   
@@ -88,7 +88,7 @@ fun_workflow_model <- function(response_var,
 
   landcover_metrics_to_keep <- c("pland","prd")
   
-  env_spatial_all <- load_spatial_data(code_pays, landcover_layers_to_keep, mod, landcover_metrics_to_keep, buffer_sizes = c(50,250,2000))
+  env_spatial_all <- load_spatial_data(code_pays, landcover_layers_to_keep, mod, landcover_metrics_to_keep, buffer_sizes = c(100,250,2000))
   env_landcover <- env_spatial_all[[1]]
   env_spatial <- env_spatial_all[[2]]
   th_env_nightcatch <- env_spatial_all[[4]]
@@ -187,11 +187,11 @@ fun_workflow_model <- function(response_var,
   if(code_pays=="BF"){
     predictors_spatial_tocollect <- c(predictors_spatial_tocollect,setdiff(c(colnames(env_landcover)[grepl("_3_",colnames(env_landcover))]),"idpointdepcapture"))
     predictors_spatial_tocollect <- setdiff(predictors_spatial_tocollect, predictors_spatial_tocollect[grepl("_3_12|3_5|3_10|3_6",predictors_spatial_tocollect)])
-    predictors_spatial_tocollect <- c(predictors_spatial_tocollect, "lsm_c_pland_50_2_5", "lsm_c_pland_250_2_5","lsm_c_pland_2000_2_5")
+    predictors_spatial_tocollect <- c(predictors_spatial_tocollect, "lsm_c_pland_100_2_5", "lsm_c_pland_250_2_5","lsm_c_pland_2000_2_5")
   } else if(code_pays=="CI"){
     predictors_spatial_tocollect <- c(predictors_spatial_tocollect,setdiff(c(colnames(env_landcover)[grepl("_8_",colnames(env_landcover))]),"idpointdepcapture"))
     predictors_spatial_tocollect <- setdiff(predictors_spatial_tocollect, predictors_spatial_tocollect[grepl("_8_12|8_13|8_10|8_3",predictors_spatial_tocollect)])
-    predictors_spatial_tocollect <- c(predictors_spatial_tocollect, "lsm_c_pland_50_7_6" , "lsm_c_pland_250_7_6","lsm_c_pland_2000_7_6")
+    predictors_spatial_tocollect <- c(predictors_spatial_tocollect, "lsm_c_pland_100_7_6" , "lsm_c_pland_250_7_6","lsm_c_pland_2000_7_6")
   }
   predictors_spatial_tocollect <- c(predictors_spatial_tocollect,predictors_spatial_opensource)
   
@@ -218,8 +218,7 @@ fun_workflow_model <- function(response_var,
     type = "univariate_selection", 
     expl_vars_to_keep = NULL,
     expl_vars_to_test = predictors_spatial_tocollect)
-  
-  
+
   spatial_corrs_spearman_opensource <- spatial_corrs_spearman_opensource %>%
     top_n(20,abs_corr)
   
@@ -227,8 +226,8 @@ fun_workflow_model <- function(response_var,
     top_n(20,abs_corr)
   
   ## temporal 
-   lags1 <- seq(7,112,7)
-   lags2 <- seq(20,112,7)
+    lags1 <- seq(7,112,7)
+    lags2 <- seq(20,112,7)
   
   rf_opensource <- list()
   rf_opensource_simple <- list()
@@ -363,7 +362,7 @@ df_input_params <- df_input_params %>%
   add_row(response_var = "ma_funestus_ss", code_pays = "CI", mod = "presence") %>%
   add_row(response_var = "ma_gambiae_sl", code_pays = "CI", mod = "abundance") %>%
   add_row(response_var = "ma_funestus_ss", code_pays = "CI", mod = "abundance") 
-
+tictoc::tic()
 model_results1 <- df_input_params[1,] %>%
   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
 model_results2 <- df_input_params[2,] %>%
@@ -372,6 +371,7 @@ model_results3 <- df_input_params[3,] %>%
   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
 model_results4 <- df_input_params[4,] %>%
   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
+tictoc::toc()
 model_results5 <- df_input_params[5,] %>%
   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
 model_results6 <- df_input_params[6,] %>%
