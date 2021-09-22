@@ -2626,6 +2626,7 @@ fun_plot_pdp5 <- function(rf, glmm, indicator, species, code_pays, get_all_plots
   
   auc_glmm <- AUC(y_true = df_cv_glmm$obs,y_pred = df_cv_glmm$pred)
   
+  avg_prob <- nrow(df_glmm[which(df_glmm$resp_var==1),])/nrow(df_glmm)
   
   # get predictors labels
   df_vars_labs <- data.frame(var = setdiff(colnames(glmm_mod@model$frame), c("resp_var","codevillage","pointdecapture2")))
@@ -2640,10 +2641,18 @@ fun_plot_pdp5 <- function(rf, glmm, indicator, species, code_pays, get_all_plots
     
     df_vars_labs <- fun_get_predictors_labels(df_vars_labs,"var") %>% distinct()
     
+
     if(code_pays=="CI"){
       df_vars_labs <- df_vars_labs %>%
-        mutate(label_detail = ifelse(var=="VCT2","Time since intro. of VC measures",label_detail))
+        mutate(label_detail = ifelse(var=="VCT2","Time since intro. of VC measures",label_detail)) %>%
+        mutate(label_detail = ifelse(var=="VCT","Time since first entomological survey",label_detail))  
     }
+    
+    
+    if(code_pays=="CI" & species=="An. funestus"){
+      df_rf$VCM <- droplevels(df_rf$VCM)
+    }
+  
     
     if(indicator == "late_biting"){
       df_vars_labs <- df_vars_labs %>%
@@ -2665,7 +2674,8 @@ fun_plot_pdp5 <- function(rf, glmm, indicator, species, code_pays, get_all_plots
     
     df_vars_labs <- df_vars_labs %>%
       left_join(prediction_vars %>% dplyr::select(var=code,group_behaviour_resistance)) %>%
-      mutate(group_behaviour_resistance = ifelse(is.na(group_behaviour_resistance),"Past weather",group_behaviour_resistance))
+      mutate(group_behaviour_resistance = ifelse(is.na(group_behaviour_resistance),"Past weather",group_behaviour_resistance)) %>%
+    mutate(group_behaviour_resistance = ifelse(var %in% c("lsm_c_pland_2000_3_1","lsm_c_pland_2000_4_1","lsm_c_pland_2000_4_11","lsm_c_pland_2000_4_16"),"Landscape",group_behaviour_resistance))
     
     # get glmm in tidy form
     if(!is.null(glmm[[1]])){
@@ -2684,17 +2694,23 @@ fun_plot_pdp5 <- function(rf, glmm, indicator, species, code_pays, get_all_plots
     #rf_mod_iml <- Predictor$new(rf_mod, data = df_rf, class = ifelse(indicator!="physiological_resistance_kdrw","Presence","Absence"))
     #rf_mod_allvars_iml <- Predictor$new(rf_allvars_mod, data = df_rf_allvars, class = ifelse(indicator!="physiological_resistance_kdrw","Presence","Absence"))
     
-    # features = df_vars_labs %>%
-    #   mutate(group_behaviour_resistance = fct_relevel(group_behaviour_resistance,c("Vector control","Human behaviour","Vector resistance","Micro-climate","Past weather","Landscape","Other")))
-    #features = features[order(features$group_behaviour_resistance),]
-    #features =  features$var
+    features = df_vars_labs %>%
+      mutate(group_behaviour_resistance = fct_relevel(group_behaviour_resistance,c("Vector control","Landscape","Human behaviour","Past weather","Micro-climate","Other","Vector resistance")))
+    features = features[order(features$group_behaviour_resistance,features$var),]
+    features =  features$var
     
-     features = df_vars_labs$var
-     g <- glmm_tidy %>% arrange(p.value)
-     features <- features[order(match(features, g$term))]
-     features <- setdiff(features,c("VCM","VCT"))
-     features <- c('VCM','VCT',features)
-    
+   #   features = df_vars_labs$var
+   #   g <- glmm_tidy %>% arrange(p.value)
+   #   features <- features[order(match(features, g$term))]
+   #   features <- setdiff(features,c("VCM","VCT"))
+   #   if(code_pays=='BF'){
+   #   features <- c('VCM','VCT',features)
+   # } else if(code_pays=="CI"){
+   #   features <- c('VCM',features)
+   # }
+   #   
+     
+     
     # pred_wrapper_classif_werror <- function(object, newdata) {
     #   p <- predict(object, newdata = newdata, type ="prob")[,ifelse(indicator!="physiological_resistance_kdrw","Presence","Absence")]
     #   c("avg" = mean(p), "avg-1sd" = mean(p) - sd(p), "avg+1sd" = mean(p) + sd(p))
@@ -2742,7 +2758,8 @@ fun_plot_pdp5 <- function(rf, glmm, indicator, species, code_pays, get_all_plots
       
       #lab_x <- gsub("\\(.*","",lab_x)
       if(!is.na(lab_df$unit)){
-        lab_x <- paste0(lab_x,", ",lab_df$unit)
+       # lab_x <- paste0(lab_x,", ",lab_df$unit)
+        lab_x <- paste0(lab_x,"\n  (",lab_df$unit,")")
       }
       # lab_x <- gsub("\\(","\n",lab_x)
       # lab_x <- gsub("\n","\n(",lab_x)
@@ -2757,8 +2774,22 @@ fun_plot_pdp5 <- function(rf, glmm, indicator, species, code_pays, get_all_plots
       # }
       # 
       
+      if(lab_x == "Time since introd. of LLIN\n  (month)") { lab_x = "Time since LLIN\ndistribution (month)"}
+      lab_x = gsub("Distance to the edge of the village","\nDistance to the edge\nof the village",lab_x)
+      lab_x = gsub("Nb. hours spent indoors by hum. pop.","Nb. hours spent\nindoors by hum. pop.\nnight of collection",lab_x)
+      lab_x = gsub("stream\n(m.)","\nstream (m.)",lab_x)
+      lab_x = gsub("Δ temperature","Δ temp.",lab_x)
+      lab_x = gsub("Δ luminosity","Δ lumin.",lab_x)
+      lab_x = gsub("Atmospheric pressure","Atmospheric press.",lab_x)
+      lab_x = gsub("Place","Place of collection",lab_x)
+      lab_x = gsub("Time since first entomological survey","Time since first\nentomological survey",lab_x)
       
-      # if(!is.na(lab_df$unit)){
+      
+      if(lab_df$var=="lsm_c_pland_2000_4_1"){  lab_x = "Other crops\n(% landscape)"}
+      if(lab_df$var=="lsm_c_pland_2000_4_11"){  lab_x = "Rice fields\n(% landscape)"}
+      if(lab_df$var=="lsm_c_pland_2000_4_16"){  lab_x = "Cotton fields"}
+      
+            # if(!is.na(lab_df$unit)){
       #   if(!grepl("collection",lab_x)){
       #     lab_x <- paste0(lab_x,"\n",lab_df$unit)
       #   } else {
@@ -2835,16 +2866,40 @@ fun_plot_pdp5 <- function(rf, glmm, indicator, species, code_pays, get_all_plots
       #         axis.title.x = element_text(size = 6,colour = "grey30"),
       #         legend.position = "none")
       
+
+      
+      if(code_pays=="CI" & indicator == "early_biting" & species=="An. gambiae s.l."){
+        ymax <- 0.255
+        geombin_ymax <- 0.25
+        title_y <- 0.15
+        breaks_scale_y <- c(0,0.25)
+      } else {
+        ymax <- 1.05
+        geombin_ymax <- 1
+        title_y <- 0.62
+        if(feature=='VCM'){
+          title_y <- 0.75
+        }
+        breaks_scale_y <- c(0,0.5,1)
+      }
+      
+      
+      if(code_pays=="CI" & feature == 'VCM' & species =="An. gambiae s.l."){
+         size_x_text <- 4.5
+      } else {
+        size_x_text <- 6
+      }
+      
       p <- ggplot() + 
-        ylim(-0.08,1.05) +
-        scale_y_continuous(breaks=c(0,0.5,1)) +
+        ylim(-0.08,ymax) +
+        scale_y_continuous(breaks=breaks_scale_y) +
         theme_light() + 
         #xlab(lab_df$unit) + 
         #ggtitle(group, subtitle = lab_x) + 
         theme(plot.subtitle = element_blank(),
               plot.title = element_blank(),
               axis.title.y = element_blank(),
-              axis.text.x = element_text(size = 6),
+              axis.text.x = element_text(size = size_x_text),
               axis.text.y = element_text(size = 6),
               axis.title.x = element_blank(),
               #axis.title.x = element_text(size = 6,colour = "grey30"),
@@ -2856,9 +2911,13 @@ fun_plot_pdp5 <- function(rf, glmm, indicator, species, code_pays, get_all_plots
       #modnames = c("RF","RF all preds","RF feat. select." ,"GLMM LRT","GLMM AIC"
       #scale_color_manual(values=c("#009E73", "#E69F00","black","red","grey")) +
       
+    #  if(!(code_pays=="CI" & indicator=="late_biting" & species=="An. gambiae s.l." & feature == "RFD1F_2000_0_0" & get_all_plots==FALSE)){
+      
       if(!is.null(rf[[1]])){
         if(feature %in% rf_mod$finalMode$xNames){
-          if((abs(max(pd$yhat)-min(pd$yhat))>=0.1 | get_all_plots == TRUE) | (!is.null(glmm[[1]]) & feature %in% colnames(df_glmm))){
+         # if((abs(max(pd$yhat)-min(pd$yhat))>=0.05 | get_all_plots == TRUE) | (!is.null(glmm[[1]]) & feature %in% colnames(df_glmm))){
+          if(get_all_plots == TRUE | (!is.null(glmm[[1]]) & feature %in% colnames(df_glmm))){
+            
             if(is.numeric(df_rf[,feature][[1]])){
               if(isTRUE(plot_pdp)){
               p <- p + 
@@ -2868,7 +2927,7 @@ fun_plot_pdp5 <- function(rf, glmm, indicator, species, code_pays, get_all_plots
               #geom_line(data = pd[pd$yhat.id != "avg", ], aes_string(x = feature, y = "yhat", group = "yhat.id"), linetype = "dashed", size = 0.25) +
               
               #if(feature %in% c("NMA","LUS")){
-              p <- p + geom_bin2d(data = df_rf %>% mutate(resp_var = ifelse(resp_var=="Presence",1,0)), aes_string(x = feature, y = "resp_var"), colour = "black") +  scale_fill_gradient(low = "gray90", high = "black")# scale_fill_continuous(type = "viridis")
+              p <- p + geom_bin2d(data = df_rf %>% mutate(resp_var = ifelse(resp_var=="Presence",geombin_ymax,0)), aes_string(x = feature, y = "resp_var"), colour = "black") +  scale_fill_gradient(low = "gray90", high = "black")# scale_fill_continuous(type = "viridis")
               #} else {
               #  p <- p + geom_bin2d(data = df_rf %>% mutate(resp_var = ifelse(resp_var=="Presence",1,0)), aes_string(x = feature, y = "resp_var"), colour = "black",  binwidth = c(max(df_rf[,feature])/15,.05)) +  scale_fill_gradient(low = "gray90", high = "black")# scale_fill_continuous(type = "viridis")
               #}
@@ -2878,28 +2937,58 @@ fun_plot_pdp5 <- function(rf, glmm, indicator, species, code_pays, get_all_plots
             } else if(is.factor(df_rf[,feature][[1]])){
               
               df_rf <- as.data.frame(df_rf)
+              df_rf[,feature] <- gsub("Bef. LLIN dist.","< LLIN dist.",df_rf[,feature])
               df_rf[,feature] <- gsub("\\+","\n+",df_rf[,feature])
+              df_rf[,feature] <- gsub("< LLIN dist.","< LLIN\ndist.",df_rf[,feature])
+              df_rf[,feature] <- gsub("LLIN***","LLIN\n***",df_rf[,feature], fixed = T)
+              
               dat$x <- gsub("\\+","\n+",dat$x)
+              dat$x <- gsub("< LLIN dist.","< LLIN\ndist.",dat$x)
+              dat$x <- gsub("LLIN***","LLIN\n***", dat$x , fixed = T)
+              
               if(isTRUE(plot_pdp)){    
-              if(feature=="kdrw"){
+              if(feature=="kdrw" & indicator == "physiological_resistance_kdre"){
+                dat$x[which( dat$x=="RR")] = "RR***"
                 dat$x = as.factor(dat$x)
-                dat$x = factor(dat$x, levels = c("SS","RS","RR"))
+                dat$x = factor(dat$x, levels = c("SS","RS","RR***"))
+              }
+              if(feature=="kdrw" & indicator == "physiological_resistance_ace1"){
+                dat$x[which( dat$x=="RR")] = "RR**"
+                dat$x[which( dat$x=="RS")] = "RS*"
+                  dat$x = as.factor(dat$x)
+                  dat$x = factor(dat$x, levels = c("SS","RS*","RR**"))
+                  
               }
               p <- p +  
                 geom_col(data = dat, aes(x = x, y = y), fill = "#009E73")
               }
               
-              if(feature=="kdrw"){
+              if(feature=="VCM" &  indicator == "exophagy" & code_pays=="CI" & species=="An. gambiae s.l."){
+                df_rf$VCM = as.factor(df_rf$VCM)
+                df_rf$VCM = factor(df_rf$VCM, levels = c("< LLIN\ndist.","LLIN\n***","LLIN \n+ IEC*", "LLIN \n+ IRS**", "LLIN \n+ Larv.*"))
+                  }
+              
+              if(feature=="kdrw" & indicator == "physiological_resistance_kdre"){
+                df_rf$kdrw[which( df_rf$kdrw=="RR")] = "RR***"
                 df_rf$kdrw = as.factor(df_rf$kdrw)
-                df_rf$kdrw = factor(df_rf$kdrw, levels = c("SS","RS","RR"))
+                df_rf$kdrw = factor(df_rf$kdrw, levels = c("SS","RS","RR***"))
               }
+              if(feature=="kdrw" & indicator == "physiological_resistance_ace1"){
+                df_rf$kdrw[which( df_rf$kdrw=="RS")] = "RS*"
+                df_rf$kdrw[which( df_rf$kdrw=="RR")] = "RR**"
+                df_rf$kdrw = as.factor(df_rf$kdrw)
+                df_rf$kdrw = factor(df_rf$kdrw, levels = c("SS","RS*","RR**"))
+              }
+              
               if(feature=="int_ext"){
-                df_rf$int_ext = as.factor(df_rf$int_ext)
-                df_rf$int_ext = factor(df_rf$int_ext, levels = c("i","e***"))
+                df_rf$int_ext[which( df_rf$int_ext=="i")] = "int."
+                df_rf$int_ext[which( df_rf$int_ext=="e***")] = "ext.***"
+                df_rf$int_ext = factor(df_rf$int_ext, levels = c("int.","ext.***"))
+                dat$x <- gsub("e***","ext.***", dat$x , fixed = T)
               }
               
                p <- p + 
-                 geom_bin2d(data = df_rf %>% mutate(resp_var = ifelse(resp_var=="Presence",1,0)), aes_string(x = feature, y = "resp_var"), colour = "black") +   scale_fill_gradient(low = "gray90", high = "black") #scale_fill_continuous(type = "viridis")
+                 geom_bin2d(data = df_rf %>% mutate(resp_var = ifelse(resp_var=="Presence",geombin_ymax,0)), aes_string(x = feature, y = "resp_var"), colour = "black") +   scale_fill_gradient(low = "gray90", high = "black") #scale_fill_continuous(type = "viridis")
               #geom_point(data = pd[pd$yhat.id == "avg", ], aes_string(x = feature, y = "yhat", group = "yhat.id"), size = 1, colour = "black") + 
               #geom_point(data = pd[pd$yhat.id != "avg", ], aes_string(x = feature, y = "yhat", group = "yhat.id"), size = 1, colour = "black") 
               
@@ -2912,25 +3001,39 @@ fun_plot_pdp5 <- function(rf, glmm, indicator, species, code_pays, get_all_plots
       }
       
       
+    #}
+      
+      font_f <- 1
+    if(any(grepl("\\*",dat$x))){ 
+      font_f <- 2
+    }
       
       if(!is.null(glmm[[1]])){
         if(feature %in% colnames(df_glmm)){
           pglmm = jtools::effect_plot(glmm_mod@model, pred = !!feature, interval = TRUE)
           dat = ggplot_build(pglmm)$data
+          
           if(is.numeric(df_glmm[,feature][[1]])){
             dat[[1]]$x = dat[[1]]$x + attr(df_glmm[,feature],'scaled:center')
             dat[[2]]$x = dat[[2]]$x + attr(df_glmm[,feature],'scaled:center')
           }
-          
-          if( is.numeric(df_glmm[,feature][[1]]) & ((get_all_plots == TRUE |  group=="Vector control") | (abs(max(dat[[1]]$y)-min(dat[[1]]$y))>=0.1 & glmm_tidy[grepl(feature,glmm_tidy$term),]$p.value < 0.1))){
+
+         # if( is.numeric(df_glmm[,feature][[1]]) & ((get_all_plots == TRUE |  group=="Vector control") | (abs(max(dat[[1]]$y)-min(dat[[1]]$y))>=0.05 & glmm_tidy[grepl(feature,glmm_tidy$term),]$p.value < 0.1))){
+          if( is.numeric(df_glmm[,feature][[1]]) & ((get_all_plots == TRUE |  group=="Vector control" | feature %in% c('lsm_c_pland_2000_3_1','lsm_c_pland_2000_4_1','lsm_c_pland_2000_4_11','lsm_c_pland_2000_4_16')) | (glmm_tidy[grepl(feature,glmm_tidy$term),]$p.value < 0.05))){
+            
             p <- p + 
               geom_ribbon(data = dat[[2]], aes(x = x, y =y, ymin = ymin, ymax = ymax), alpha = 0.2, fill = "grey20") +
               geom_line(data = dat[[1]], aes(x = x, y =y), colour = "#E69F00", size = 0.5)
             
             glmm_var_imp <- sd(dat[[1]]$y)
             
-          } else if( is.factor(df_glmm[,feature][[1]]) & (( get_all_plots == TRUE |  group=="Vector control") | (abs(max(dat[[1]]$y)-min(dat[[1]]$y))>=0.1 & min(glmm_tidy[grepl(feature,glmm_tidy$term),]$p.value) < 0.1 ))){
-            p <- p +  
+         # } else if( is.factor(df_glmm[,feature][[1]]) & (( get_all_plots == TRUE |  group=="Vector control") | (abs(max(dat[[1]]$y)-min(dat[[1]]$y))>=0.05 & min(glmm_tidy[grepl(feature,glmm_tidy$term),]$p.value) < 0.1 ))){
+          } else if( is.factor(df_glmm[,feature][[1]]) & (( get_all_plots == TRUE |  group=="Vector control" | feature %in% c('lsm_c_pland_2000_3_1','lsm_c_pland_2000_4_1','lsm_c_pland_2000_4_11','lsm_c_pland_2000_4_16')) | (min(glmm_tidy[grepl(feature,glmm_tidy$term),]$p.value) < 0.05 ))){
+
+             if(feature == "VCM" &  indicator=="physiological_resistance_kdre" & species=="An. coluzzii"){dat[[2]]$ymax[2] = 0.49}
+            if(feature == "VCM" &  indicator=="physiological_resistance_kdre" & species=="An. gambiae ss."){dat[[2]]$ymax[4] = 0.55}
+            
+             p <- p +  
               geom_errorbar(data = dat[[2]], aes(x = x, y =y, ymin = ymin, ymax = ymax), width=.1, colour ="grey20") + 
               geom_point(data = dat[[1]], aes(x = x, y = y), size = 1.5, colour = "#E69F00")
             
@@ -2942,14 +3045,29 @@ fun_plot_pdp5 <- function(rf, glmm, indicator, species, code_pays, get_all_plots
       
       lab_x <- trimws(lab_x)
       
+      if(grepl("\\*",lab_x)){
+        font_f <- 2
+      }
+      
       p <- p +
         #annotate("label", x=-Inf,hjust = -0.09, y = 0.6, label = lab_x, size = 2, colour = "grey10", alpha = 0.7) #+ 
-        annotate("text", x=-Inf,hjust = -0.1, y = 0.71, label = lab_x, size = 2.2, colour = "grey10")
+        annotate("text", x=-Inf,hjust = -0.1, y = title_y, label = lab_x, size = 2.2, colour = "grey10", fontface = font_f)  #  y = 0.71
       #annotate("text", x=-Inf,hjust = -0.18, y = 0.85, label = group, size = 2, colour = "grey20")
       
       cols <- unlist(purrr::map(ggplot_build(p)$data, ~colnames(.)))
-      if(("y" %in% cols | get_all_plots == TRUE) & length(ggplot_build(p)$data)>=3){
-        return(list(plot = p,rf_var_imp = rf_var_imp,glmm_var_imp = glmm_var_imp))
+      
+      if((get_all_plots == FALSE & group!="Vector control" & !(feature %in% c('lsm_c_pland_2000_3_1','lsm_c_pland_2000_4_1','lsm_c_pland_2000_4_11','lsm_c_pland_2000_4_16')) & (is.null(glmm[[1]]) | min(glmm_tidy[grepl(feature,glmm_tidy$term),]$p.value) > 0.05 )) | (code_pays=="CI" & indicator=="early_biting" & species=="An. gambiae s.l." & feature == "HBB2")){
+        return(NULL)
+      } else if(("y" %in% cols | get_all_plots == TRUE) & length(ggplot_build(p)$data)>=3){
+        p <- p + geom_hline(yintercept = avg_prob, color = "darkred", size = 0.4,linetype = "dashed")
+        
+        if(!is.data.frame(dat[[1]])){
+          range_preds <- NA
+        } else {
+          range_preds = round(abs(max(dat[[1]]$y)-min(dat[[1]]$y)),2)
+        }
+        
+        return(list(plot = p,rf_var_imp = rf_var_imp,glmm_var_imp = glmm_var_imp, range_preds = range_preds))
       } else {
         return(NULL)
       }
@@ -2983,7 +3101,6 @@ fun_plot_pdp5 <- function(rf, glmm, indicator, species, code_pays, get_all_plots
     
     #pdps_plots = list(varimplot)
     pdps_plots = list()
-    
     # ord <- df_varimp %>% arrange(desc(value)) 
     # ord <- unique(ord$var)
     # pdps <- pdps[ord]
@@ -2991,6 +3108,14 @@ fun_plot_pdp5 <- function(rf, glmm, indicator, species, code_pays, get_all_plots
     for(i in 1:length(pdps)){
       pdps_plots[[i+1]] <- pdps[[i]]$plot
     }
+    
+    range_preds <- data.frame(var = character(), range_pred = numeric())
+    for(i in 1:length(pdps)){
+      if(!is.null(pdps[[i]])){
+      range_preds <- rbind(range_preds, data.frame(var= names(pdps[i]),range_pred=  pdps[[i]]$range_preds  ))
+      }
+    }
+
     
     # create plots for model quality
     df_qual <- data.frame(model = c("GLMM","RF"), quality = c(round(r2,2),round(auc_rf,2)), quality_lab = c(paste0("R² = ",round(r2,2)),paste0("AUC = ",round(auc_rf,2))), line = c(NA,.6))
@@ -3027,13 +3152,13 @@ fun_plot_pdp5 <- function(rf, glmm, indicator, species, code_pays, get_all_plots
       code_pays="Korhogo (IC)"
     }
     
-    if(indicator=="physiological_resistance_kdre" & species == 'An. coluzzii'){
-      n_col = 2
+    if(get_all_plots==F){
+      n_row = 13 #10
     } else {
-      n_col = 1
+      n_row = 15 # 14
     }
     
-    p_final <- grid.arrange(grobs = pdps_plots, nrow = 8,ncol = 2, top =  textGrob(paste0(code_pays,"\n",species),x=0.028,hjust = 0,gp=gpar(fontsize=10)))
+    p_final <- grid.arrange(grobs = pdps_plots, nrow = n_row,ncol = 1, top =  textGrob(paste0(code_pays,"\n",species),x=0.028,hjust = 0,gp=gpar(fontsize=10)))
     # library(egg)
     #p_final <- grid.arrange(grobs = lapply(pdps_plots,set_panel_size, width = unit(2.5, "cm"),  height = unit(2, "cm")), ncol = 5,top =  textGrob(paste0(code_pays," - ",indicator,' - ',species,' - occurence = ',round(nrow(df_glmm[which(df_glmm$resp_var==1),])/nrow(df_glmm),2)*100," % (n = ",nrow(df_glmm[which(df_glmm$resp_var==1),]),", n tot = ",nrow(df_glmm),")\nAUC GLMM = ",round(auc_glmm,2)," ; AUC RF = ",round(auc_rf,2)),gp=gpar(fontsize=12)))
     
@@ -3044,7 +3169,9 @@ fun_plot_pdp5 <- function(rf, glmm, indicator, species, code_pays, get_all_plots
   }
   
   #return(list(p_final=p_final,df_varimp=df_varimp))
-  return(p_final)
+  #return(p_final)
+  return(range_preds)
+  
 }
 
 
@@ -3372,7 +3499,9 @@ fun_plot_pdp6 <- function(rf, glmm, indicator, species, code_pays, get_all_plots
       
       if(!is.null(rf[[1]])){
         if(feature %in% rf_mod$finalMode$xNames){
-          if((abs(max(pd$yhat)-min(pd$yhat))>=0.1 | get_all_plots == TRUE) | (!is.null(glmm[[1]]) & feature %in% colnames(df_glmm))){
+          #if((abs(max(pd$yhat)-min(pd$yhat))>=0.1 | get_all_plots == TRUE) | (!is.null(glmm[[1]]) & feature %in% colnames(df_glmm))){
+          if(get_all_plots == TRUE | (!is.null(glmm[[1]]) & feature %in% colnames(df_glmm))){
+            
             if(is.numeric(df_rf[,feature][[1]])){
               p <- p + 
                 geom_line(data = dat, aes(x = x, y = y), size = 0.5, colour = "#009E73")

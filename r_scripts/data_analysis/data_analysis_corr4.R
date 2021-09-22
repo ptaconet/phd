@@ -184,7 +184,7 @@
       } else if(code_pays=="CI"){
         
       predictors <- setdiff(c(colnames(env_landcover)[grepl("_8_",colnames(env_landcover))],"lsm_c_pland_500_7_6","lsm_c_pland_1000_7_6","lsm_c_pland_2000_7_6",colnames(env_spatial), "WMD"),"idpointdecapture")
-      predictors <- setdiff(predictors, predictors[grepl("_8_15|8_16",predictors)])
+      predictors <- setdiff(predictors, predictors[grepl("_8_12|8_13",predictors)])
       predictors <- predictors[!grepl('TSL|TEL|TAS|TCI|TWI|WAL|HYS|LIG30|POH', predictors)]
     
       predictors <- c(predictors, "NMT"  , "NMH"  , "NMA",  "RFH" ,  "WSP"  ,  "LMN")
@@ -434,7 +434,7 @@
     predictors_removed <- setdiff(predictors,predictors_uncorr)
     
     #glmm_multiv <- fun_compute_glmm(th_trmetrics_entomo_postedecapture, predictors_uncorr, mod = mod ,cv_col = "by_ptcapt", crit_selection = "AIC")
-    rf <- fun_compute_rf(th_trmetrics_entomo_postedecapture, predictors_uncorr, cv_col = "codevillage", mod, featureselect = FALSE, response_var)
+    rf <- fun_compute_rf(th_trmetrics_entomo_postedecapture, predictors_uncorr, cv_col = "codevillage", mod, featureselect = "false", response_var)
 
     return(list(spatial_corrs_spearman = spatial_corrs_spearman, spatial_corrs_glmm = spatial_corrs_glmm,temporal_corrs_spearman = ccms_spearman, temporal_corrs_glmm = ccms_glmm,rf = rf, glmm_aic = glmm_multiv, predictors_removed = predictors_removed))
     

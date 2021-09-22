@@ -151,7 +151,9 @@ dates_recensement <- dbReadTable(react_gpkg, 'recensement_menages_l0') %>%
   group_by(codepays) %>%
   summarise(date = min(as.Date(dateenq))) %>%
   mutate(survey_num = NA) %>%
-  mutate(Surveys = "Human + animal census")
+  mutate(Surveys = "Human census")
+
+  #mutate(Surveys = "Human + animal census")
 
 dates_cpthumain <- dbReadTable(react_gpkg, 'entomo_comportementhumain_l0') %>% 
   dplyr::select(-geom) %>%
@@ -183,10 +185,10 @@ dates_epi_active <- dbReadTable(react_gpkg, 'epidemio_active_l1') %>%
   mutate(Surveys = "Epidemio - active")
 
 dates_to_plot <- rbind(dates_entomo,dates_recensement,dates_cpthumain,dates_epi_active,dates_llin,dates_add_vc) %>%
-  mutate(Surveys = forcats::fct_relevel(Surveys, c("Human + animal census","Anopheles behaviour survey","Human behaviour survey","Epidemio - active","LLIN distribution","Implementation of complementary VC strategy"))) %>%
-  filter(Surveys %in% c("Human + animal census","Anopheles behaviour survey","Human behaviour survey","Implementation of complementary VC strategy","LLIN distribution")) %>% 
-  mutate(position = case_when(codepays=="BF" & Surveys %in% c("Human + animal census","Anopheles behaviour survey","Human behaviour survey","Epidemio - active") ~ 0.3,
-                              codepays=="CI" & Surveys %in% c("Human + animal census","Anopheles behaviour survey","Human behaviour survey","Epidemio - active") ~ -0.3,
+  mutate(Surveys = forcats::fct_relevel(Surveys, c("Human census","Anopheles behaviour survey","Human behaviour survey","Epidemio - active","LLIN distribution","Implementation of complementary VC strategy"))) %>%
+  filter(Surveys %in% c("Human census","Anopheles behaviour survey","Human behaviour survey","Implementation of complementary VC strategy","LLIN distribution")) %>% 
+  mutate(position = case_when(codepays=="BF" & Surveys %in% c("Human census","Anopheles behaviour survey","Human behaviour survey","Epidemio - active") ~ 0.3,
+                              codepays=="CI" & Surveys %in% c("Human census","Anopheles behaviour survey","Human behaviour survey","Epidemio - active") ~ -0.3,
                               codepays=="BF" & Surveys %in% c("Implementation of complementary VC strategy","LLIN distribution") ~ 0.1,
                               codepays=="CI" & Surveys %in% c("Implementation of complementary VC strategy","LLIN distribution") ~ -0.1,
                               )) %>%

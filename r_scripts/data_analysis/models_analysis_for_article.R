@@ -108,6 +108,9 @@ plots_univ_glmm_spatial <- univ_glmm_spatial %>%
 plots_univ_glmm_spatial$univ_spatial[[1]] + plots_univ_glmm_spatial$univ_spatial[[2]] # BF
 plots_univ_glmm_spatial$univ_spatial[[3]] + plots_univ_glmm_spatial$univ_spatial[[4]] # CI
 
+plots_univ_spearman_spatial$univ_spatial[[1]] #BF
+plots_univ_spearman_spatial$univ_spatial[[2]] #CI
+
 ###### temporal univariate
 
 plots_univ_spearman_temporal <- univ_spearman_temporal %>%
@@ -218,28 +221,92 @@ wrap_plots(list(plots_validation_abundance$plots_validation[[1]],
 ###### resistances
 ######################
 
-res <-  readRDS("/home/ptaconet/Bureau/data_analysis/model_results_resistances12.rds") %>%
-  mutate(response_var = case_when(
-  response_var == "ma_funestus_ss" ~ "An. funestus",
-  response_var == "ma_gambiae_ss" ~ "An. gambiae ss.",
-  response_var == "ma_coluzzi" ~ "An. coluzzii",
-  response_var == "ma_gambiae_sl" ~ "An. gambiae s.l."))
+  res <-  readRDS("/home/ptaconet/Bureau/data_analysis/model_results_resistances19.rds") %>%
+    mutate(response_var = case_when(
+    response_var == "ma_funestus_ss" ~ "An. funestus",
+    response_var == "ma_gambiae_ss" ~ "An. gambiae ss.",
+    response_var == "ma_coluzzi" ~ "An. coluzzii",
+    response_var == "ma_gambiae_sl" ~ "An. gambiae s.l."))
+    
+  ## model performance
+  fun_plot_mod_perf <- function(rf,glmm,response_var,code_pays){
+    df_rf <- rf$df_cv
+        df_mod <- glmm$mod@model$frame
+    df_mod$pred <- predict(glmm$mod@model, type = 'response', newdata = df_mod)
+    df_mod$obs <- df_mod$resp_var
+    df_glmm <- df_mod
+    
+    df_rf <- df_rf %>% dplyr::select(pred, obs,codevillage) %>% mutate(model = "GLMM") %>%
+      mutate(obs = ifelse(obs==0, "Absence", "Presence"))
+    df_glmm <- df_glmm %>% dplyr::select(pred, obs,codevillage) %>% mutate(model = "RF") %>%
+      mutate(obs = ifelse(obs==0, "Absence", "Presence"))
+    
+  
+    p_glmm <- ggplot(df_glmm, aes(x = obs, y = pred)) + geom_boxplot(outlier.shape = NA, colour = "#E69F00") + geom_jitter(width = 0.25, size =.4, colour = "#E69F00", alpha = 0.3) + theme_bw() + ylim(c(0,1)) + ggtitle("GLMM") + xlab("observed") + ylab("predicted probability")  
+  
+    p_rf <- ggplot(df_rf, aes(x = obs, y = pred)) + geom_boxplot(outlier.shape = NA, colour = "#009E73") + geom_jitter(width = 0.25, size =.4, colour = "#009E73", alpha = 0.3) + theme_bw() + ylim(c(0,1)) + ggtitle("RF") + xlab("observed") + ylab("predicted probability") 
+    
+    p <- p_glmm + p_rf +  plot_annotation(title = paste0(code_pays, " - ", response_var ))
+    
+    return(p)
+  }
+  
+  res <- res %>%
+    mutate(code_pays2 = ifelse(code_pays=="CI","IC","BF")) %>%
+    mutate(mod2 = case_when(mod=="exophagy" ~ 'Exophagy',
+                           mod=='late_biting' ~ 'Late biting',
+                           mod=='early_biting' ~ 'Early biting',
+                           mod=='physiological_resistance_kdrw' ~ 'Kdr-w',
+                           mod=='physiological_resistance_kdre' ~ 'Kdr-e',
+                           mod=='physiological_resistance_ace1' ~ 'Ace-1')) %>%
+    mutate(mod_pred = pmap(list(rf,glmm_aic,response_var,code_pays2), ~fun_plot_mod_perf(..1,..2,..3,..4)))
+  
+  pmap(list(res$mod_pred,res$response_var,res$code_pays,res$mod2),~ggsave(paste(..2,..3,..4,sep="_"),..1,"png",paste0("articles/article2/mod_evaluation/",..4),width = 7.68, height = 3.87))
   
 
+
+## r squared and auc
+df_perf_mod <- data.frame(species = character(), code_pays = character(), mod = character(), auc = numeric(), rsq = numeric())
+for(i in 1:nrow(res)){
+  
+  auc_rf = MLmetrics::AUC(y_true = res$rf[[i]]$df_cv$obs, y_pred =res$rf[[i]]$df_cv$pred )
+  df_mod = res$glmm_aic[[i]]$mod@model$frame
+  r2 = MuMIn::r.squaredGLMM(res$glmm_aic[[i]]$mod@model)[1,1]
+  
+  auc_rf = round(auc_rf,2)
+  r2 = round(r2,2)
+  
+  df_perf_mod <- add_row(df_perf_mod,species=res$response_var[i],code_pays=res$code_pays[i],mod=res$mod[i],auc=auc_rf,rsq=r2)
+  
+}
+
+df_perf_mod$species <- gsub("An. gambiae ss.","An. gambiae s.s.",df_perf_mod$species)
+
+df_perf_mod2 <- df_perf_mod %>%
+  mutate(code_pays = ifelse(code_pays=="CI","IC","BF")) %>%
+  mutate(mod = case_when(mod=="exophagy" ~ 'Exophagy',
+                         mod=='late_biting' ~ 'Late biting',
+                         mod=='early_biting' ~ 'Early biting',
+                         mod=='physiological_resistance_kdrw' ~ 'Kdr-w',
+                         mod=='physiological_resistance_kdre' ~ 'Kdr-e',
+                         mod=='physiological_resistance_ace1' ~ 'Ace-1')) %>%
+  mutate(mod = fct_relevel(mod,c("Exophagy","Early biting","Late biting","Kdr-w","Kdr-e","Ace-1"))) %>%
+  #pivot_longer(c(auc  ,rsq)) %>%
+  mutate(species_pays = paste0(code_pays,"\n",species))
+
+p1 = ggplot(df_perf_mod2, aes(x=species_pays, y = auc)) + geom_col(fill = "#009E73", position = position_dodge2(width = 0.8, preserve = "single")) + ylim(c(0,1)) + theme_light() + facet_grid(.~mod , scales="free",space = "free") + theme(axis.title.x = element_blank()) + geom_hline(aes(yintercept = 0.5),linetype = "dashed", color = "darkred", size = 0.3)  + geom_hline(aes(yintercept = 0.6),linetype = "dashed", color = "darkred", size = 0.3)   + geom_hline(aes(yintercept = 0.7),linetype = "dashed", color = "darkred", size = 0.3)     
+p2 = ggplot(df_perf_mod2, aes(x=species_pays, y = rsq)) + geom_col(fill = "#E69F00",position = position_dodge2(width = 0.8, preserve = "single")) + ylim(c(0,1)) + theme_light() + facet_grid(.~mod , scales="free",space = "free") + theme(axis.title.x = element_blank()) + geom_hline(aes(yintercept = 0.02),linetype = "dashed", color = "darkred", size = 0.3)  + geom_hline(aes(yintercept = 0.13),linetype = "dashed", color = "darkred", size = 0.3)   + geom_hline(aes(yintercept = 0.26),linetype = "dashed", color = "darkred", size = 0.3) 
+
+p2/p1
 
 fun_plot_distrib_resist <- function(df,response_var,code_pays,mod){
-  
   df <- df %>%
     filter(resp_var==1) %>%
     count(resp_var,  codevillage) %>%
     mutate(Freq = n/sum(n))
-  
   p <- ggplot(df,aes(y=Freq,x=reorder(codevillage,-Freq))) +  geom_col() + ylim(0,1) + ggtitle(paste0(mod," - ",code_pays," - ",response_var)) + theme_classic() + xlab("villages") + ylab("Frequency of the resistant class") + theme(axis.text.x = element_blank(),   axis.ticks.x = element_blank())
-  
   return(p)
-  
 }
-
 
 res <- res %>%
   mutate(df_mod = map(glmm_aic,~.$mod@model$frame)) %>%
@@ -247,11 +314,76 @@ res <- res %>%
 wrap_plots(res$df_mod_plot)
 
 
-glmm_plots <- res %>%
-  mutate(model_plots = pmap(list(rf,glmm_aic, mod,response_var,code_pays), ~fun_plot_pdp5(..1,..2,..3,..4,..5,get_all_plots=FALSE)))
+  fun_get_tab_glmm_resist <- function(glmm_aic,response_var,code_pays,mod){
+  
+  glmm_tidy <- broom.mixed::tidy(glmm_aic$mod@model, conf.int = TRUE, exponentiate = TRUE)
+  glmm_tidy <- glmm_tidy %>%
+    mutate(p.value2 = case_when(
+      p.value <= 0.001 ~ "***",
+      p.value > 0.001 & p.value <= 0.01  ~  "**",
+      p.value > 0.01 & p.value <= 0.05 ~ "*",
+      p.value > 0.05 ~ ""
+    )) %>%
+    filter(effect=="fixed", term != "estimate")
+  
+  glmm_tidy <- fun_get_predictors_labels(glmm_tidy,"term")
+  
+  if(mod == "late_biting"){
+    glmm_tidy <- glmm_tidy %>%
+      mutate(label_detail = gsub("day of collection","day preceding collection",label_detail)) %>%
+      mutate(label_detail = gsub("hour of collection","night of collection",label_detail))
+  }
+  
+  if(!(mod %in% c("presence","abundance"))){
+    glmm_tidy <- glmm_tidy %>%
+      mutate(label_detail = gsub("b/w 0 and 4.28571428571429 weeks","(month preceding coll.",label_detail)) %>%
+      mutate(label_detail = gsub("b/w 0 and 0 weeks","(day of collection",label_detail)) %>%
+      mutate(label_detail = gsub("\n2000 m buffer","",label_detail))
+  }
+  
+  if(mod %in% c("presence","abundance")){
+    glmm_tidy <- glmm_tidy %>%
+      mutate(label_detail = gsub("hour of collection","night of collection",label_detail))
+  }
+  
+  glmm_tidy <- glmm_tidy %>%
+    mutate(label_detail=gsub("\\n"," ",label_detail)) %>%
+    mutate(label_detail=ifelse(grepl("\\(",label_detail),paste0(label_detail,")"),label_detail)) %>%
+    mutate(label_detail = paste(label_detail,p.value2)) %>%
+    mutate(species = response_var, codepays = code_pays, mod=mod ) 
+  
+  return(glmm_tidy)
+  }
 
-  pmap(list(glmm_plots$model_plots,glmm_plots$response_var,glmm_plots$code_pays,glmm_plots$mod),~ggsave(paste(..2,..3,..4,"2",sep="_"),..1,"png",paste0("plots_resistance5_selectvar/",..4),width = 1.4, height = 10, units = "in"))
+res <- res %>%
+  mutate(glmm_aic_tab = pmap(list(glmm_aic,response_var,code_pays,mod),~fun_get_tab_glmm_resist(..1,..2,..3,..4)))
 
+glmms_tab <- do.call(rbind.data.frame, res$glmm_aic_tab) %>% 
+  mutate(model = paste(mod,codepays,species, sep = " - ")) %>%
+  dplyr::filter(!(is.na(label))) %>%
+  dplyr::select(model,label_detail, unit,estimate,conf.low,conf.high,p.value) %>%
+  mutate(estimate = round(estimate,5), conf.high = round(conf.high,5), conf.low = round(conf.low,5), p.value = round(p.value,3)) %>%
+  mutate(unit = ifelse(unit=='LLIN only','comp. to LLIN only',unit)) %>%
+  mutate(unit = ifelse(is.na(unit),'comp. to interior',unit)) %>%
+  mutate(label_detail = ifelse(label_detail=="Place ***",'Place (exterior) ***',label_detail))
+
+write.csv(glmms_tab,"/home/ptaconet/phd/articles/article2/glmms_tab2.csv",row.names = F)
+
+  # selected plots
+  
+          glmm_plots <- res %>% 
+          mutate(model_plots = pmap(list(rf,glmm_aic, mod,response_var,code_pays), ~fun_plot_pdp5(..1,..2,..3,..4,..5,get_all_plots=FALSE)))
+        
+        pmap(list(glmm_plots$model_plots,glmm_plots$response_var,glmm_plots$code_pays,glmm_plots$mod),~ggsave(paste(..2,..3,..4,"_smallmod",sep="_"),..1,"png",paste0("plots_resistance5_selectvar2/",..4),width = 1.4, height = 14.4, units = "in"))  #height = 10  -> pour 9 plots sur la colonne
+        
+          
+          # all the plots
+          glmm_plots <- res %>% 
+            mutate(model_plots = pmap(list(rf,glmm_aic, mod,response_var,code_pays), ~fun_plot_pdp5(..1,..2,..3,..4,..5,get_all_plots=TRUE)))
+          
+            pmap(list(glmm_plots$model_plots,glmm_plots$response_var,glmm_plots$code_pays,glmm_plots$mod),~ggsave(paste(..2,..3,..4,"_fullmod",sep="_"),..1,"png",paste0("plots_resistance5_selectvar3/",..4),width = 1.4, height = 16.6, units = "in"))
+          
+    
 # varimplot
 glmm_plots <- glmm_plots %>%
   filter(!(response_var == "An. coluzzii" & code_pays=="BF" & mod == "early_biting")) %>%
