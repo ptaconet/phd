@@ -829,8 +829,8 @@ fun_compute_perf_metric <- function(df_cv,mod){
           th_auc <- NA
         } else {
           # th_auc <- MLmetrics::F1_Score(y_true = th_df_cv$obs,y_pred = pred_class, positive = "1")
-          #th_auc <- MLmetrics::AUC(y_true = th_df_cv$obs,y_pred = pred_class)
-          th_auc <- MLmetrics::PRAUC(y_true = th_df_cv$obs,y_pred = pred_class)
+          # th_auc <- MLmetrics::AUC(y_true = th_df_cv$obs,y_pred = pred_class) 
+          th_auc <- MLmetrics::PRAUC(y_true = th_df_cv$obs,y_pred = pred_class) 
           #th_auc <- MLmetrics::Specificity(y_true = th_df_cv$obs,y_pred = pred_class)
         }
         
@@ -849,8 +849,7 @@ fun_compute_perf_metric <- function(df_cv,mod){
     
     if(mod!="abundance"){ 
       th_df_cv <- th_df_cv %>%
-        #mutate(codevillage = paste0(codevillage,pointdecapture)) %>%  # pour avoir à l'échelle du point de capture
-        group_by(codevillage,species) %>%   
+        group_by(codevillage,species) %>% 
         summarise(sensitivity = sens(obs,pred2),
                   specificity =  spec(obs,pred2),
                   precision =  prec(obs,pred2),
@@ -864,8 +863,7 @@ fun_compute_perf_metric <- function(df_cv,mod){
       
     } else {
       th_df_cv <- th_df_cv %>%
-        #mutate(codevillage = paste0(codevillage,pointdecapture)) %>%  # pour avoir à l'échelle du point de capture
-        group_by(codevillage,species) %>%   
+         group_by(codevillage,species) %>% 
         summarise(mae = round(MLmetrics::MAE(y_true = obs ,y_pred = pred),2),
                   mse =  round(MLmetrics::MSE(y_true = obs ,y_pred = pred),2),
                   rmse =  round(MLmetrics::RMSE(y_true = obs ,y_pred = pred),2),
@@ -878,13 +876,122 @@ fun_compute_perf_metric <- function(df_cv,mod){
   }
   
   df <- df %>%
-    complete(species, nesting( codevillage)) %>%
+   complete(species, nesting( codevillage)) %>%  
     nest(-species)
   
   
   return(df)
   
 }
+
+
+fun_compute_perf_metric_predictive <- function(df_cv){
+  
+  sens <- function(obs,pred){
+    tryCatch({
+      ret = round(MLmetrics::Sensitivity(y_true = obs ,y_pred = pred, positive = 1),2)
+      return(ret)
+    },error=function(error_message) {
+      return(NaN)
+    })}
+  spec <- function(obs,pred){
+    tryCatch({
+      ret = round(MLmetrics::Specificity(y_true = obs ,y_pred = pred, positive = 1),2)
+      return(ret)
+    },error=function(error_message) {
+      return(NaN)
+    })}
+  prec <- function(obs,pred){
+    tryCatch({
+      ret = round(MLmetrics::Precision(y_true = obs ,y_pred = pred ,positive = 1),2)
+      return(ret)
+    },error=function(error_message) {
+      return(NaN)
+    })}
+  reca <- function(obs,pred){
+    tryCatch({
+      ret = round(MLmetrics::Recall(y_true = obs ,y_pred = pred ,positive = 1),2)
+      return(ret)
+    },error=function(error_message) {
+      return(NaN)
+    })}
+  rocauc <- function(obs,pred){
+    tryCatch({
+      ret = round(MLmetrics::AUC(y_true = obs ,y_pred = pred),2)
+      return(ret)
+    },error=function(error_message) {
+      return(NaN)
+    })}  
+  prauc <- function(obs,pred){
+    tryCatch({
+      ret = round(MLmetrics::PRAUC(y_true = obs ,y_pred = pred),2)
+      return(ret)
+    },error=function(error_message) {
+      return(NaN)
+    })}
+  f1 <- function(obs,pred){
+    tryCatch({
+      ret = round(MLmetrics::F1_Score(y_true = obs ,y_pred = pred,positive = 1),2)
+      return(ret)
+    },error=function(error_message) {
+      return(NaN)
+    })}
+  
+  
+
+    ## find threshold
+  
+      thresholds = seq(0, 1, 0.001)
+      aucs_thresholds <- NULL
+      for(i in 1:length(thresholds)){
+        
+        pred_class <- ifelse(df_cv$pred < thresholds[i],0,1)
+        if(length(unique(pred_class))==1){
+          th_auc <- NA
+        } else {
+          # th_auc <- MLmetrics::F1_Score(y_true = df_cv$obs,y_pred = pred_class, positive = "1")
+          th_auc <- MLmetrics::AUC(y_true = df_cv$obs,y_pred = pred_class)  #  =====> pour les modèles prédictifs
+          #th_auc <- MLmetrics::PRAUC(y_true = df_cv$obs,y_pred = pred_class)      =====> pour les modèles explicatifs
+          #th_auc <- MLmetrics::Specificity(y_true = df_cv$obs,y_pred = pred_class)
+        }
+        
+        aucs_thresholds <-c(aucs_thresholds, th_auc)
+        
+      }
+      
+      max_metric <- max(aucs_thresholds, na.rm = T)
+      threshold <- thresholds[which.max(aucs_thresholds)]
+      
+      df_cv$pred2 <- ifelse(df_cv$pred < threshold, 0, 1)
+      
+      df_cv$threshold <- threshold
+      df_cv$max_metric <- max_metric
+      
+    
+      sensitivity = sens(df_cv$obs,df_cv$pred2)
+      specificity = spec(df_cv$obs,df_cv$pred2)
+      precision = prec(df_cv$obs,df_cv$pred2)
+      recall = reca(df_cv$obs,df_cv$pred2)
+      f1score = f1(df_cv$obs,df_cv$pred2)
+      ROC_AUC = rocauc(df_cv$obs,df_cv$pred2)
+      PR_AUC = prauc(df_cv$obs,df_cv$pred2)
+  
+  # df <- df %>%
+  #   complete(species, nesting( code_pays)) %>%  
+  #   nest(-species)
+  
+  
+  return(list(df_cv = df_cv,
+              sensitivity=sensitivity,
+              specificity=specificity,
+              precision=precision,
+              recall=recall,
+              f1score=f1score,
+              ROC_AUC=ROC_AUC,
+              PR_AUC=PR_AUC))
+  
+}
+
 
 
 fun_plot_validation_presence <- function(df, spec){

@@ -549,3 +549,137 @@ pmap(list(glmm_plots$glmm_univ_plot,glmm_plots$glmm_multiv_plot,glmm_plots$respo
 # get rsquared from the multivariate models
 df_mod=res$glmm[[1]]$mod@model$frame
 r2 = MuMIn::r.squaredGLMM(res$glmm[[1]]$mod@model)
+
+
+
+
+
+
+
+
+
+######################
+###### predictive analysis######
+######################
+
+
+res <-  readRDS("/home/ptaconet/Bureau/data_analysis/model_results_predictive1.rds") %>%
+  mutate(response_var = case_when(
+    response_var == "ma_funestus_ss" ~ "An. funestus",
+    response_var == "ma_gambiae_ss" ~ "An. gambiae s.s.",
+    response_var == "ma_gambiae_sl" ~ "An. gambiae s.s.",
+    response_var == "ma_coluzzi" ~ "An. coluzzii",
+    response_var == "ma_an" ~ "Anopheles genus"))
+
+# sur 1 meme plot : lineplot évolution des AUC selon les 3 modèles (opensource, opensource simple, tocollect). 
+
+df_cv <- NULL
+
+for(i in 1:nrow(res)){
+  
+  for(j in 1:5){
+   a <- res$rf_opensource[[i]][[j]]$df_cv
+   b <- res$rf_tocollect[[i]][[j]]$df_cv
+   c <- res$rf_opensource_simple[[i]][[j]]$df_cv
+   
+   a$data_tocollect <- "Open source - complex model"
+   b$data_tocollect <- "To collect"
+   c$data_tocollect <- "Open source - simple model"
+   a$weeks_before <-  b$weeks_before <-  c$weeks_before <- j - 1
+   a$mod <-  b$mod <-  c$mod <- res$mod[[i]]
+   a$code_pays <-  b$code_pays <-  c$code_pays <- res$code_pays[[i]]
+   a$species <-  b$species <-  c$species <- res$response_var[[i]]
+   
+   df_cv <- bind_rows(df_cv,a,b,c)
+   
+  }
+
+}
+
+df_cv <- df_cv %>%
+  mutate(data_tocollect = fct_relevel(data_tocollect,c("To collect","Open source - complex model","Open source - simple model"))) %>%
+  mutate(species = fct_relevel(species,c("Anopheles genus","An. gambiae s.s.","An. funestus","An. coluzzii")))
+  
+
+df_cv_quality_presence <-  df_cv %>%
+  filter(mod=="presence", weeks_before > 0) %>%
+  nest(-c(species,data_tocollect, weeks_before,code_pays,mod)) %>%
+  mutate(perf_metrics = map(data,~fun_compute_perf_metric_predictive(.)))  %>%
+  mutate(df_cv = map(perf_metrics, ~pluck(.,"df_cv"))) %>%
+  mutate(AUC = as.numeric(map(perf_metrics, ~pluck(.,"ROC_AUC")))) %>%
+  mutate(PR_AUC = as.numeric(map(perf_metrics, ~pluck(.,"PR_AUC")))) %>%
+  mutate(f1score = as.numeric(map(perf_metrics, ~pluck(.,"f1score")))) %>%
+  mutate(recall = as.numeric(map(perf_metrics, ~pluck(.,"recall")))) %>%
+  mutate(precision = as.numeric(map(perf_metrics, ~pluck(.,"precision")))) %>%
+  mutate(specificity = as.numeric(map(perf_metrics, ~pluck(.,"specificity")))) %>%
+  mutate(sensitivity = as.numeric(map(perf_metrics, ~pluck(.,"sensitivity")))) %>%
+  dplyr::select(-c(data,perf_metrics))
+
+ggplot(df_cv_quality_presence, aes(x=weeks_before,y=AUC,colour=data_tocollect )) + geom_line() +  geom_point() + facet_wrap(species~code_pays, ncol = 2 ) + ylim(c(0.5,0.1)) + theme_light() + theme(legend.position="bottom")
+
+# abondance
+df_cv_quality_abundance <- df_cv %>%
+filter(mod=="abundance") %>%
+  mutate(pred=exp(pred-1),obs=exp(obs-1)) %>%
+  group_by(species,data_tocollect, weeks_before,code_pays,mod) %>%
+  summarise(mae = round(MLmetrics::MAE(y_true = obs ,y_pred = pred),2),
+            mse =  round(MLmetrics::MSE(y_true = obs ,y_pred = pred),2),
+            rmse =  round(MLmetrics::RMSE(y_true = obs ,y_pred = pred),2),
+            rsq =  round(MLmetrics::R2_Score(y_true = obs ,y_pred = pred),2)) %>%
+  as_tibble()
+
+ggplot(df_cv_quality_abundance, aes(x=weeks_before,y=mae,colour=data_tocollect)) + geom_line() +  geom_point() + facet_wrap(species~code_pays, ncol = 2 ) + theme_light() + theme(legend.position="bottom")
+
+
+df_cv_quality_abundance <- df_cv %>%
+  filter(mod=="abundance") %>%
+  mutate(pred=exp(pred-1),obs=exp(obs-1)) %>%
+  group_by(species,data_tocollect, weeks_before,nummission,code_pays,mod, codevillage) %>%
+  summarise(pred=sum(pred), obs=sum(obs)) %>%
+  pivot_longer(c(pred,obs))
+
+ggplot(df_cv_quality_abundance %>% filter(weeks_before == 0, code_pays == "BF", species == "Anopheles genus", data_tocollect == "To collect"), aes(x=nummission,y=value,colour=name)) + geom_line(aes(group=name)) +  geom_point() + facet_wrap(.~codevillage) + theme_light()
+
+
+df_cv_quality_abundance <- df_cv %>%
+  filter(mod=="abundance") %>%
+  mutate(pred=exp(pred-1),obs=exp(obs-1)) %>%
+  mutate(residuals = obs - pred) %>%
+  mutate(groups = case_when(obs<=1 ~ "<=1",
+                            obs>1 & obs<=3 ~ "2-3",
+                            obs>3 & obs<=10 ~ "4-10",
+                            obs>10 ~ ">10"
+  )) %>%
+  mutate(groups = fct_relevel(groups, c("<=1","2-3","4-10",">10")))
+
+ggplot() + 
+  geom_violin(data = df_cv_quality_abundance %>% filter(species=="Anopheles genus", data_tocollect == "To collect",weeks_before>0 ), aes(x=weeks_before , y=residuals)) + 
+  #geom_jitter(data = df, aes(x=groups , y=residuals), position = position_jitter(width = .15), size = 0.3) + 
+  stat_summary(data = df_cv_quality_abundance %>% filter(species=="Anopheles genus", data_tocollect == "To collect",weeks_before>0), aes(x=weeks_before , y=residuals), fun=median, geom="point", size=2, color="black") +
+  facet_wrap( code_pays ~ groups, ncol = 4, scales = "free") +
+  theme_bw() + 
+  xlab("Observed counts") + 
+  ylab("Residuals (obs - pred)") + 
+  # geom_label(data = df_metrics_perf,
+  #            size = 2.5,
+  #            mapping = aes(x = groups, y = max(df$residuals,na.rm = T), label = paste0('MAE = ',mae,'\nn = ',n),
+  #                          vjust = 1)) +
+  # ggtitle(spec) + 
+  geom_hline(yintercept=0, linetype="dashed") + 
+  theme(axis.title.x = element_text(size = 8),
+        axis.title.y = element_text(size = 8))
+
+
+## inter-changer les modèles BF et CI
+
+
+## variables retained
+
+
+
+
+
+
+
+## observed vs predicted
+

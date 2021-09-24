@@ -1758,7 +1758,7 @@ fun_compute_rf_old <- function(df, predictors, cv_type, mod, featureselect){
   fun_compute_rf <- function(df, predictors, cv_col, mod, featureselect = "false", species, tune_length = 10, type = 'explicative'){
   
   library(doParallel)
-  cl <- makePSOCKcluster(8)  # 8 si on utilise pas l'ordi a côté
+  cl <- makePSOCKcluster(7)  # 8 si on utilise pas l'ordi a côté
   registerDoParallel(cl)
   
   ###### create indices for cross-validation
@@ -1798,7 +1798,11 @@ fun_compute_rf_old <- function(df, predictors, cv_type, mod, featureselect){
     
     for(i in 1:length(ptcapt_nummiss)){
       indices_cv$index[[i]] <- which((df$codevillage != substr(ptcapt_nummiss[i],2,4)) & (df$nummission != substr(ptcapt_nummiss[i],0,1)))
+      if(which(df$ptcapt_nummiss == ptcapt_nummiss[i]) >1){
       indices_cv$indexOut[[i]] <- which(df$ptcapt_nummiss == ptcapt_nummiss[i])
+      } else {
+      indices_cv$indexOut[[i]] <- c(which(df$ptcapt_nummiss == ptcapt_nummiss[i]),NA)
+      }
     }
   }
   if(cv_col == "by_ptcapt4"){
@@ -1854,7 +1858,11 @@ fun_compute_rf_old <- function(df, predictors, cv_type, mod, featureselect){
     
     if(mod == "abundance"){
       met = "MAE"   # RMSE
-      df$resp_var <- log(df$resp_var)
+      if(type == 'explicative'){
+        df$resp_var <- log(df$resp_var)
+      } else if(type == 'predictive'){
+        df$resp_var <- log(df$resp_var)+1
+      }
     } else {
       met = "Accuracy"
       df$resp_var <- as.factor(df$resp_var)
@@ -1963,7 +1971,8 @@ fun_compute_rf_old <- function(df, predictors, cv_type, mod, featureselect){
     indices_cv_rfe <- CAST::CreateSpacetimeFolds(df, spacevar = "nummission",k = length(unique(unlist(df[,"nummission"]))))  # k = length(unique(df[,cv_col])
      #rfFuncs$summary <- prSummary
      control <- rfeControl(functions=rfFuncs, method="cv", index = indices_cv_rfe$index, indexOut = indices_cv_rfe$indexOut)
-     th_rfe <- rfe(df[,predictors], df$resp_var, rfeControl=control, sizes = seq(1,length(predictors),4), tuneLength =2, metric = met)
+     met = ifelse(mod=="presence","AUC","MAE")
+     th_rfe <- rfe(df[,predictors], df$resp_var, rfeControl=control, sizes = seq(1,length(predictors),3), tuneLength =2, metric = met, maximize = ifelse(met %in% c("RMSE", "logLoss", "MAE", "brier","Dist"), FALSE,TRUE))
   } else if(featureselect == "ffs"){
     th_mod <- CAST::ffs(predictors = df[,predictors], response = df$resp_var, method = "ranger", tuneLength =tune_length, trControl = tr, metric = met, maximize = ifelse(met %in% c("RMSE", "logLoss", "MAE", "brier","Dist"), FALSE,TRUE),  preProcess = c("center","scale"),importance = "permutation", local.importance = FALSE)
   } else if (featureselect == "false") {

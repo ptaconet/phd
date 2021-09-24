@@ -60,7 +60,7 @@ source("r_scripts/data_analysis_tests/functions_script_data_analysis.R")
 fun_workflow_model <- function(response_var, 
                                code_pays, 
                                mod, 
-                               lag_time_window = c(0,120),
+                               lag_time_window = c(0,60),
                                buffer_sizes = c(250,2000),
                                spatial_granularity = "idpointdecapture"){
   
@@ -191,7 +191,7 @@ fun_workflow_model <- function(response_var,
   } else if(code_pays=="CI"){
     predictors_spatial_tocollect <- c(predictors_spatial_tocollect,setdiff(c(colnames(env_landcover)[grepl("_8_",colnames(env_landcover))]),"idpointdepcapture"))
     predictors_spatial_tocollect <- setdiff(predictors_spatial_tocollect, predictors_spatial_tocollect[grepl("_8_12|8_13|8_10|8_3",predictors_spatial_tocollect)])
-    predictors_spatial_tocollect <- c(predictors_spatial_tocollect, "lsm_c_pland_100_7_6" , "lsm_c_pland_250_7_6","lsm_c_pland_2000_7_6")
+    predictors_spatial_tocollect <- c(predictors_spatial_tocollect,"lsm_c_pland_2000_7_6")
   }
   predictors_spatial_tocollect <- c(predictors_spatial_tocollect,predictors_spatial_opensource)
   
@@ -220,33 +220,36 @@ fun_workflow_model <- function(response_var,
     expl_vars_to_test = predictors_spatial_tocollect)
 
   spatial_corrs_spearman_opensource <- spatial_corrs_spearman_opensource %>%
-    top_n(20,abs_corr)
+    filter(name!="useless_col") %>%
+    top_n(20,abs_corr) 
+    
   
   spatial_corrs_spearman_tocollect <- spatial_corrs_spearman_tocollect %>%
+    filter(name!="useless_col") %>%
     top_n(20,abs_corr)
   
   ## temporal 
-    lags1 <- seq(7,112,7)
-    lags2 <- seq(20,112,7)
+    lags1 <- seq(0,112,7)
+    lags2 <- c(0,seq(27,112,7))
   
   rf_opensource <- list()
   rf_opensource_simple <- list()
   rf_tocollect <- list()
 
-    for(i in 1:length(lags1)){
+    for(i in 1:5){
     
-       cat(lags1[i],"\n")
+     cat(lags1[i],"\n")
       ## for rf_opensource and rf_tocollect : 
       
-  colnames_tempvar_lag1 <- fun_get_temporal_preds_columns(lags1[i],120,c("RFD1L", "TMIN1", "TMAX1", "SMO1" , "TAMP1"),7,th_trmetrics_entomo_postedecapture, c(2000))
-  colnames_tempvar_lag2 <- fun_get_temporal_preds_columns(lags2[i],120,c("VNV8" , "VEV8", "EVT8"),7,th_trmetrics_entomo_postedecapture, c(250,2000))
-  colnames_tempvar_lag3 <- fun_get_temporal_preds_columns(lags1[i],120,c("VNV30", "VMV30", "WNW30", "WVV10", "WVH10","DTL7"),7,th_trmetrics_entomo_postedecapture, c(250,2000))
+  colnames_tempvar_lag1 <- fun_get_temporal_preds_columns(lags1[i],60,c("RFD1L", "TMIN1", "TMAX1", "SMO1" , "TAMP1"),7,th_trmetrics_entomo_postedecapture, c(2000))
+  colnames_tempvar_lag2 <- fun_get_temporal_preds_columns(lags2[i],60,c("VNV8" , "VEV8", "EVT8"),7,th_trmetrics_entomo_postedecapture, c(250,2000))
+  colnames_tempvar_lag3 <- fun_get_temporal_preds_columns(lags1[i],60,c("VNV30", "VMV30", "WNW30", "WVV10", "WVH10","DTL7"),7,th_trmetrics_entomo_postedecapture, c(250,2000))
   
   expl_vars_to_test1 <- intersect(colnames_tempvar_lag1, colnames(th_trmetrics_entomo_postedecapture))
   expl_vars_to_test2 <- intersect(colnames_tempvar_lag2, colnames(th_trmetrics_entomo_postedecapture))
   expl_vars_to_test3 <- intersect(colnames_tempvar_lag3, colnames(th_trmetrics_entomo_postedecapture))
   
-  expl_vars_to_test <- c(expl_vars_to_test1, expl_vars_to_test2, expl_vars_to_test3)
+  expl_vars_to_test <- c(expl_vars_to_test1,expl_vars_to_test2, expl_vars_to_test3)
   
   temporal_corr_spearman <- fun_feature_forward_selection(
     df = th_trmetrics_entomo_postedecapture,
@@ -281,9 +284,9 @@ fun_workflow_model <- function(response_var,
   
   ## for rf_opensource_simple : 
 
-  colnames_tempvar_lag1 <- fun_get_temporal_preds_columns(lags1[i],120,c("RFD1L", "TMIN1", "TMAX1", "SMO1" , "TAMP1"),30,th_trmetrics_entomo_postedecapture, c(2000))
+  colnames_tempvar_lag1 <- fun_get_temporal_preds_columns(lags1[i],60,c("RFD1L", "TMIN1", "TMAX1", "SMO1" , "TAMP1"),30,th_trmetrics_entomo_postedecapture, c(2000))
   colnames_tempvar_lag2 <- fun_get_temporal_preds_columns(lags2[i],120,c("VNV8" , "VEV8", "EVT8"),30,th_trmetrics_entomo_postedecapture, c(250,2000))
-  colnames_tempvar_lag3 <- fun_get_temporal_preds_columns(lags1[i],120,c("VNV30", "VMV30", "WNW30", "WVV10", "WVH10","DTL7"),30,th_trmetrics_entomo_postedecapture, c(250,2000))
+  colnames_tempvar_lag3 <- fun_get_temporal_preds_columns(lags1[i],60,c("VNV30", "VMV30", "WNW30", "WVV10", "WVH10","DTL7"),30,th_trmetrics_entomo_postedecapture, c(250,2000))
   
   colnames_tempvar_lag1 = data.frame(name = colnames_tempvar_lag1)
   colnames_tempvar_lag2 = data.frame(name = colnames_tempvar_lag2)
@@ -296,7 +299,7 @@ fun_workflow_model <- function(response_var,
   colnames_tempvar_lag2$time_lag_1 <- as.numeric(sub('.*\\_', '', colnames_tempvar_lag2$name))
   colnames_tempvar_lag2$time_lag_2 <- as.numeric(stringr::str_match( colnames_tempvar_lag2$name, '([^_]+)(?:_[^_]+){1}$')[,2])
   colnames_tempvar_lag2$diff_lag <- colnames_tempvar_lag2$time_lag_1 - colnames_tempvar_lag2$time_lag_2
-  colnames_tempvar_lag2$var <- sub("\\_.*", "", colnames_tempvar_lag2$name) 
+  colnames_tempvar_lag2$var <- sub("\\_.*", "", colnames_tempvar_lag2$name)
   colnames_tempvar_lag3$time_lag_1 <- as.numeric(sub('.*\\_', '', colnames_tempvar_lag3$name))
   colnames_tempvar_lag3$time_lag_2 <- as.numeric(stringr::str_match( colnames_tempvar_lag3$name, '([^_]+)(?:_[^_]+){1}$')[,2])
   colnames_tempvar_lag3$diff_lag <- colnames_tempvar_lag3$time_lag_1 - colnames_tempvar_lag3$time_lag_2
@@ -310,7 +313,7 @@ fun_workflow_model <- function(response_var,
   expl_vars_to_test2 <- intersect(colnames_tempvar_lag2$name, colnames(th_trmetrics_entomo_postedecapture))
   expl_vars_to_test3 <- intersect(colnames_tempvar_lag3$name, colnames(th_trmetrics_entomo_postedecapture))
   
-  expl_vars_to_test <- c(expl_vars_to_test1, expl_vars_to_test2, expl_vars_to_test3)
+  expl_vars_to_test <- c(expl_vars_to_test1,expl_vars_to_test2, expl_vars_to_test3)
   
   temporal_corr_spearman <- fun_feature_forward_selection(
     df = th_trmetrics_entomo_postedecapture,
@@ -339,7 +342,7 @@ fun_workflow_model <- function(response_var,
 
 }
 
-  names(rf_opensource) <- names(rf_opensource_simple) <- names(rf_tocollect) <- paste0(as.character(lags1/7),"_week_before")
+  names(rf_opensource) <- names(rf_opensource_simple) <- names(rf_tocollect) <- paste0(seq(0,4,1),"_week_before")
 
   return(list(rf_opensource = rf_opensource, rf_tocollect = rf_tocollect, rf_opensource_simple = rf_opensource_simple))
 
@@ -362,7 +365,6 @@ df_input_params <- df_input_params %>%
   add_row(response_var = "ma_funestus_ss", code_pays = "CI", mod = "presence") %>%
   add_row(response_var = "ma_gambiae_sl", code_pays = "CI", mod = "abundance") %>%
   add_row(response_var = "ma_funestus_ss", code_pays = "CI", mod = "abundance") 
-tictoc::tic()
 model_results1 <- df_input_params[1,] %>%
   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
 model_results2 <- df_input_params[2,] %>%
@@ -371,7 +373,6 @@ model_results3 <- df_input_params[3,] %>%
   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
 model_results4 <- df_input_params[4,] %>%
   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
-tictoc::toc()
 model_results5 <- df_input_params[5,] %>%
   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
 model_results6 <- df_input_params[6,] %>%
@@ -398,8 +399,8 @@ model_results <- rbind(model_results1,model_results2,model_results3,model_result
 model_results <- model_results %>%
   mutate(rf_opensource = map(results, ~pluck(.,"rf_opensource"))) %>%
   mutate(rf_tocollect = map(results, ~pluck(.,"rf_tocollect"))) %>%
-  mutate(rf_opensource_simple = map(results, ~pluck(.,"rf_opensource_simple")))
+  mutate(rf_opensource_simple = map(results, ~pluck(.,"rf_opensource_simple"))) %>%
   dplyr::select(-results)
 
-  saveRDS(model_results,"/home/ptaconet/Bureau/data_analysis/model_results_predictive.rds")  
+  saveRDS(model_results,"/home/ptaconet/Bureau/data_analysis/model_results_predictive1.rds")  
   
