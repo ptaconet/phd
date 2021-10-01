@@ -307,8 +307,8 @@
           left_join(LUS) %>%
           left_join(time_since_vc) %>%
           mutate(pointdecapture2 = as.factor(paste0(codevillage,pointdecapture))) %>%
-          mutate(VCM = case_when(VCM == "Ctrle" ~ "LLIN",
-                                 VCM == "IEC" ~ "LLIN + IEC",
+          mutate(VCM = case_when(VCM %in% c("Ctrle","IEC") ~ "LLIN",
+                                 #VCM == "IEC" ~ "LLIN + IEC",
                                  VCM == "IRS" ~ "LLIN + IRS",
                                  VCM == "IVM" ~ "LLIN + IVM",
                                  VCM == 'Larvicide' ~ 'LLIN + Larv.')) %>%
@@ -387,7 +387,7 @@
             if(code_pays=="BF"){
               glmm_varstoforce <- c("VCM","VCT")
             } else if (code_pays=="CI"){
-              glmm_varstoforce <- c("VCM","VCT")
+              glmm_varstoforce <- c("VCM")
             }
 
                # correct RFH
@@ -414,7 +414,7 @@
             if(code_pays=="BF"){
               glmm_varstoforce <- c("VCM","VCT")
             } else if (code_pays=="CI"){
-              glmm_varstoforce <- c("VCM","VCT")
+              glmm_varstoforce <- c("VCM")
             }
 
             

@@ -224,7 +224,7 @@ fun_workflow_model <- function(response_var,
   
 }
 
-res <-  readRDS("/home/ptaconet/Bureau/data_analysis/model_results_predictive1.rds")
+res <-  readRDS("/home/ptaconet/Bureau/data_analysis/model_results_predictive2.rds")
   
 df_input_params <- tibble(response_var = character(), code_pays = character(), mod = character())
 df_input_params <- df_input_params %>%
@@ -242,37 +242,36 @@ df_input_params <- df_input_params %>%
   add_row(response_var = "ma_funestus_ss", code_pays = "CI", mod = "abundance") 
 
 
-model_results1 <- df_input_params[1,] %>%
+amodel_results1 <- df_input_params[1,] %>%
   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
- model_results2 <- df_input_params[2,] %>%
+ amodel_results2 <- df_input_params[2,] %>%
   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
-model_results3 <- df_input_params[3,] %>%
+amodel_results3 <- df_input_params[3,] %>%
   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
-model_results4 <- df_input_params[4,] %>%
+amodel_results4 <- df_input_params[4,] %>%
   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
-model_results5 <- df_input_params[5,] %>%
+amodel_results5 <- df_input_params[5,] %>%
   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
-model_results6 <- df_input_params[6,] %>%
+amodel_results6 <- df_input_params[6,] %>%
   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
-model_results7 <- df_input_params[7,] %>%
+amodel_results7 <- df_input_params[7,] %>%
   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
-model_results8 <- df_input_params[8,] %>%
+amodel_results8 <- df_input_params[8,] %>%
   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
-model_results9 <- df_input_params[9,] %>%
+amodel_results9 <- df_input_params[9,] %>%
   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
-model_results10 <- df_input_params[10,] %>%
+amodel_results10 <- df_input_params[10,] %>%
   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
-model_results11 <- df_input_params[11,] %>%
+amodel_results11 <- df_input_params[11,] %>%
   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
-model_results12 <- df_input_params[12,] %>%
+amodel_results12 <- df_input_params[12,] %>%
   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
 
-model_results <- rbind(model_results1,model_results2,model_results3,model_results4,model_results5,model_results6,model_results7,model_results8,model_results9,model_results10,model_results11,model_results12)
+amodel_results <- rbind(amodel_results1,amodel_results2,amodel_results3,amodel_results4,amodel_results5,amodel_results6,amodel_results7,amodel_results8,amodel_results9,amodel_results10,amodel_results11,amodel_results12)
 
-model_results <- model_results %>%
+amodel_results <- amodel_results %>%
   mutate(rf_opensource = map(results, ~pluck(.,"rf_opensource"))) %>%
-  mutate(rf_tocollect = map(results, ~pluck(.,"rf_tocollect"))) %>%
   mutate(rf_opensource_simple = map(results, ~pluck(.,"rf_opensource_simple"))) %>%
   dplyr::select(-results)
 
-saveRDS(model_results,"/home/ptaconet/Bureau/data_analysis/model_results_predictive_switch_areas.rds")  
+saveRDS(amodel_results,"/home/ptaconet/Bureau/data_analysis/model_results_predictive_switch_areas2.rds")  

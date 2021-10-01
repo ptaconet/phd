@@ -154,8 +154,9 @@ pdps <- res %>%
   mutate(response_var = case_when(
     response_var == "ma_funestus_ss" ~ "An. funestus",
     response_var == "ma_gambiae_ss" ~ "An. gambiae ss.",
+    response_var == "ma_gambiae_sl" ~ "An. gambiae sl.",
     response_var == "ma_coluzzi" ~ "An. coluzzii")) %>%
-  mutate(rf_plots = pmap(list(rf_llo,mod,response_var), ~fun_plot_pdp2(..1,..2,..3)))
+  mutate(rf_plots = pmap(list(rf,mod,response_var), ~fun_plot_pdp2(..1,..2,..3)))
 
 plot_fun <- wrap_plots(pdps$rf_plots[[1]]$pdps, pdps$rf_plots[[4]]$pdps, nrow = 2, ncol = 1) # funestus
 plot_gam <-wrap_plots(pdps$rf_plots[[2]]$pdps, pdps$rf_plots[[5]]$pdps, nrow = 2, ncol = 1) # gambiae ss.
@@ -171,10 +172,10 @@ ggsave("figure7.png",plot_col, path = "/home/ptaconet/phd/figures_article1", wid
 model_validation <- res %>%
   mutate(response_var = case_when(
     response_var == "ma_funestus_ss" ~ "An. funestus",
-    response_var == "ma_gambiae_ss" ~ "An. gambiae ss.",
+    response_var %in% c("ma_gambiae_ss","ma_gambiae_sl") ~ "An. gambiae ss.",
     response_var == "ma_coluzzi" ~ "An. coluzzii",
     response_var == "ma_an" ~ "all Anopheles")) %>%
-  mutate(df_cv = map(rf_llo, ~pluck(.,"df_cv"))) %>%
+  mutate(df_cv = map(rf, ~pluck(.,"df_cv"))) %>%
   dplyr::select(response_var, code_pays, mod, df_cv) %>%
   mutate(df_cv = map(df_cv, ~dplyr::select(., pred,obs, codevillage, nummission, pointdecapture, int_ext))) %>%
   mutate(df_cv = map2(df_cv,response_var, ~mutate(.x, species = .y))) %>%
@@ -221,7 +222,7 @@ wrap_plots(list(plots_validation_abundance$plots_validation[[1]],
 ###### resistances
 ######################
 
-  res <-  readRDS("/home/ptaconet/Bureau/data_analysis/model_results_resistances19.rds") %>%
+  res <-  readRDS("/home/ptaconet/Bureau/data_analysis/model_results_resistances20.rds") %>%
     mutate(response_var = case_when(
     response_var == "ma_funestus_ss" ~ "An. funestus",
     response_var == "ma_gambiae_ss" ~ "An. gambiae ss.",
@@ -378,10 +379,10 @@ write.csv(glmms_tab,"/home/ptaconet/phd/articles/article2/glmms_tab2.csv",row.na
         
           
           # all the plots
-          glmm_plots <- res %>% 
+          glmm_plots <- res %>% filter(code_pays=="CI") %>%
             mutate(model_plots = pmap(list(rf,glmm_aic, mod,response_var,code_pays), ~fun_plot_pdp5(..1,..2,..3,..4,..5,get_all_plots=TRUE)))
           
-            pmap(list(glmm_plots$model_plots,glmm_plots$response_var,glmm_plots$code_pays,glmm_plots$mod),~ggsave(paste(..2,..3,..4,"_fullmod",sep="_"),..1,"png",paste0("plots_resistance5_selectvar3/",..4),width = 1.4, height = 16.6, units = "in"))
+            pmap(list(glmm_plots$model_plots,glmm_plots$response_var,glmm_plots$code_pays,glmm_plots$mod),~ggsave(paste(..2,..3,..4,"_fullmod",sep="_"),..1,"png",paste0("plots_resistance5_selectvar2/",..4),width = 1.4, height = 16.6, units = "in"))
           
     
 # varimplot
@@ -563,7 +564,16 @@ r2 = MuMIn::r.squaredGLMM(res$glmm[[1]]$mod@model)
 ######################
 
 
-res <-  readRDS("/home/ptaconet/Bureau/data_analysis/model_results_predictive1.rds") %>%
+res <-  readRDS("/home/ptaconet/Bureau/data_analysis/model_results_predictive2.rds") %>%
+  mutate(response_var = case_when(
+    response_var == "ma_funestus_ss" ~ "An. funestus",
+    response_var == "ma_gambiae_ss" ~ "An. gambiae s.s.",
+    response_var == "ma_gambiae_sl" ~ "An. gambiae s.s.",
+    response_var == "ma_coluzzi" ~ "An. coluzzii",
+    response_var == "ma_an" ~ "Anopheles genus"))
+
+
+res_switch <-  readRDS("/home/ptaconet/Bureau/data_analysis/model_results_predictive_switch_areas2.rds") %>%
   mutate(response_var = case_when(
     response_var == "ma_funestus_ss" ~ "An. funestus",
     response_var == "ma_gambiae_ss" ~ "An. gambiae s.s.",
@@ -574,6 +584,7 @@ res <-  readRDS("/home/ptaconet/Bureau/data_analysis/model_results_predictive1.r
 # sur 1 meme plot : lineplot évolution des AUC selon les 3 modèles (opensource, opensource simple, tocollect). 
 
 df_cv <- NULL
+df_imp <- NULL
 
 for(i in 1:nrow(res)){
   
@@ -582,22 +593,51 @@ for(i in 1:nrow(res)){
    b <- res$rf_tocollect[[i]][[j]]$df_cv
    c <- res$rf_opensource_simple[[i]][[j]]$df_cv
    
-   a$data_tocollect <- "Open source - complex model"
-   b$data_tocollect <- "To collect"
-   c$data_tocollect <- "Open source - simple model"
-   a$weeks_before <-  b$weeks_before <-  c$weeks_before <- j - 1
-   a$mod <-  b$mod <-  c$mod <- res$mod[[i]]
-   a$code_pays <-  b$code_pays <-  c$code_pays <- res$code_pays[[i]]
-   a$species <-  b$species <-  c$species <- res$response_var[[i]]
+   if(i<13){
+   a1 <- res_switch$rf_opensource[[i]][[j]]$df_cv
+   c1 <- res_switch$rf_opensource_simple[[i]][[j]]$df_cv
+   }
    
-   df_cv <- bind_rows(df_cv,a,b,c)
+   imp_opensource <- as.data.frame(ranger::importance(res$rf_opensource[[i]][[j]]$mod$finalModel))
+   imp_tocollect <- as.data.frame(ranger::importance(res$rf_tocollect[[i]][[j]]$mod$finalModel))
+   imp_opensource_simple <- as.data.frame(ranger::importance(res$rf_opensource_simple[[i]][[j]]$mod$finalModel))
+   
+   imp_opensource$var <- rownames(imp_opensource)
+   colnames(imp_opensource) <- c("importance","var")
+   imp_tocollect$var <- rownames(imp_tocollect)
+   colnames(imp_tocollect) <- c("importance","var")
+   imp_opensource_simple$var <- rownames(imp_opensource_simple)
+   colnames(imp_opensource_simple) <- c("importance","var")
+   
+
+   a$data_tocollect <-  imp_opensource$data_tocollect <- "Open source - complex model"
+   b$data_tocollect <- imp_tocollect$data_tocollect <- "To collect"
+   c$data_tocollect <- imp_opensource_simple$data_tocollect <- "Open source - simple model"
+   a1$data_tocollect <-  imp_opensource$data_tocollect <- "Open source - complex model - trained on the other area"
+   c1$data_tocollect <- imp_opensource_simple$data_tocollect <- "Open source - simple model - trained on the other area"
+   
+   a$weeks_before <-  b$weeks_before <-  c$weeks_before <-  a1$weeks_before <-  c1$weeks_before <- imp_opensource$weeks_before <- imp_tocollect$weeks_before <- imp_opensource_simple$weeks_before <-  j - 1
+   a$mod <-  b$mod <-  c$mod <- imp_opensource$mod <- imp_tocollect$mod <- imp_opensource_simple$mod <- res$mod[[i]]
+   a$code_pays <-  b$code_pays <-  c$code_pays <-   imp_opensource$code_pays <- imp_tocollect$code_pays <- imp_opensource_simple$code_pays <- res$code_pays[[i]]
+   a$species <-  b$species <-  c$species <-  imp_opensource$species <- imp_tocollect$species <- imp_opensource_simple$species <- res$response_var[[i]]
+   
+   if(i<13){
+     a1$mod <- c1$mod <- res_switch$mod[[i]]
+     a1$code_pays <- c1$code_pays <- res_switch$code_pays[[i]]
+     a1$species <-  c1$species <- res_switch$response_var[[i]]
+      df_cv <- bind_rows(df_cv,a,b,c,a1,c1)
+   } else {
+     df_cv <- bind_rows(df_cv,a,b,c)
+   }
+   
+   df_imp <- bind_rows(df_imp,imp_opensource,imp_tocollect,imp_opensource_simple)
    
   }
 
 }
 
 df_cv <- df_cv %>%
-  mutate(data_tocollect = fct_relevel(data_tocollect,c("To collect","Open source - complex model","Open source - simple model"))) %>%
+  mutate(data_tocollect = fct_relevel(data_tocollect,c("To collect","Open source - complex model","Open source - simple model","Open source - complex model - trained on the other area","Open source - simple model - trained on the other area"))) %>%
   mutate(species = fct_relevel(species,c("Anopheles genus","An. gambiae s.s.","An. funestus","An. coluzzii")))
   
 
@@ -615,7 +655,20 @@ df_cv_quality_presence <-  df_cv %>%
   mutate(sensitivity = as.numeric(map(perf_metrics, ~pluck(.,"sensitivity")))) %>%
   dplyr::select(-c(data,perf_metrics))
 
-ggplot(df_cv_quality_presence, aes(x=weeks_before,y=AUC,colour=data_tocollect )) + geom_line() +  geom_point() + facet_wrap(species~code_pays, ncol = 2 ) + ylim(c(0.5,0.1)) + theme_light() + theme(legend.position="bottom")
+p1=ggplot(df_cv_quality_presence, aes(x=weeks_before,y=AUC,colour=data_tocollect )) +  
+  annotate("rect", xmin=-Inf, xmax=Inf, ymin= 0.5, ymax=0.65, alpha=0.2, fill="red") +
+  annotate("rect", xmin=-Inf, xmax=Inf, ymin= 0.65, ymax=0.85, alpha=0.2, fill="blue") +
+  annotate("rect", xmin=-Inf, xmax=Inf, ymin= 0.85, ymax=1, alpha=0.2, fill="green") + 
+  geom_line() +  geom_point() + facet_wrap(species~code_pays, ncol = 2 ) + ylim(c(0.5,1)) + theme_light() + theme(legend.position="bottom")
+  
+df_cv_quality_presence2 <- df_cv %>%
+  filter(mod=="presence") %>%
+  group_by(species,data_tocollect, weeks_before,nummission,code_pays,mod, codevillage) %>%
+  summarise(pred=sum(pred), obs=sum(obs)) %>%
+  pivot_longer(c(pred,obs))
+
+p2 = ggplot(df_cv_quality_presence2 %>% filter(weeks_before == 0, code_pays == "CI", species == "An. gambiae s.s.", data_tocollect == "To collect"), aes(x=nummission,y=value,colour=name)) + geom_line(aes(group=name)) +  geom_point() + facet_wrap(.~codevillage) + theme_light()
+
 
 # abondance
 df_cv_quality_abundance <- df_cv %>%
@@ -628,17 +681,24 @@ filter(mod=="abundance") %>%
             rsq =  round(MLmetrics::R2_Score(y_true = obs ,y_pred = pred),2)) %>%
   as_tibble()
 
-ggplot(df_cv_quality_abundance, aes(x=weeks_before,y=mae,colour=data_tocollect)) + geom_line() +  geom_point() + facet_wrap(species~code_pays, ncol = 2 ) + theme_light() + theme(legend.position="bottom")
+ggplot(df_cv_quality_abundance, aes(x=weeks_before,y=mae,colour=data_tocollect)) + geom_line() +  geom_point() + facet_wrap(species~code_pays, ncol = 2, scales = 'free' ) + theme_light() + theme(legend.position="bottom")
 
 
 df_cv_quality_abundance <- df_cv %>%
   filter(mod=="abundance") %>%
-  mutate(pred=exp(pred-1),obs=exp(obs-1)) %>%
+  #mutate(pred=exp(pred-1),obs=exp(obs-1)) %>%
   group_by(species,data_tocollect, weeks_before,nummission,code_pays,mod, codevillage) %>%
   summarise(pred=sum(pred), obs=sum(obs)) %>%
   pivot_longer(c(pred,obs))
 
-ggplot(df_cv_quality_abundance %>% filter(weeks_before == 0, code_pays == "BF", species == "Anopheles genus", data_tocollect == "To collect"), aes(x=nummission,y=value,colour=name)) + geom_line(aes(group=name)) +  geom_point() + facet_wrap(.~codevillage) + theme_light()
+ggplot(df_cv_quality_abundance %>% filter(weeks_before == 0, code_pays == "CI", species == "Anopheles genus", data_tocollect == "To collect"), aes(x=nummission,y=value,colour=name)) + geom_line(aes(group=name)) +  geom_point() + facet_wrap(.~codevillage) + theme_light()
+
+df_cv_quality_abundance <- df_cv %>%
+  filter(mod=="abundance") %>%
+  #mutate(pred=exp(pred-1),obs=exp(obs-1)) %>%
+  pivot_longer(c(pred,obs))
+
+ggplot(df_cv_quality_abundance %>% filter(weeks_before == 0, code_pays == "CI", species == "Anopheles genus", data_tocollect == "Open source - simple model"), aes(x=nummission,y=value,colour=name)) + geom_boxplot()  + facet_wrap(.~codevillage) + theme_light()
 
 
 df_cv_quality_abundance <- df_cv %>%
@@ -648,17 +708,18 @@ df_cv_quality_abundance <- df_cv %>%
   mutate(groups = case_when(obs<=1 ~ "<=1",
                             obs>1 & obs<=3 ~ "2-3",
                             obs>3 & obs<=10 ~ "4-10",
-                            obs>10 ~ ">10"
+                            obs>10 & obs<=50 ~ "11-50",
+                            obs>50 ~ ">50"
   )) %>%
-  mutate(groups = fct_relevel(groups, c("<=1","2-3","4-10",">10")))
+  mutate(groups = fct_relevel(groups, c("<=1","2-3","4-10","11-50",">50")))
 
 ggplot() + 
-  geom_violin(data = df_cv_quality_abundance %>% filter(species=="Anopheles genus", data_tocollect == "To collect",weeks_before>0 ), aes(x=weeks_before , y=residuals)) + 
-  #geom_jitter(data = df, aes(x=groups , y=residuals), position = position_jitter(width = .15), size = 0.3) + 
-  stat_summary(data = df_cv_quality_abundance %>% filter(species=="Anopheles genus", data_tocollect == "To collect",weeks_before>0), aes(x=weeks_before , y=residuals), fun=median, geom="point", size=2, color="black") +
-  facet_wrap( code_pays ~ groups, ncol = 4, scales = "free") +
+  geom_boxplot(data = df_cv_quality_abundance %>% filter(species=="Anopheles genus", data_tocollect == "To collect",weeks_before>0 ), aes(x=weeks_before , y=residuals, group = weeks_before)) + 
+  geom_jitter(data = df_cv_quality_abundance %>% filter(species=="Anopheles genus", data_tocollect == "To collect",weeks_before>0) , aes(x=weeks_before , y=residuals, group = weeks_before), position = position_jitter(width = .15), size = 0.3) + 
+  #stat_summary(data = df_cv_quality_abundance %>% filter(species=="Anopheles genus", data_tocollect == "To collect",weeks_before>0), aes(x=weeks_before , y=residuals), fun=median, geom="point", size=2, color="black") +
+  facet_wrap( code_pays ~ groups, ncol = 5, scales = "free") +
   theme_bw() + 
-  xlab("Observed counts") + 
+  xlab("Weeks before") + 
   ylab("Residuals (obs - pred)") + 
   # geom_label(data = df_metrics_perf,
   #            size = 2.5,
@@ -673,13 +734,29 @@ ggplot() +
 ## inter-changer les modèles BF et CI
 
 
-## variables retained
+## variables retained and var imp
+df_imp <- fun_get_predictors_labels(table = df_imp, vector_predictors_name = "var")
 
+df_imp <- df_imp %>%
+  group_by(label,label_group,data_tocollect,weeks_before,mod,code_pays,species) %>%
+  summarise(importance = sum(importance))
 
-
-
-
-
+ggplot(df_imp %>% filter(mod=="presence", code_pays=="BF", data_tocollect == "Open source - complex model"), aes(x=weeks_before,y=label, fill = sqrt(importance), group = label_group)) + geom_tile(color = "white", show.legend = TRUE, size = 0.4) + facet_grid(rows = "label_group", scales = "free") +  theme_bw() + scale_fill_continuous(type = "viridis")
+ggplot(df_imp %>% filter(mod=="presence", code_pays=="BF", data_tocollect == "Open source - complex model"), aes(x=weeks_before,y=label, size = importance, group = label_group)) + geom_point() + facet_grid(rows = "label_group", scales = "free") +  theme_bw()
 
 ## observed vs predicted
+
+
+
+## maps obs. vs. pred
+df_cv_quality_abundance <- df_cv %>%
+  filter(mod=="abundance") %>%
+  #mutate(pred=exp(pred-1),obs=exp(obs-1)) %>%
+  group_by(species,data_tocollect, weeks_before,nummission,code_pays,mod, codevillage) %>%
+  summarise(pred=sum(pred), obs=sum(obs)) %>%
+  pivot_longer(c(pred,obs))
+
+m1 <- fun_map2("BF",df_cv_quality_abundance %>% filter(species=="Anopheles genus", data_tocollect == "To collect"))
+m2 <- fun_map2("CI",df_cv_quality_abundance %>% filter(species=="Anopheles genus", data_tocollect == "To collect"))
+
 

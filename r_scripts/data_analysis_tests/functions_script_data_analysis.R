@@ -1758,7 +1758,7 @@ fun_compute_rf_old <- function(df, predictors, cv_type, mod, featureselect){
   fun_compute_rf <- function(df, predictors, cv_col, mod, featureselect = "false", species, tune_length = 10, type = 'explicative'){
   
   library(doParallel)
-  cl <- makePSOCKcluster(7)  # 8 si on utilise pas l'ordi a côté
+  cl <- makePSOCKcluster(8)  # 8 si on utilise pas l'ordi a côté
   registerDoParallel(cl)
   
   ###### create indices for cross-validation
@@ -1789,20 +1789,21 @@ fun_compute_rf_old <- function(df, predictors, cv_type, mod, featureselect){
      }
    }
   if(cv_col == "by_ptcapt3"){
+    
+    if(mod=="abundance" & species == "ma_coluzzi"){
+      df <- bind_rows(df,df[1,])
+      df <- df[-1,]
+    }
+    
     uniques_pointdepcapt <- table(df$codevillage)
     uniques_pointdepcapt <- sort(uniques_pointdepcapt, decreasing = T)
     uniques_pointdepcapt <- names(uniques_pointdepcapt)
     indices_cv <- NULL
     df$ptcapt_nummiss <- paste0(df$nummission,df$codevillage)
     ptcapt_nummiss <- unique(paste0(df$nummission,df$codevillage))
-    
     for(i in 1:length(ptcapt_nummiss)){
       indices_cv$index[[i]] <- which((df$codevillage != substr(ptcapt_nummiss[i],2,4)) & (df$nummission != substr(ptcapt_nummiss[i],0,1)))
-      if(which(df$ptcapt_nummiss == ptcapt_nummiss[i]) >1){
       indices_cv$indexOut[[i]] <- which(df$ptcapt_nummiss == ptcapt_nummiss[i])
-      } else {
-      indices_cv$indexOut[[i]] <- c(which(df$ptcapt_nummiss == ptcapt_nummiss[i]),NA)
-      }
     }
   }
   if(cv_col == "by_ptcapt4"){
@@ -1888,9 +1889,10 @@ fun_compute_rf_old <- function(df, predictors, cv_type, mod, featureselect){
       return(out)
     }
     
-    if(mod=='presence' & species=="ma_gambiae_sl" & type == 'explicative'){
-      df$resp_var <- ifelse(df$resp_var==0,"Presence","Absence")
-    } else if(mod != "physiological_resistance_kdrw"){
+    # if(mod=='presence' & species=="ma_gambiae_sl" & type == 'explicative'){
+    #   df$resp_var <- ifelse(df$resp_var==0,"Presence","Absence")
+    # } else 
+    if(mod != "physiological_resistance_kdrw"){
     df$resp_var <- ifelse(df$resp_var==0,"Absence","Presence")
     } else {
       df$resp_var <- ifelse(df$resp_var==0,"Presence","Absence")
@@ -1903,6 +1905,9 @@ fun_compute_rf_old <- function(df, predictors, cv_type, mod, featureselect){
       if(type == "explicative"){
        met = "PR_AUC"
       } else if(type == "predictive"){
+        met = "ROC_AUC"
+      } 
+      if(mod=='presence' & species=="ma_gambiae_sl" & type == 'explicative'){
         met = "ROC_AUC"
       }
     } else if(mod %in% c("exophagy")){
@@ -1969,8 +1974,10 @@ fun_compute_rf_old <- function(df, predictors, cv_type, mod, featureselect){
   th_rfe = NULL
   if(featureselect == "rfe"){
     indices_cv_rfe <- CAST::CreateSpacetimeFolds(df, spacevar = "nummission",k = length(unique(unlist(df[,"nummission"]))))  # k = length(unique(df[,cv_col])
-     #rfFuncs$summary <- prSummary
-     control <- rfeControl(functions=rfFuncs, method="cv", index = indices_cv_rfe$index, indexOut = indices_cv_rfe$indexOut)
+    if(mod=="presence"){ 
+      #rfFuncs$summary <- prSummary   -> to use the AUC 
+    } 
+    control <- rfeControl(functions=rfFuncs, method="cv", index = indices_cv_rfe$index, indexOut = indices_cv_rfe$indexOut)
      met = ifelse(mod=="presence","AUC","MAE")
      th_rfe <- rfe(df[,predictors], df$resp_var, rfeControl=control, sizes = seq(1,length(predictors),3), tuneLength =2, metric = met, maximize = ifelse(met %in% c("RMSE", "logLoss", "MAE", "brier","Dist"), FALSE,TRUE))
   } else if(featureselect == "ffs"){
@@ -1986,6 +1993,13 @@ fun_compute_rf_old <- function(df, predictors, cv_type, mod, featureselect){
    
   if(type=='predictive'){
     optimal_variables <- th_rfe$optVariables
+    met = ifelse(mod=="presence","ROC_AUC","MAE")
+    # calculate weigths
+    # weights <- as.data.frame(table(df$resp_var))
+    # weights$w <- nrow(df)/weights$Freq
+    # df$resp_var_char = as.character(df$resp_var)
+    # df <- left_join(df,weights, by = c("resp_var_char" = "Var1"))
+    # model
     th_mod <- caret::train(x = df[,optimal_variables], y = df$resp_var, method = "ranger", tuneLength = tune_length, trControl = tr, metric = met, maximize = ifelse(met %in% c("RMSE", "logLoss", "MAE", "brier","Dist"), FALSE,TRUE),  preProcess = c("center","scale"),importance = "permutation", local.importance = FALSE) #importance = "impurity_corrected" 
   }
   

@@ -81,9 +81,9 @@ fun_workflow_model <- function(response_var,
   
   
   if(code_pays == "BF"){
-    landcover_layers_to_keep <- c(2,3,11)
+    landcover_layers_to_keep <- c(2,3,4,11)
   } else if (code_pays == "CI"){
-    landcover_layers_to_keep <- c(7,8,11)
+    landcover_layers_to_keep <- c(7,8,9,11)
   }
 
   landcover_metrics_to_keep <- c("pland","prd")
@@ -173,6 +173,12 @@ fun_workflow_model <- function(response_var,
   th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>%
     mutate_at(cols_miss_vals,funs(ifelse(is.na(.), mean(., na.rm = TRUE), .)))
   
+  cols_miss_vals <- names(which(sapply(th_trmetrics_entomo_postedecapture, anyNaN)))
+  th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>%
+    mutate_at(cols_miss_vals,funs(ifelse(is.nan(.), mean(., na.rm = TRUE), .)))
+  
+  
+  rf_opensource <- rf_tocollect <- rf_opensource_simple <- NULL
   #### set variables to keep for modeling
   
   predictors_temporal <- c("RFD1L","TMIN1","TMAX1","SMO1","TAMP1","VNV8","VEV8","EVT8","VNV30","VMV30","WNW30","WVV10","WVH10","DTL7")
@@ -185,11 +191,11 @@ fun_workflow_model <- function(response_var,
   predictors_spatial_tocollect <- colnames(th_trmetrics_entomo_postedecapture)[grepl("POP|HYS|BCH|BDE",colnames(th_trmetrics_entomo_postedecapture))]
   predictors_spatial_tocollect <- c(predictors_spatial_tocollect, c("VCM","VCT","LUS"))
   if(code_pays=="BF"){
-    predictors_spatial_tocollect <- c(predictors_spatial_tocollect,setdiff(c(colnames(env_landcover)[grepl("_3_",colnames(env_landcover))]),"idpointdepcapture"))
+    predictors_spatial_tocollect <- c(predictors_spatial_tocollect,setdiff(c(colnames(env_landcover)[grepl("_3_|_4_",colnames(env_landcover))]),"idpointdepcapture"))
     predictors_spatial_tocollect <- setdiff(predictors_spatial_tocollect, predictors_spatial_tocollect[grepl("_3_12|3_5|3_10|3_6",predictors_spatial_tocollect)])
     predictors_spatial_tocollect <- c(predictors_spatial_tocollect, "lsm_c_pland_100_2_5", "lsm_c_pland_250_2_5","lsm_c_pland_2000_2_5")
   } else if(code_pays=="CI"){
-    predictors_spatial_tocollect <- c(predictors_spatial_tocollect,setdiff(c(colnames(env_landcover)[grepl("_8_",colnames(env_landcover))]),"idpointdepcapture"))
+    predictors_spatial_tocollect <- c(predictors_spatial_tocollect,setdiff(c(colnames(env_landcover)[grepl("_8_|_9_",colnames(env_landcover))]),"idpointdepcapture"))
     predictors_spatial_tocollect <- setdiff(predictors_spatial_tocollect, predictors_spatial_tocollect[grepl("_8_12|8_13|8_10|8_3",predictors_spatial_tocollect)])
     predictors_spatial_tocollect <- c(predictors_spatial_tocollect,"lsm_c_pland_2000_7_6")
   }
@@ -344,6 +350,7 @@ fun_workflow_model <- function(response_var,
 
   names(rf_opensource) <- names(rf_opensource_simple) <- names(rf_tocollect) <- paste0(seq(0,4,1),"_week_before")
 
+
   return(list(rf_opensource = rf_opensource, rf_tocollect = rf_tocollect, rf_opensource_simple = rf_opensource_simple))
 
 }
@@ -383,8 +390,8 @@ model_results8 <- df_input_params[8,] %>%
   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
 model_results9 <- df_input_params[9,] %>%
   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
-model_results10 <- df_input_params[10,] %>%
-  mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
+ model_results10 <- df_input_params[10,] %>%
+   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
 model_results11 <- df_input_params[11,] %>%
   mutate(results = pmap(list(response_var, code_pays, mod), ~fun_workflow_model(..1,..2,..3)))
 model_results12 <- df_input_params[12,] %>%
@@ -402,5 +409,10 @@ model_results <- model_results %>%
   mutate(rf_opensource_simple = map(results, ~pluck(.,"rf_opensource_simple"))) %>%
   dplyr::select(-results)
 
-  saveRDS(model_results,"/home/ptaconet/Bureau/data_analysis/model_results_predictive1.rds")  
+  saveRDS(model_results,"/home/ptaconet/Bureau/data_analysis/model_results_predictive3.rds")  
+  
+  # model_results_predictive1.rds : rfe optimized with AUC
+  # model_results_predictive2.rds : rfe optimized with Accuracy and landcover at level 3
+  # model_results_predictive3.rds : rfe optimized with Accuracy and landcover at level 4
+  
   

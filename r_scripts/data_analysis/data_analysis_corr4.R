@@ -175,11 +175,11 @@
     if(code_pays=="BF"){
       predictors <- setdiff(c(colnames(env_landcover)[grepl("_3_",colnames(env_landcover))], "lsm_c_pland_250_2_5","lsm_c_pland_500_2_5","lsm_c_pland_1000_2_5","lsm_c_pland_2000_2_5",colnames(env_spatial), "WMD"),"idpointdecapture")
       predictors <- setdiff(predictors, predictors[grepl("_3_12|3_5",predictors)])
-      predictors <- predictors[!grepl('TSL|TEL|TAS|TCI|TWI|WAL|HYS|LIG30|POH|POP', predictors)]
+      predictors <- predictors[!grepl('WAC|WAD|TSL|TEL|TAS|TCI|TWI|WAL|HYS|LIG30|POH|POP', predictors)]
       
-      predictors <- c(predictors, "NMT"  , "NMH"  , "NMA",  "RFH" ,  "WSP"  ,  "LMN")
-      predictors <- c(predictors, "LUS"  , "HBI2"  , "HBB2",  "VCT" ,  "VCT2")
-      predictors <- c(predictors, "BDE")
+      # predictors <- c(predictors, "NMT"  , "NMH"  , "NMA",  "RFH" ,  "WSP"  ,  "LMN")
+      # predictors <- c(predictors, "LUS"  , "HBI2"  , "HBB2",  "VCT" ,  "VCT2")
+       predictors <- c(predictors, "BDE")
       
       } else if(code_pays=="CI"){
         
@@ -187,8 +187,8 @@
       predictors <- setdiff(predictors, predictors[grepl("_8_12|8_13",predictors)])
       predictors <- predictors[!grepl('TSL|TEL|TAS|TCI|TWI|WAL|HYS|LIG30|POH', predictors)]
     
-      predictors <- c(predictors, "NMT"  , "NMH"  , "NMA",  "RFH" ,  "WSP"  ,  "LMN")
-      predictors <- c(predictors, "LUS"  , "HBI2"  , "HBB2" ,  "VCT2")
+      # predictors <- c(predictors, "NMT"  , "NMH"  , "NMA",  "RFH" ,  "WSP"  ,  "LMN")
+      # predictors <- c(predictors, "LUS"  , "HBI2"  , "HBB2" ,  "VCT2")
       predictors <- c(predictors, "BDE")
       
       }
@@ -299,6 +299,13 @@
     }
   
    ###################### DECOCHER
+    
+    if(code_pays=="BF"){
+      threshold_corr <- 0.1
+    } else if(code_pays=="CI"){
+      threshold_corr <- 0.08
+    }
+    
    spatial_corrs_spearman2 <- spatial_corrs_spearman %>%
      mutate(stock = rownames(.)) %>%
      mutate(name = gsub("_"," ",stock)) %>%
@@ -306,7 +313,7 @@
      mutate(buffer = as.numeric(word(name,4))) %>%
      mutate(layer_id = as.numeric(word(name,5))) %>%
      mutate(pixval = as.numeric(word(name,6))) %>%
-     filter(!is.na(buffer), p <0.2, abs_corr>0.1) %>%
+     filter(!is.na(buffer), p <0.2, abs_corr>threshold_corr) %>%
      group_by(layer_id,pixval) %>%
      nest() %>%
      mutate(m = map(data, ~which.max(.$abs_corr))) %>%
@@ -319,12 +326,7 @@
      purrr::map_chr(.,~rownames(.)[which.max(.$abs_corr)])
 
    predictors <- unique(c(cols_to_keep_spacevar, cols_to_keep_timevar,
-                           "WMD","WLS_2000"))
-
-
-
-   
-   
+                           "WMD","WLS_2000","VCM","int_ext"))
    
    
     # if(mod=="presence"){
@@ -377,9 +379,13 @@
     #                        cols_to_keep_timevar))
     
     if(code_pays=="BF"){
+      if(!any(grepl("_2_5",predictors))){
       predictors <- unique(c(predictors,"lsm_c_pland_2000_2_5"))#,"lsm_c_pland_2000_3_9"))
+      }
     } else if(code_pays=="CI"){
+      if(!any(grepl("_7_6",predictors))){
       predictors <- unique(c(predictors,"lsm_c_pland_2000_7_6"))#,"lsm_c_pland_2000_8_11"))
+      }
     }
 
     

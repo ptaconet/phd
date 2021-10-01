@@ -36,7 +36,8 @@ fun_get_predictors_labels <- function(table = NULL, vector_predictors_name = NUL
       dplyr::arrange(code) %>%
       dplyr::mutate(group = ifelse(short_name %in% c("Marsh","Riparian forests","Still waters"), "Landscape - wetlands","Landscape - other")) %>%
       dplyr::mutate(unit = "% land.") %>%
-      dplyr::select(code,short_name,short_name_detail,group,unit)
+      dplyr::select(code,short_name,short_name_detail,group,unit) %>%
+      distinct()
   }
   
   if(length(vector_predictors_vcm)>0){
@@ -61,9 +62,9 @@ fun_get_predictors_labels <- function(table = NULL, vector_predictors_name = NUL
       vector_predictors_past_climatic_conditions <- vector_predictors_past_climatic_conditions %>%
         mutate(day_start = as.numeric(word(code,3,sep = "\\_"))) %>%
         mutate(day_end = as.numeric(word(code,4,sep = "\\_"))) %>%
-        mutate(day_start = ifelse(grepl("TMIN1|TMAX1|TAMP1|RFD1|SMO1",code),day_start/7,day_start)) %>%
-        mutate(day_end = ifelse(grepl("TMIN1|TMAX1|TAMP1|RFD1|SMO1",code),day_end/7,day_end)) %>%
-        mutate(short_name_detail = paste0(short_name, "\nb/w ",day_start," and ",day_end," weeks")) %>%
+        mutate(day_start = ifelse(grepl("TMIN1|TMAX1|TAMP1|RFD1F|RFD1L|SMO1",code),day_start/7,day_start)) %>%
+        mutate(day_end = ifelse(grepl("TMIN1|TMAX1|TAMP1|RFD1F|RFD1L|SMO1",code),day_end/7,day_end)) %>%
+        mutate(short_name_detail = paste0(short_name, "\nb/w ",trunc(day_start)," and ",trunc(day_end)," weeks")) %>%
         dplyr::select(-c(day_start,day_end))
     } else {
       vector_predictors_past_climatic_conditions = NULL
@@ -1051,10 +1052,105 @@ fun_plot_validation_abundance <- function(df, spec){
 
 #### plot general data viz
 
-fun_map <- function(mod,code_pays,response_var){
+fun_map2 <- function(codepays,df_cv2,interactive){
+  
+  df_obs <- df_cv2 %>%
+    as_tibble %>%
+    filter(name=="obs") %>%
+    filter(code_pays==codepays) %>%
+    dplyr::select(-weeks_before) %>%
+    distinct() %>%
+    mutate(weeks_before="obs")
+    
+  df_cv2 <- df_cv2 %>%
+    filter(name!="obs", weeks_before>0) %>%
+    mutate(weeks_before=as.character(weeks_before)) %>%
+    bind_rows(df_obs) %>%
+    mutate(weeks_before=as.factor(weeks_before)) %>%
+    mutate(weeks_before=fct_relevel(weeks_before, c("obs","1","2","3","4"))) %>%
+    filter(code_pays==codepays) %>%
+    dplyr::select(-name) %>%
+    as_tibble()
+
+  ## map
+  roi <- sf::st_read(path_to_db,"contexte_frontieresreact") %>% 
+    filter(codepays == codepays) %>%
+    sf::st_transform(4326) %>%
+    sf::st_bbox() %>%
+    as.numeric()
+  
+  myLocation <- c(roi[1], roi[2], roi[3], roi[4])
+  myMap <- get_map(location=myLocation, source="osm",crop=FALSE)
+  
+  entomo_csh_metadata_l1 <- dbReadTable(react_gpkg, 'entomo_csh_metadata_l1') %>% 
+    dplyr::select(-geom) %>%
+    filter(!(nummission %in% c("11","12","13","15")))
+  
+  mean_date_mission <- entomo_csh_metadata_l1 %>% 
+    mutate(date_capture = as.Date(date_capture)) %>% 
+    dplyr::group_by(codepays,nummission) %>% 
+    dplyr::summarise(mean_date_mission=mean(date_capture)) %>% 
+    as_tibble() %>% filter(codepays==code_pays) %>% 
+    dplyr::select(-codepays) %>% 
+    mutate(date_mission_char = paste0(nummission, " - ", lubridate::month(mean_date_mission,label=TRUE, abbr=FALSE, locale = "en_US.utf8"), " ",lubridate::year(mean_date_mission)))  %>%  
+    mutate(date_mission_char = forcats::fct_reorder(date_mission_char,mean_date_mission))
   
   
-  fun_map <- function(code_pays,tit){
+  # load coordinates
+  spatial_coordinates <- load_csh_sp_coord()
+  mean_coords_points_4326 <- spatial_coordinates[[1]] %>% group_by(codevillage) %>% summarise(X4326=mean(X4326), Y4326 = mean(Y4326)) %>% as_tibble()
+  
+  df_map <- df_cv2 %>%
+    left_join(mean_date_mission) %>%
+    left_join(mean_coords_points_4326)
+  
+  
+  villages <- dbReadTable(react_gpkg, 'recensement_villages_l1') %>%
+    dplyr::select(-geom) %>%
+    dplyr::filter(!is.na(intervention),codepays == code_pays)
+  
+  if(interactive==FALSE){
+  m <- ggmap(myMap) + geom_point(aes(x = X, y = Y), data = villages, size = 0.6, color = "seagreen4") + 
+    geom_point(aes(x = X4326, y = Y4326, size = value), data = df_map, colour = "darkred") + 
+    facet_grid(weeks_before~date_mission_char) + 
+    theme(strip.text.y = element_text(size = 8, face = "bold"),
+          strip.text.x = element_text(size = 7),
+          axis.title.x = element_text(size = 6),
+          axis.title.y = element_text(size = 8),
+          axis.text.x = element_text(size = 4),
+          axis.text.y = element_text(size = 4),
+          legend.title = element_text(size = 7),
+          legend.text = element_text(size = 6)) + 
+    ggtitle(ifelse(code_pays=="BF","","Biting rate of the main vectors in each village and entomological survey")) + 
+    labs(subtitle = "d", caption = ifelse(code_pays=="CI","","Unit: average number of bites / human / night. Blue dots indicate absence of bite in the village for the considered survey. Background layer: OpenStreetMap"))
+  # ggsn::scalebar(dist = 5, dist_unit = "km",
+  #                transform = TRUE, model = "WGS84", 
+  #                height = 0.01, st.size	=2.5,st.dist = 0.03,
+  #                x.min = myLocation[1], x.max = myLocation[2] , y.min = myLocation[3],y.max = myLocation[4],
+  #                border.size = 0.5
+  # )
+  } else {
+    library(tmap)
+    library(sf)
+    df_map2 <- df_map %>% 
+      #pivot_wider(weeks_before) %>%
+      st_as_sf(coords = c("X4326", "Y4326"), crs = 4326) %>%
+      filter(date_mission_char=="1 - January 2017")
+    
+    tmap_mode("view")
+    m <- tm_shape(df_map2) +
+      tm_bubbles(size = "value") +
+      tm_facets(by = "weeks_before")
+    
+  }
+  
+  return(m)
+  
+}
+
+
+
+fun_map <- function(code_pays,tit){
   ## map
   roi <- sf::st_read(path_to_db,"contexte_frontieresreact") %>% 
     filter(codepays == code_pays) %>%
@@ -1095,8 +1191,8 @@ fun_map <- function(mod,code_pays,response_var){
   
   exo_byvillage <- dbReadTable(react_gpkg, 'entomo_idmoustiques_l0') %>%
     filter(codepays == code_pays) %>%
-   # filter(pcr_espece %in% c( "An.funestus_ss", "An.coluzzii", "An.gambiae_ss"), nummission <10) %>%
-  #  group_by(nummission, codepays, codevillage, postedecapture,pcr_espece) %>%
+    # filter(pcr_espece %in% c( "An.funestus_ss", "An.coluzzii", "An.gambiae_ss"), nummission <10) %>%
+    #  group_by(nummission, codepays, codevillage, postedecapture,pcr_espece) %>%
     filter(especeanoph %in% c("An.funestus", "An.gambiae s.l.")) %>%
     group_by(nummission, codepays, codevillage, postedecapture,especeanoph) %>%
     summarise(n=n()) %>%
@@ -1160,13 +1256,11 @@ fun_map <- function(mod,code_pays,response_var){
   #                border.size = 0.5
   # )
   
-  return(m)
-  }
   
   m_ci <- fun_map("CI","Korhogo (IC)")
   m_bf <- fun_map("BF","Diébougou (BF)")
   
-
+  
   ggsave(filename="add_bitingrates_ci.png",plot=m_ci,path="/home/ptaconet/phd/articles/article2", width = 170,unit="mm",dpi = 600)
   ggsave(filename="add_bitingrates_bf.png",plot=m_bf,path="/home/ptaconet/phd/articles/article2", width = 170,unit="mm",dpi = 600)
   
@@ -1211,7 +1305,6 @@ fun_map <- function(mod,code_pays,response_var){
 
 
 
-
 fun_glmm_model_check <- function(glmm){
   
   if(!is.null(glmm)){
@@ -1235,7 +1328,7 @@ fun_glmm_model_check <- function(glmm){
 
 
 
-fun_plot_pdp2 <- function(modell, indicator, species, period_interv, glmm_univ_plot = NULL, glmm_multiv_plot = NULL){
+fun_plot_pdp2 <- function(modell, indicator, species, period_interv = "all", glmm_univ_plot = NULL, glmm_multiv_plot = NULL){
   
   library(iml)
   library("future")
@@ -1328,7 +1421,7 @@ fun_plot_pdp2 <- function(modell, indicator, species, period_interv, glmm_univ_p
     mod <- Predictor$new(model, data = df)
     metric <- "Accuracy"
     quality = max(modell$mod$results$Accuracy)
-  } else if(indicator %in% c("exophagy_reg","early_biting_reg","late_biting_reg","early_late_biting_reg","physiological_resistance_kdrw_reg","physiological_resistance_kdre_reg","physiological_resistance_ace1_reg")){
+  } else if(indicator %in% c("abundance","exophagy_reg","early_biting_reg","late_biting_reg","early_late_biting_reg","physiological_resistance_kdrw_reg","physiological_resistance_kdre_reg","physiological_resistance_ace1_reg")){
     mod <- Predictor$new(model, data = df)
     metric <- "Rsquared"
     quality = max(modell$mod$results$Rsquared)
@@ -1429,8 +1522,8 @@ fun_plot_pdp2 <- function(modell, indicator, species, period_interv, glmm_univ_p
     ) +
     ylab("") + 
     xlab("") +
-    xlim(NA,max(imp$importance, na.rm = T) + max(imp$importance, na.rm = T)*2.5) +
-    labs(subtitle = paste0(gsub("physiological_resistance_","",indicator),"\n",species,"\ntimeframe = ",period_interv,"\nAUC = ",ifelse(indicator %in% c("presence","exophagy","early_biting","late_biting","early_late_biting","physiological_resistance_kdrw","physiological_resistance_kdre","physiological_resistance_ace1"),round(max_metric,2),""),"AUC2 = ",ifelse(indicator %in% c("presence","exophagy","early_biting","late_biting","early_late_biting","physiological_resistance_kdrw","physiological_resistance_kdre","physiological_resistance_ace1"),round(auc,2)),"\nVariable importance"))
+    xlim(NA,max(imp$importance, na.rm = T) + max(imp$importance, na.rm = T)*2.5) #+
+    #labs(subtitle = paste0(gsub("physiological_resistance_","",indicator),"\n",species,"\ntimeframe = ",period_interv,"\nAUC = ",ifelse(indicator %in% c("presence","exophagy","early_biting","late_biting","early_late_biting","physiological_resistance_kdrw","physiological_resistance_kdre","physiological_resistance_ace1"),round(max_metric,2),""),"AUC2 = ",ifelse(indicator %in% c("presence","exophagy","early_biting","late_biting","early_late_biting","physiological_resistance_kdrw","physiological_resistance_kdre","physiological_resistance_ace1"),round(auc,2)),"\nVariable importance"))
   # labs(subtitle = "Variable importance")
   
   # interactions 
@@ -1528,7 +1621,8 @@ fun_plot_pdp2 <- function(modell, indicator, species, period_interv, glmm_univ_p
   # 
   
   pred_wrapper_classif <- function(object, newdata) {
-    p <- predict(object, newdata = newdata, type ="prob")[,ifelse(indicator!="physiological_resistance_kdrw","Presence","Absence")]
+    #p <- predict(object, newdata = newdata, type ="prob")[,ifelse(!(indicator=="presence" & species=="An. gambiae sl."),"Presence","Absence")]
+    p <- predict(object, newdata = newdata, type ="prob")[,"Presence"]
     c("avg" = mean(p), "avg-1sd" = mean(p) - sd(p), "avg+1sd" = mean(p) + sd(p))
   }
   
@@ -1659,8 +1753,8 @@ fun_plot_pdp2 <- function(modell, indicator, species, period_interv, glmm_univ_p
     if(subt =="Grassland\n2000 m buffer" & species == "An. funestus"){
       subt <- gsub("2000","250",subt)
     }
-    if(grepl("b/w 0 and 4.28571428571429 weeks",subt)){
-      subt <- gsub("b/w 0 and 4.28571428571429 weeks","(month preceding)",subt)
+    if(grepl("b/w 0 and 4 weeks",subt)){
+      subt <- gsub("b/w 0 and 4 weeks","(month preceding)",subt)
     }
     if(grepl("b/w 0 and 0 weeks",subt)){
       subt <- gsub("b/w 0 and 0 weeks","(day of catch)",subt)
@@ -1724,6 +1818,8 @@ fun_plot_pdp2 <- function(modell, indicator, species, period_interv, glmm_univ_p
         y_max = 2
       } else if(species == "An. gambiae ss."){
         y_max = 1
+      } else if(species == "An. gambiae sl."){
+        y_max = 5
       }
       
       pdps[[i+l_pdp]] = pdp$plot() +
@@ -1742,7 +1838,7 @@ fun_plot_pdp2 <- function(modell, indicator, species, period_interv, glmm_univ_p
               plot.subtitle = element_text(size = 7, face="bold"))
     }
     
-    if(indicator %in% c("presence","exophagy","early_late_biting","early_biting","late_biting","physiological_resistance_kdrw","physiological_resistance_kdre","physiological_resistance_ace1") & !is.factor(df[,imp$var[i]])){
+    if(indicator %in% c("presence","abundance","exophagy","early_late_biting","early_biting","late_biting","physiological_resistance_kdrw","physiological_resistance_kdre","physiological_resistance_ace1") & !is.factor(df[,imp$var[i]])){
       pdp$results$.value <- pdp$results$.type <- NULL
       
       if(indicator %in% c("presence","exophagy","early_late_biting","early_biting","late_biting","physiological_resistance_kdrw","physiological_resistance_kdre","physiological_resistance_ace1")){
@@ -1786,10 +1882,10 @@ fun_plot_pdp2 <- function(modell, indicator, species, period_interv, glmm_univ_p
   rocplot <- ggplot(df_cv, aes(m = pred, d = obs))+ geom_roc(n.cuts=20,labels=FALSE) + style_roc(theme = theme_grey, xlab = "", ylab = "") + geom_rocci(fill="pink")
   
   
-   pdps[[length(pdps)+1]] <- bp
-   pdps[[length(pdps)+1]] <- cmplot
-   pdps[[length(pdps)+1]] <- cmplot2
-   pdps[[length(pdps)+1]] <- rocplot
+   # pdps[[length(pdps)+1]] <- bp
+   # pdps[[length(pdps)+1]] <- cmplot
+   # pdps[[length(pdps)+1]] <- cmplot2
+   # pdps[[length(pdps)+1]] <- rocplot
   
   
   
@@ -2769,7 +2865,7 @@ fun_plot_pdp5 <- function(rf, glmm, indicator, species, code_pays, get_all_plots
     
     if(!(indicator %in% c("presence","abundance"))){
       df_vars_labs <- df_vars_labs %>%
-        mutate(label_detail = gsub("b/w 0 and 4.28571428571429 weeks","(month preceding coll.",label_detail)) %>%
+        mutate(label_detail = gsub("b/w 0 and 4 weeks","(month preceding coll.",label_detail)) %>%
         mutate(label_detail = gsub("b/w 0 and 0 weeks","(day of collection",label_detail)) %>%
         mutate(label_detail = gsub("\n2000 m buffer","",label_detail))
     }
@@ -2844,8 +2940,7 @@ fun_plot_pdp5 <- function(rf, glmm, indicator, species, code_pays, get_all_plots
     } else {
       plot_pdp <- T
     }
-    
-    
+
     pdps <- lapply(features, FUN = function(feature) {
       
       rf_var_imp=NA
@@ -3026,6 +3121,12 @@ fun_plot_pdp5 <- function(rf, glmm, indicator, species, code_pays, get_all_plots
           if(get_all_plots == TRUE | (!is.null(glmm[[1]]) & feature %in% colnames(df_glmm))){
             
             if(is.numeric(df_rf[,feature][[1]])){
+              
+              # if(feature=='NMA'){
+              #   df_rf$NMA <- df_rf$NMA + 43.5
+              #   dat$x <- dat$x + 43.5
+              # }
+              
               if(isTRUE(plot_pdp)){
               p <- p + 
                 geom_line(data = dat, aes(x = x, y = y), size = 0.5, colour = "#009E73")
@@ -3072,7 +3173,8 @@ fun_plot_pdp5 <- function(rf, glmm, indicator, species, code_pays, get_all_plots
               
               if(feature=="VCM" &  indicator == "exophagy" & code_pays=="CI" & species=="An. gambiae s.l."){
                 df_rf$VCM = as.factor(df_rf$VCM)
-                df_rf$VCM = factor(df_rf$VCM, levels = c("< LLIN\ndist.","LLIN\n***","LLIN \n+ IEC*", "LLIN \n+ IRS**", "LLIN \n+ Larv.*"))
+               # df_rf$VCM = factor(df_rf$VCM, levels = c("< LLIN\ndist.","LLIN\n***","LLIN \n+ IEC*", "LLIN \n+ IRS**", "LLIN \n+ Larv.*"))
+                df_rf$VCM = factor(df_rf$VCM, levels = c("< LLIN\ndist.","LLIN\n***", "LLIN \n+ IRS", "LLIN \n+ Larv."))
                   }
               
               if(feature=="kdrw" & indicator == "physiological_resistance_kdre"){
@@ -3124,6 +3226,10 @@ fun_plot_pdp5 <- function(rf, glmm, indicator, species, code_pays, get_all_plots
             dat[[1]]$x = dat[[1]]$x + attr(df_glmm[,feature],'scaled:center')
             dat[[2]]$x = dat[[2]]$x + attr(df_glmm[,feature],'scaled:center')
           }
+          # if(feature=='NMA'){
+          #   dat[[1]]$x <- dat[[1]]$x + 43.5
+          #   dat[[2]]$x <- dat[[2]]$x + 43.5
+          # }
 
          # if( is.numeric(df_glmm[,feature][[1]]) & ((get_all_plots == TRUE |  group=="Vector control") | (abs(max(dat[[1]]$y)-min(dat[[1]]$y))>=0.05 & glmm_tidy[grepl(feature,glmm_tidy$term),]$p.value < 0.1))){
           if( is.numeric(df_glmm[,feature][[1]]) & ((get_all_plots == TRUE |  group=="Vector control" | feature %in% c('lsm_c_pland_2000_3_1','lsm_c_pland_2000_4_1','lsm_c_pland_2000_4_11','lsm_c_pland_2000_4_16')) | (glmm_tidy[grepl(feature,glmm_tidy$term),]$p.value < 0.05))){
@@ -3276,8 +3382,8 @@ fun_plot_pdp5 <- function(rf, glmm, indicator, species, code_pays, get_all_plots
   }
   
   #return(list(p_final=p_final,df_varimp=df_varimp))
-  #return(p_final)
-  return(range_preds)
+  return(p_final)
+  #return(range_preds)
   
 }
 
