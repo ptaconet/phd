@@ -81,9 +81,9 @@ fun_workflow_model <- function(response_var,
   
   
   if(code_pays == "BF"){
-    landcover_layers_to_keep <- c(2,3,4,11)
+    landcover_layers_to_keep <- c(2,3,11)
   } else if (code_pays == "CI"){
-    landcover_layers_to_keep <- c(7,8,9,11)
+    landcover_layers_to_keep <- c(7,8,11)
   }
 
   landcover_metrics_to_keep <- c("pland","prd")
@@ -225,14 +225,22 @@ fun_workflow_model <- function(response_var,
     expl_vars_to_keep = NULL,
     expl_vars_to_test = predictors_spatial_tocollect)
 
-  spatial_corrs_spearman_opensource <- spatial_corrs_spearman_opensource %>%
+  spatial_corrs_spearman_opensource_20vars <- spatial_corrs_spearman_opensource %>%
     filter(name!="useless_col") %>%
     top_n(20,abs_corr) 
+  
+  spatial_corrs_spearman_opensource_10vars <- spatial_corrs_spearman_opensource %>%
+    filter(name!="useless_col") %>%
+    top_n(10,abs_corr) 
     
   
-  spatial_corrs_spearman_tocollect <- spatial_corrs_spearman_tocollect %>%
+  spatial_corrs_spearman_tocollect_20vars <- spatial_corrs_spearman_tocollect %>%
     filter(name!="useless_col") %>%
     top_n(20,abs_corr)
+  
+  spatial_corrs_spearman_tocollect_10vars <- spatial_corrs_spearman_tocollect %>%
+    filter(name!="useless_col") %>%
+    top_n(10,abs_corr)
   
   ## temporal 
     lags1 <- seq(0,112,7)
@@ -241,6 +249,8 @@ fun_workflow_model <- function(response_var,
   rf_opensource <- list()
   rf_opensource_simple <- list()
   rf_tocollect <- list()
+  glmm_opensource_simple <- list()
+  glmm_opensource <- list()
 
     for(i in 1:5){
     
@@ -272,21 +282,30 @@ fun_workflow_model <- function(response_var,
   temporal_corr_spearman$var <- sub("\\_.*", "", temporal_corr_spearman$name)
   
   
-  temporal_corr_spearman <- temporal_corr_spearman %>%
+  temporal_corr_spearman_20vars <- temporal_corr_spearman %>%
     group_by(var) %>%
     top_n(20,abs_corr)
   
-  predictors_temporal <- fun_multicol(th_trmetrics_entomo_postedecapture, temporal_corr_spearman$name)
+  temporal_corr_spearman_10vars <- temporal_corr_spearman %>%
+    group_by(var) %>%
+    top_n(10,abs_corr)
   
-  predictors_opensource <- c(predictors_temporal,spatial_corrs_spearman_opensource$name)
-  predictors_tocollect <- c(predictors_temporal,spatial_corrs_spearman_tocollect$name)
+  predictors_temporal_20vars <- fun_multicol(th_trmetrics_entomo_postedecapture, temporal_corr_spearman_20vars$name)
+  predictors_temporal_10vars <- fun_multicol(th_trmetrics_entomo_postedecapture, temporal_corr_spearman_10vars$name)
   
-  predictors_opensource <- fun_multicol(th_trmetrics_entomo_postedecapture, predictors_opensource)
-  predictors_tocollect <- fun_multicol(th_trmetrics_entomo_postedecapture, predictors_tocollect)
-
-  rf_opensource[[i]] <- fun_compute_rf(th_trmetrics_entomo_postedecapture, predictors_opensource, cv_col = "by_ptcapt3", mod, featureselect = "rfe", species = response_var,tune_length = 1, type = 'predictive')
-  rf_tocollect[[i]] <- fun_compute_rf(th_trmetrics_entomo_postedecapture, predictors_tocollect, cv_col = "by_ptcapt3", mod, featureselect = "rfe", species = response_var,tune_length = 1, type = 'predictive')
+  predictors_opensource_20vars <- c(predictors_temporal_20vars,spatial_corrs_spearman_opensource_20vars$name)
+  predictors_tocollect_20vars <- c(predictors_temporal_20vars,spatial_corrs_spearman_tocollect_20vars$name)
+  predictors_opensource_10vars <- c(predictors_temporal_10vars,spatial_corrs_spearman_opensource_10vars$name)
+  predictors_tocollect_10vars <- c(predictors_temporal_10vars,spatial_corrs_spearman_tocollect_10vars$name)
   
+  predictors_opensource_20vars <- fun_multicol(th_trmetrics_entomo_postedecapture, predictors_opensource_20vars)
+  predictors_tocollect_20vars <- fun_multicol(th_trmetrics_entomo_postedecapture, predictors_tocollect_20vars)
+  predictors_opensource_10vars <- fun_multicol(th_trmetrics_entomo_postedecapture, predictors_opensource_10vars)
+  predictors_tocollect_10vars <- fun_multicol(th_trmetrics_entomo_postedecapture, predictors_tocollect_10vars)
+  
+  rf_opensource[[i]] <- fun_compute_rf(th_trmetrics_entomo_postedecapture, predictors_opensource_20vars, cv_col = "by_ptcapt3", mod, featureselect = "rfe", species = response_var,tune_length = 1, type = 'predictive')
+  rf_tocollect[[i]] <- fun_compute_rf(th_trmetrics_entomo_postedecapture, predictors_tocollect_20vars, cv_col = "by_ptcapt3", mod, featureselect = "rfe", species = response_var,tune_length = 1, type = 'predictive')
+  glmm_opensource[[i]] <- fun_compute_glmm(th_trmetrics_entomo_postedecapture, predictors_opensource_10vars, mod = mod, cv_col = "by_ptcapt3", crit_selection = "AIC", species = response_var, transform_resp_var=TRUE)
   
   ## for rf_opensource_simple : 
 
@@ -335,23 +354,32 @@ fun_workflow_model <- function(response_var,
   temporal_corr_spearman$diff_lag <- temporal_corr_spearman$time_lag_1 - temporal_corr_spearman$time_lag_2
   temporal_corr_spearman$var <- sub("\\_.*", "", temporal_corr_spearman$name)
 
-  temporal_corr_spearman <- temporal_corr_spearman %>%
+  temporal_corr_spearman_20vars <- temporal_corr_spearman %>%
     group_by(var) %>%
     top_n(20,abs_corr)
   
-  predictors_temporal <- fun_multicol(th_trmetrics_entomo_postedecapture, temporal_corr_spearman$name)
+  temporal_corr_spearman_10vars <- temporal_corr_spearman %>%
+    group_by(var) %>%
+    top_n(10,abs_corr)
   
-  predictors_opensource_simple <- c(predictors_temporal,spatial_corrs_spearman_opensource$name)
-  predictors_opensource_simple <- fun_multicol(th_trmetrics_entomo_postedecapture, predictors_opensource_simple)
+  predictors_temporal_20vars <- fun_multicol(th_trmetrics_entomo_postedecapture, temporal_corr_spearman_20vars$name)
+  predictors_temporal_10vars <- fun_multicol(th_trmetrics_entomo_postedecapture, temporal_corr_spearman_10vars$name)
+  
+  predictors_opensource_simple_20vars <- c(predictors_temporal_20vars,spatial_corrs_spearman_opensource_20vars$name)
+  predictors_opensource_simple_20vars <- fun_multicol(th_trmetrics_entomo_postedecapture, predictors_opensource_simple_20vars)
 
-  rf_opensource_simple[[i]] <- fun_compute_rf(th_trmetrics_entomo_postedecapture, predictors_opensource_simple, cv_col = "by_ptcapt3", mod, featureselect = "rfe", species = response_var,tune_length = 1, type = 'predictive')
-
+  predictors_opensource_simple_10vars <- c(predictors_temporal_20vars,spatial_corrs_spearman_opensource_10vars$name)
+  predictors_opensource_simple_10vars <- fun_multicol(th_trmetrics_entomo_postedecapture, predictors_opensource_simple_10vars)
+  
+  rf_opensource_simple[[i]] <- fun_compute_rf(th_trmetrics_entomo_postedecapture, predictors_opensource_simple_20vars, cv_col = "by_ptcapt3", mod, featureselect = "rfe", species = response_var,tune_length = 1, type = 'predictive')
+  glmm_opensource_simple[[i]] <- fun_compute_glmm(th_trmetrics_entomo_postedecapture, predictors_opensource_simple_10vars, mod = mod, cv_col = "by_ptcapt3", crit_selection = "AIC", species = response_var, transform_resp_var=TRUE)
+  
 }
 
-  names(rf_opensource) <- names(rf_opensource_simple) <- names(rf_tocollect) <- paste0(seq(0,4,1),"_week_before")
+  names(rf_opensource) <- names(rf_opensource_simple) <- names(rf_tocollect) <- names(glmm_opensource_simple) <- names(glmm_opensource) <- paste0(seq(0,4,1),"_week_before")
 
 
-  return(list(rf_opensource = rf_opensource, rf_tocollect = rf_tocollect, rf_opensource_simple = rf_opensource_simple))
+  return(list(rf_opensource = rf_opensource, rf_tocollect = rf_tocollect, rf_opensource_simple = rf_opensource_simple, glmm_opensource = glmm_opensource, glmm_opensource_simple = glmm_opensource_simple ))
 
 }
 
@@ -407,12 +435,14 @@ model_results <- model_results %>%
   mutate(rf_opensource = map(results, ~pluck(.,"rf_opensource"))) %>%
   mutate(rf_tocollect = map(results, ~pluck(.,"rf_tocollect"))) %>%
   mutate(rf_opensource_simple = map(results, ~pluck(.,"rf_opensource_simple"))) %>%
+  mutate(glmm_opensource_simple = map(results, ~pluck(.,"glmm_opensource_simple"))) %>%
+  mutate(glmm_opensource = map(results, ~pluck(.,"glmm_opensource"))) %>%
   dplyr::select(-results)
 
-  saveRDS(model_results,"/home/ptaconet/Bureau/data_analysis/model_results_predictive3.rds")  
+  saveRDS(model_results,"/home/ptaconet/Bureau/data_analysis/model_results_predictive4.rds")  
   
   # model_results_predictive1.rds : rfe optimized with AUC
   # model_results_predictive2.rds : rfe optimized with Accuracy and landcover at level 3
   # model_results_predictive3.rds : rfe optimized with Accuracy and landcover at level 4
-  
+  # model_results_predictive4.rds : rfe optimized with Accuracy and landcover at level 2,3,4 + GLMM models
   

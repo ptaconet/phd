@@ -1052,29 +1052,29 @@ fun_plot_validation_abundance <- function(df, spec){
 
 #### plot general data viz
 
-fun_map2 <- function(codepays,df_cv2,interactive){
+fun_map2 <- function(code__pays,df_cv2,interactive = FALSE){
   
   df_obs <- df_cv2 %>%
     as_tibble %>%
     filter(name=="obs") %>%
-    filter(code_pays==codepays) %>%
+    filter(code_pays==code__pays) %>%
     dplyr::select(-weeks_before) %>%
     distinct() %>%
     mutate(weeks_before="obs")
     
   df_cv2 <- df_cv2 %>%
-    filter(name!="obs", weeks_before>0) %>%
+    filter(name!="obs", weeks_before %in% c(2,4)) %>%
     mutate(weeks_before=as.character(weeks_before)) %>%
     bind_rows(df_obs) %>%
     mutate(weeks_before=as.factor(weeks_before)) %>%
     mutate(weeks_before=fct_relevel(weeks_before, c("obs","1","2","3","4"))) %>%
-    filter(code_pays==codepays) %>%
+    filter(code_pays==code__pays) %>%
     dplyr::select(-name) %>%
     as_tibble()
 
   ## map
   roi <- sf::st_read(path_to_db,"contexte_frontieresreact") %>% 
-    filter(codepays == codepays) %>%
+    filter(codepays == code__pays) %>%
     sf::st_transform(4326) %>%
     sf::st_bbox() %>%
     as.numeric()
@@ -1090,7 +1090,7 @@ fun_map2 <- function(codepays,df_cv2,interactive){
     mutate(date_capture = as.Date(date_capture)) %>% 
     dplyr::group_by(codepays,nummission) %>% 
     dplyr::summarise(mean_date_mission=mean(date_capture)) %>% 
-    as_tibble() %>% filter(codepays==code_pays) %>% 
+    as_tibble() %>% filter(codepays==code__pays) %>% 
     dplyr::select(-codepays) %>% 
     mutate(date_mission_char = paste0(nummission, " - ", lubridate::month(mean_date_mission,label=TRUE, abbr=FALSE, locale = "en_US.utf8"), " ",lubridate::year(mean_date_mission)))  %>%  
     mutate(date_mission_char = forcats::fct_reorder(date_mission_char,mean_date_mission))
@@ -1107,7 +1107,7 @@ fun_map2 <- function(codepays,df_cv2,interactive){
   
   villages <- dbReadTable(react_gpkg, 'recensement_villages_l1') %>%
     dplyr::select(-geom) %>%
-    dplyr::filter(!is.na(intervention),codepays == code_pays)
+    dplyr::filter(!is.na(intervention),codepays == code__pays)
   
   if(interactive==FALSE){
   m <- ggmap(myMap) + geom_point(aes(x = X, y = Y), data = villages, size = 0.6, color = "seagreen4") + 
@@ -1121,8 +1121,8 @@ fun_map2 <- function(codepays,df_cv2,interactive){
           axis.text.y = element_text(size = 4),
           legend.title = element_text(size = 7),
           legend.text = element_text(size = 6)) + 
-    ggtitle(ifelse(code_pays=="BF","","Biting rate of the main vectors in each village and entomological survey")) + 
-    labs(subtitle = "d", caption = ifelse(code_pays=="CI","","Unit: average number of bites / human / night. Blue dots indicate absence of bite in the village for the considered survey. Background layer: OpenStreetMap"))
+    ggtitle(ifelse(code__pays=="BF","","Biting rate of the main vectors in each village and entomological survey")) + 
+    labs(subtitle = "d", caption = ifelse(code__pays=="CI","","Unit: average number of bites / human / night. Blue dots indicate absence of bite in the village for the considered survey. Background layer: OpenStreetMap"))
   # ggsn::scalebar(dist = 5, dist_unit = "km",
   #                transform = TRUE, model = "WGS84", 
   #                height = 0.01, st.size	=2.5,st.dist = 0.03,
@@ -1328,7 +1328,7 @@ fun_glmm_model_check <- function(glmm){
 
 
 
-fun_plot_pdp2 <- function(modell, indicator, species, period_interv = "all", glmm_univ_plot = NULL, glmm_multiv_plot = NULL){
+fun_plot_pdp2 <- function(modell, indicator, species, period_interv = "all", glmm_univ_plot = NULL, glmm_multiv_plot = NULL, codepays){
   
   library(iml)
   library("future")
@@ -1508,6 +1508,10 @@ fun_plot_pdp2 <- function(modell, indicator, species, period_interv = "all", glm
     mutate(label = forcats::fct_reorder(label, importance)) %>%
     arrange(-importance)
   
+  imp$label_detail <- gsub("\\(","",imp$label_detail)
+  imp$label_detail <- gsub("LST","temperatures",imp$label_detail)
+  imp$unit[which(imp$label_detail %in% c("Place","Vector control tool "))] <- ""
+  
   # variable importance plot
   plot_imp <- ggplot(imp, aes(x = importance , y = label, label = label)) +
     geom_bar(position = 'dodge', stat="identity", width = 0.6) + 
@@ -1522,9 +1526,9 @@ fun_plot_pdp2 <- function(modell, indicator, species, period_interv = "all", glm
     ) +
     ylab("") + 
     xlab("") +
-    xlim(NA,max(imp$importance, na.rm = T) + max(imp$importance, na.rm = T)*2.5) #+
+    xlim(NA,max(imp$importance, na.rm = T) + max(imp$importance, na.rm = T)*2.5) +
     #labs(subtitle = paste0(gsub("physiological_resistance_","",indicator),"\n",species,"\ntimeframe = ",period_interv,"\nAUC = ",ifelse(indicator %in% c("presence","exophagy","early_biting","late_biting","early_late_biting","physiological_resistance_kdrw","physiological_resistance_kdre","physiological_resistance_ace1"),round(max_metric,2),""),"AUC2 = ",ifelse(indicator %in% c("presence","exophagy","early_biting","late_biting","early_late_biting","physiological_resistance_kdrw","physiological_resistance_kdre","physiological_resistance_ace1"),round(auc,2)),"\nVariable importance"))
-  # labs(subtitle = "Variable importance")
+   labs(subtitle = "Variable importance")
   
   # interactions 
   plot_interactions <- NULL
@@ -1705,26 +1709,44 @@ fun_plot_pdp2 <- function(modell, indicator, species, period_interv = "all", glm
                                                imp$var[grep("TMIN",imp$var)],
                                                imp$var[grep("TMAX",imp$var)],
                                                imp$var[grep("3_9",imp$var)],
+                                               imp$var[grep("8_11",imp$var)],
                                                imp$var[grep("2_5",imp$var)],
+                                               imp$var[grep("7_6",imp$var)],
                                                "WLS_2000","WMD",
                                                imp$var[grep("3_4",imp$var)],
+                                               imp$var[grep("8_6",imp$var)],
                                                imp$var[grep("3_1",imp$var)],
+                                               imp$var[grep("8_4",imp$var)],
                                                imp$var[grep("3_2",imp$var)],
+                                               imp$var[grep("8_5",imp$var)],
                                                imp$var[grep("3_3",imp$var)],
+                                               imp$var[grep("8_7",imp$var)],
+                                               imp$var[grep("8_9",imp$var)],
+                                               imp$var[grep("8_1",imp$var)],
+                                               imp$var[grep("8_8",imp$var)],
                                                imp$var["NMT"],
                                                imp$var["NMH"],
                                                imp$var["NMA"],
                                                imp$var["RFH"],
                                                imp$var["WSP"],
-                                               imp$var["LMN"]))) %>%
-      #dplyr::filter(!(var %in% c("VCM","int_ext"))) %>%
+                                               imp$var["LMN"],
+                                               imp$var["int_ext"],
+                                               imp$var["VCM"]))) %>%
+      dplyr::filter(!(var %in% c("int_ext"))) %>%
       arrange(var) %>%
       mutate(var = as.character(var))
     
+    if(species == "An. funestus" & codepays == "BF" & indicator == "presence"){
+      imp <- imp %>% dplyr::filter(!(var == "WMD"))
+    }
+    # if(codepays == "BF"){
+    #   imp <- imp %>% dplyr::filter(!(var == "VCM"))
+    # }
+    
     nmax_vars_pdp <- nrow(imp)
     
-    n_row=6#5
-    n_col=5#4
+    n_row=3
+    n_col=4
   } else if (indicator %in% c("exophagy","early_late_biting","early_biting","late_biting","physiological_resistance_kdrw","physiological_resistance_kdre","physiological_resistance_ace1",
                               "exophagy_reg","early_late_biting_reg","early_biting_reg","late_biting_reg","physiological_resistance_kdrw_reg","physiological_resistance_kdre_reg","physiological_resistance_ace1_reg")){
     #nmax_vars_pdp <- 8
@@ -1744,6 +1766,8 @@ fun_plot_pdp2 <- function(modell, indicator, species, period_interv = "all", glm
   
   plan("callr", workers = 7)
   future::plan(multisession, workers = 7)
+  
+  
   
   for(i in 1:nmax_vars_pdp){
     
@@ -1775,9 +1799,13 @@ fun_plot_pdp2 <- function(modell, indicator, species, period_interv = "all", glm
         theme_bw() + 
         theme(axis.title.x = element_text(size = 6, colour = "grey30"),
               axis.title.y = element_text(size = 8),
-              axis.text.x = element_text(size = 6),
+              axis.text.x = element_text(size = ifelse(imp$var[i]=="VCM", 0,6)),
               axis.text.y = element_text(size = 5),
               plot.subtitle = element_text(size = 7, face="bold"))
+      
+      if(imp$var[i]=="VCM"){
+        pdps[[i+l_pdp]] =  pdps[[i+l_pdp]] + geom_text(data = pdp$results, aes(label = VCM), size = 1.5, angle = 90)
+      }
       
     } else if (indicator == "abundance_discrete"){
       
@@ -1833,9 +1861,14 @@ fun_plot_pdp2 <- function(modell, indicator, species, period_interv = "all", glm
         theme_bw() + 
         theme(axis.title.x = element_text(size = 6, colour = "grey30"),
               axis.title.y = element_text(size = 8),
-              axis.text.x = element_text(size = 6),
+              axis.text.x = element_text(size = ifelse(imp$var[i]=="VCM", 0,6)),
               axis.text.y = element_text(size = 5),
               plot.subtitle = element_text(size = 7, face="bold"))
+      
+      if(imp$var[i]=="VCM"){
+        pdps[[i+l_pdp]] =  pdps[[i+l_pdp]] + geom_text(data = pdp$results, aes(label = VCM), size = 1.5, angle = 90)
+      }
+      
     }
     
     if(indicator %in% c("presence","abundance","exophagy","early_late_biting","early_biting","late_biting","physiological_resistance_kdrw","physiological_resistance_kdre","physiological_resistance_ace1") & !is.factor(df[,imp$var[i]])){
@@ -1843,7 +1876,8 @@ fun_plot_pdp2 <- function(modell, indicator, species, period_interv = "all", glm
       
       if(indicator %in% c("presence","exophagy","early_late_biting","early_biting","late_biting","physiological_resistance_kdrw","physiological_resistance_kdre","physiological_resistance_ace1")){
         p = pdp::partial(model, pred.var = imp$var[i], pred.fun = pred_wrapper_classif, train = df, pred.grid = pdp$results)
-      } else {
+        p$yhat[which(p$yhat>1)] <-1
+        } else {
         p = pdp::partial(model, pred.var = imp$var[i], pred.fun = pred_wrapper_reg, train = df, pred.grid = pdp$results)
       }
       

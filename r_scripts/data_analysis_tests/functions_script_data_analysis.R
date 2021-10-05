@@ -1292,7 +1292,7 @@ fun_ffs_tempvar <- function(df, model_type, mod, time_vars, cols_to_keep, spearm
 }
 
 
-fun_glmm_cross_validation <- function(cv_col, th_mod, mod, df, ind_vars_to_center){
+fun_glmm_cross_validation <- function(cv_col, th_mod, mod, df, ind_vars_to_center, species = NULL){
 
   #df <- df %>% dplyr::select(c("resp_var","codevillage","pointdecapture2","int_ext","VCM",ind_vars_to_center))
     
@@ -1301,7 +1301,7 @@ fun_glmm_cross_validation <- function(cv_col, th_mod, mod, df, ind_vars_to_cente
   df$pred <- NA
   metric <- NULL
   
-  if(!(cv_col %in% c("by_ptcapt","by_ptcapt2","strat_10fold"))){
+  if(!(cv_col %in% c("by_ptcapt","by_ptcapt2","by_ptcapt3","strat_10fold"))){
     indices_cv <- CAST::CreateSpacetimeFolds(df, spacevar = cv_col,k = length(unique(unlist(df[,cv_col]))))  # k = length(unique(df[,cv_col])
     # also works with : indices_cv <- groupKFold(df[,cv_col], k =  length(unique(df[,cv_col])))
   }
@@ -1324,6 +1324,24 @@ fun_glmm_cross_validation <- function(cv_col, th_mod, mod, df, ind_vars_to_cente
     for(i in 1:length(uniques_pointdepcapt)){
       indices_cv$index[[i]] <- which(df$ptcapt_nummiss != substr(uniques_pointdepcapt[i],1,4))
       indices_cv$indexOut[[i]] <- which(df$idpointdecapture == uniques_pointdepcapt[i])
+    }
+  }
+  if(cv_col == "by_ptcapt3"){
+    
+    if(mod=="abundance" & species == "ma_coluzzi"){
+      df <- bind_rows(df,df[1,])
+      df <- df[-1,]
+    }
+    
+    uniques_pointdepcapt <- table(df$codevillage)
+    uniques_pointdepcapt <- sort(uniques_pointdepcapt, decreasing = T)
+    uniques_pointdepcapt <- names(uniques_pointdepcapt)
+    indices_cv <- NULL
+    df$ptcapt_nummiss <- paste0(df$nummission,df$codevillage)
+    ptcapt_nummiss <- unique(paste0(df$nummission,df$codevillage))
+    for(i in 1:length(ptcapt_nummiss)){
+      indices_cv$index[[i]] <- which((df$codevillage != substr(ptcapt_nummiss[i],2,4)) & (df$nummission != substr(ptcapt_nummiss[i],0,1)))
+      indices_cv$indexOut[[i]] <- which(df$ptcapt_nummiss == ptcapt_nummiss[i])
     }
   }
   if(cv_col == "strat_10fold"){
@@ -1366,8 +1384,11 @@ fun_glmm_cross_validation <- function(cv_col, th_mod, mod, df, ind_vars_to_cente
   
   mean_metric <- mean(metric,na.rm = TRUE)
   
-  df <- df %>% dplyr::select(resp_var,pred,codevillage,nummission,idpointdecapture,pointdecapture2,int_ext) %>% dplyr::rename(obs = resp_var)
-  
+  if("int_ext" %in% colnames(df)){
+  df <- df %>% dplyr::select(resp_var,pred,codevillage,nummission,idpointdecapture,pointdecapture2,int_ext) %>% dplyr::rename(obs = resp_var) %>% dplyr::mutate(pointdecapture = substr(idpointdecapture,5,5))
+  } else {
+    df <- df %>% dplyr::select(resp_var,pred,codevillage,nummission,idpointdecapture,pointdecapture2) %>% dplyr::rename(obs = resp_var) %>% dplyr::mutate(pointdecapture = substr(idpointdecapture,5,5))
+  }
   df <- df %>% dplyr::filter(!is.na(pred))
   
   #return(list(mean_metric = mean_metric, df_cv = df))
@@ -1517,10 +1538,14 @@ fun_multicollinearity <- function(df, vars_to_test){
 }
 
 
-fun_compute_glmm <- function(df, predictors, predictors_forced = NULL, mod, cv_col = NULL, predictors_interaction = NULL, crit_selection = "LRT"){
+fun_compute_glmm <- function(df, predictors, predictors_forced = NULL, mod, cv_col = NULL, predictors_interaction = NULL, crit_selection = "LRT", species = NULL, transform_resp_var=FALSE){
   
 
+  if("int_ext" %in% colnames(df)){
   df <- df %>% dplyr::select(resp_var,codevillage,pointdecapture,int_ext,nummission,idpointdecapture,predictors,predictors_forced) %>% mutate_if(is.character, as.factor)
+  } else {
+    df <- df %>% dplyr::select(resp_var,codevillage,pointdecapture,nummission,idpointdecapture,predictors,predictors_forced) %>% mutate_if(is.character, as.factor)
+  }
   df$pointdecapture2 <- as.factor(paste0(df$codevillage,df$pointdecapture))
 
   if(!is.null(predictors_interaction)){
@@ -1538,6 +1563,10 @@ fun_compute_glmm <- function(df, predictors, predictors_forced = NULL, mod, cv_c
     form_forc <- as.formula("~ (1|codevillage/pointdecapture2)")
   }
   
+  if(transform_resp_var==TRUE & mod=="abundance"){
+    df$resp_var <- trunc(df$resp_var)+1
+  }
+  
   predictors_to_scale <- setdiff(c(predictors, predictors_forced, predictors_interaction), c("VCM","IEH","int_ext","kdre","kdrw","ace1","RFHP","period_interv","season","VCT3","lsm_c_pland_2000_4_16"))
   df_mod <- df %>% mutate_at(predictors_to_scale, ~scale(., center = TRUE, scale = FALSE)) %>% dplyr::select(c("resp_var","codevillage","pointdecapture2",predictors,predictors_forced,predictors_interaction))
   
@@ -1552,7 +1581,7 @@ fun_compute_glmm <- function(df, predictors, predictors_forced = NULL, mod, cv_c
   if(is.null(cv_col)){
     df_cv <- NULL
   } else {
-     df_cv <- fun_glmm_cross_validation(cv_col, th_mod, mod, df, predictors_to_scale)
+     df_cv <- fun_glmm_cross_validation(cv_col, th_mod, mod, df, predictors_to_scale, species = species)
   }
   
   return(list(mod = th_mod, 

@@ -8,6 +8,8 @@ library(ggmap)
 library(precrec)
 library(plotROC)
 library(ggsn)
+library(tidytext)
+library(ggmap)
 
 ### connect to the database
 path_to_db <- "data/react_db/react_db.gpkg" 
@@ -36,7 +38,7 @@ model_univanalysis_results <- res %>%
     response_var == "ma_funestus_ss" ~ "An. funestus",
     response_var == "ma_gambiae_ss" ~ "An. gambiae s.s.",
     response_var == "ma_coluzzi" ~ "An. coluzzii",
-  response_var == "ma_gambiae_sl" ~ "An. gambiae s.l.")) %>%
+  response_var == "ma_gambiae_sl" ~ "An. gambiae s.s.")) %>%
   mutate(spatial_corrs_spearman = map(spatial_corrs_spearman, ~fun_get_predictors_labels(table = ., vector_predictors_name = "name"))) %>%
   mutate(spatial_corrs_spearman = map(spatial_corrs_spearman, ~mutate(., buffer = word(gsub("_"," ",name), ifelse(label_group %in% c("Landscape - other","Landscape - wetlands"), 4, 2))))) %>%
   mutate(spatial_corrs_spearman = map(spatial_corrs_spearman, ~mutate(., buffer = ifelse(is.na(buffer), word(gsub("_"," ",name), 2), buffer)))) %>%
@@ -56,19 +58,33 @@ model_univanalysis_results <- res %>%
 
 
 univ_spearman_spatial <- do.call(rbind.data.frame, model_univanalysis_results$spatial_corrs_spearman) %>% 
-      # filter(buffer %in% c(NA,250,500,1000,2000), name %in% c("WMD","BDE","BCH","WLS_2000","lsm_c_pland_2000_2_5","lsm_c_pland_2000_3_3","lsm_c_pland_2000_3_2","lsm_c_pland_2000_3_4","lsm_c_pland_2000_3_9","lsm_c_pland_2000_3_1","lsm_c_pland_2000_3_5",
-      #                                                     "WLS_1000","lsm_c_pland_1000_2_5","lsm_c_pland_1000_3_3","lsm_c_pland_1000_3_2","lsm_c_pland_1000_3_4","lsm_c_pland_1000_3_9","lsm_c_pland_1000_3_1","lsm_c_pland_1000_3_5",
-      #                                                     "WLS_500","lsm_c_pland_500_2_5","lsm_c_pland_500_3_3","lsm_c_pland_500_3_2","lsm_c_pland_500_3_4","lsm_c_pland_500_3_9","lsm_c_pland_500_3_1","lsm_c_pland_500_3_5",
-      #                                                     "WLS_250","lsm_c_pland_250_2_5","lsm_c_pland_250_3_3","lsm_c_pland_250_3_2","lsm_c_pland_250_3_4","lsm_c_pland_250_3_9","lsm_c_pland_250_3_1","lsm_c_pland_250_3_5")) %>%
+       filter(name %in% c("WMD","BDE","BCH","WLS_2000", "WLS_1000", "WLS_500","WLS_250",
+                          "lsm_c_pland_2000_2_5","lsm_c_pland_2000_3_3","lsm_c_pland_2000_3_2","lsm_c_pland_2000_3_4","lsm_c_pland_2000_3_9","lsm_c_pland_2000_3_1","lsm_c_pland_2000_3_5",
+                          "lsm_c_pland_1000_2_5","lsm_c_pland_1000_3_3","lsm_c_pland_1000_3_2","lsm_c_pland_1000_3_4","lsm_c_pland_1000_3_9","lsm_c_pland_1000_3_1","lsm_c_pland_1000_3_5",
+                          "lsm_c_pland_500_2_5","lsm_c_pland_500_3_3","lsm_c_pland_500_3_2","lsm_c_pland_500_3_4","lsm_c_pland_500_3_9","lsm_c_pland_500_3_1","lsm_c_pland_500_3_5",
+                          "lsm_c_pland_250_2_5","lsm_c_pland_250_3_3","lsm_c_pland_250_3_2","lsm_c_pland_250_3_4","lsm_c_pland_250_3_9","lsm_c_pland_250_3_1","lsm_c_pland_250_3_5",
+                          "lsm_c_pland_2000_7_6","lsm_c_pland_2000_8_5","lsm_c_pland_2000_8_9","lsm_c_pland_2000_8_6","lsm_c_pland_2000_8_11","lsm_c_pland_2000_8_7","lsm_c_pland_2000_8_6","lsm_c_pland_2000_8_4","lsm_c_pland_2000_8_8",
+                          "lsm_c_pland_1000_7_6","lsm_c_pland_1000_8_5","lsm_c_pland_1000_8_9","lsm_c_pland_1000_8_6","lsm_c_pland_1000_8_11","lsm_c_pland_1000_8_7","lsm_c_pland_1000_8_6","lsm_c_pland_1000_8_4","lsm_c_pland_1000_8_8",
+                          "lsm_c_pland_500_7_6","lsm_c_pland_500_8_5","lsm_c_pland_500_8_9","lsm_c_pland_500_8_6","lsm_c_pland_500_8_11","lsm_c_pland_500_8_7","lsm_c_pland_500_8_6","lsm_c_pland_500_8_4","lsm_c_pland_500_8_8",
+                          "lsm_c_pland_250_7_6","lsm_c_pland_250_8_5","lsm_c_pland_250_8_9","lsm_c_pland_250_8_6","lsm_c_pland_250_8_11","lsm_c_pland_250_8_7","lsm_c_pland_250_8_6","lsm_c_pland_250_8_4","lsm_c_pland_250_8_8")) %>%
   mutate(model = "spearman univariate") %>%
   mutate(indicator = ifelse(indicator == "presence","Presence","Abundance")) %>%
   mutate(buffer = ifelse(is.na(buffer),"2000",buffer)) %>%
   dplyr::rename(pval = p) %>%
-  mutate(correlation = ifelse(pval >= 0.2 | abs(correlation)<=0.1, NA, correlation)) %>%
+  mutate(correlation = ifelse(pval >= 0.2 | abs(correlation)<=0.08, NA, correlation)) %>%
   nest(-c(country))
 
 
-univ_glmm_spatial <- do.call(rbind.data.frame, model_univanalysis_results$spatial_corrs_glmm) %>% 
+univ_glmm_spatial <- do.call(rbind.data.frame, model_univanalysis_results$spatial_corrs_glmm) %>%
+  filter(term %in% c("WMD","BDE","BCH","WLS_2000", "WLS_1000", "WLS_500","WLS_250",
+                     "lsm_c_pland_2000_2_5","lsm_c_pland_2000_3_3","lsm_c_pland_2000_3_2","lsm_c_pland_2000_3_4","lsm_c_pland_2000_3_9","lsm_c_pland_2000_3_1","lsm_c_pland_2000_3_5",
+                     "lsm_c_pland_1000_2_5","lsm_c_pland_1000_3_3","lsm_c_pland_1000_3_2","lsm_c_pland_1000_3_4","lsm_c_pland_1000_3_9","lsm_c_pland_1000_3_1","lsm_c_pland_1000_3_5",
+                     "lsm_c_pland_500_2_5","lsm_c_pland_500_3_3","lsm_c_pland_500_3_2","lsm_c_pland_500_3_4","lsm_c_pland_500_3_9","lsm_c_pland_500_3_1","lsm_c_pland_500_3_5",
+                     "lsm_c_pland_250_2_5","lsm_c_pland_250_3_3","lsm_c_pland_250_3_2","lsm_c_pland_250_3_4","lsm_c_pland_250_3_9","lsm_c_pland_250_3_1","lsm_c_pland_250_3_5",
+                     "lsm_c_pland_2000_7_6","lsm_c_pland_2000_8_5","lsm_c_pland_2000_8_9","lsm_c_pland_2000_8_6","lsm_c_pland_2000_8_11","lsm_c_pland_2000_8_7","lsm_c_pland_2000_8_6","lsm_c_pland_2000_8_4","lsm_c_pland_2000_8_8",
+                     "lsm_c_pland_1000_7_6","lsm_c_pland_1000_8_5","lsm_c_pland_1000_8_9","lsm_c_pland_1000_8_6","lsm_c_pland_1000_8_11","lsm_c_pland_1000_8_7","lsm_c_pland_1000_8_6","lsm_c_pland_1000_8_4","lsm_c_pland_1000_8_8",
+                     "lsm_c_pland_500_7_6","lsm_c_pland_500_8_5","lsm_c_pland_500_8_9","lsm_c_pland_500_8_6","lsm_c_pland_500_8_11","lsm_c_pland_500_8_7","lsm_c_pland_500_8_6","lsm_c_pland_500_8_4","lsm_c_pland_500_8_8",
+                     "lsm_c_pland_250_7_6","lsm_c_pland_250_8_5","lsm_c_pland_250_8_9","lsm_c_pland_250_8_6","lsm_c_pland_250_8_11","lsm_c_pland_250_8_7","lsm_c_pland_250_8_6","lsm_c_pland_250_8_4","lsm_c_pland_250_8_8")) %>%
   mutate(model = "glmm univariate") %>%
   mutate(indicator = ifelse(indicator == "presence","Presence","Abundance")) %>%
   mutate(indicator2 = indicator) %>%
@@ -137,18 +153,20 @@ plots_univ_glmm_temporal <- univ_glmm_temporal %>%
 
 
 # BF : 
-#wrap_plots(plots_univ_spearman_temporal$univ_temporal[1][[1]],plots_univ_spearman_temporal$univ_temporal[2][[1]], ncol = 2, nrow = 1) 
-wrap_plots(plots_univ_glmm_temporal$univ_temporal[1][[1]],plots_univ_glmm_temporal$univ_temporal[2][[1]], ncol = 2, nrow = 1) 
+wrap_plots(plots_univ_spearman_temporal$univ_temporal[1][[1]],plots_univ_spearman_temporal$univ_temporal[2][[1]], ncol = 2, nrow = 1) 
+#wrap_plots(plots_univ_glmm_temporal$univ_temporal[1][[1]],plots_univ_glmm_temporal$univ_temporal[2][[1]], ncol = 2, nrow = 1) 
 
 # CI : 
-#wrap_plots(plots_univ_spearman_temporal$univ_temporal[3][[1]],plots_univ_spearman_temporal$univ_temporal[4][[1]], ncol = 2, nrow = 1) 
-wrap_plots(plots_univ_glmm_temporal$univ_temporal[3][[1]],plots_univ_glmm_temporal$univ_temporal[4][[1]], ncol = 2, nrow = 1) 
+wrap_plots(plots_univ_spearman_temporal$univ_temporal[3][[1]],plots_univ_spearman_temporal$univ_temporal[4][[1]], ncol = 2, nrow = 1) 
+#wrap_plots(plots_univ_glmm_temporal$univ_temporal[3][[1]],plots_univ_glmm_temporal$univ_temporal[4][[1]], ncol = 2, nrow = 1) 
 
 
 ######################
 ###### multivariate
 ######################
   
+res <-  readRDS("/home/ptaconet/Bureau/data_analysis/model_results_univanalysis14.rds")
+
 ## pdps
 pdps <- res %>%
   mutate(response_var = case_when(
@@ -156,15 +174,19 @@ pdps <- res %>%
     response_var == "ma_gambiae_ss" ~ "An. gambiae ss.",
     response_var == "ma_gambiae_sl" ~ "An. gambiae sl.",
     response_var == "ma_coluzzi" ~ "An. coluzzii")) %>%
-  mutate(rf_plots = pmap(list(rf,mod,response_var), ~fun_plot_pdp2(..1,..2,..3)))
+  mutate(rf_plots = pmap(list(rf,mod,response_var,code_pays), ~fun_plot_pdp2(..1,..2,..3, codepays = ..4)))
 
-plot_fun <- wrap_plots(pdps$rf_plots[[1]]$pdps, pdps$rf_plots[[4]]$pdps, nrow = 2, ncol = 1) # funestus
-plot_gam <-wrap_plots(pdps$rf_plots[[2]]$pdps, pdps$rf_plots[[5]]$pdps, nrow = 2, ncol = 1) # gambiae ss.
-plot_col <-wrap_plots(pdps$rf_plots[[3]]$pdps, pdps$rf_plots[[6]]$pdps, nrow = 2, ncol = 1) # coluzzii
+plot_fun_bf <- wrap_plots(pdps$rf_plots[[1]]$pdps, pdps$rf_plots[[4]]$pdps, nrow = 2, ncol = 1) # BF funestus
+plot_gam_bf <-wrap_plots(pdps$rf_plots[[2]]$pdps, pdps$rf_plots[[5]]$pdps, nrow = 2, ncol = 1) # BF gambiae ss.
+plot_col_bf <-wrap_plots(pdps$rf_plots[[3]]$pdps, pdps$rf_plots[[6]]$pdps, nrow = 2, ncol = 1) # BF coluzzii
+plot_fun_ci <- wrap_plots(pdps$rf_plots[[9]]$pdps, pdps$rf_plots[[10]]$pdps, nrow = 2, ncol = 1) # CI funestus
+plot_gam_ci <-wrap_plots(pdps$rf_plots[[7]]$pdps, pdps$rf_plots[[8]]$pdps, nrow = 2, ncol = 1) # CI gambiae ss.
 
-ggsave("figure5.png",plot_fun, path = "/home/ptaconet/phd/figures_article1", width = 155,height = 210,units = "mm", dpi = 600)
-ggsave("figure6.png",plot_gam, path = "/home/ptaconet/phd/figures_article1", width = 155,height = 210,units = "mm", dpi = 600)
-ggsave("figure7.png",plot_col, path = "/home/ptaconet/phd/figures_article1", width = 155,height = 210,units = "mm", dpi = 600)
+ggsave("bf_funestus.png",plot_fun_bf, path = "/home/ptaconet/phd/articles/article1/figures_article1", width = 155,height = 210,units = "mm", dpi = 600)
+ggsave("bf_gambiae.png",plot_gam_bf, path = "/home/ptaconet/phd/articles/article1/figures_article1", width = 155,height = 210,units = "mm", dpi = 600)
+ggsave("bf_coluzzii.png",plot_col_bf, path = "/home/ptaconet/phd/articles/article1/figures_article1", width = 155,height = 210,units = "mm", dpi = 600)
+ggsave("ci_gambiae.png",plot_gam_ci, path = "/home/ptaconet/phd/articles/article1/figures_article1", width = 155,height = 210,units = "mm", dpi = 600)
+ggsave("ci_funestus.png",plot_fun_ci, path = "/home/ptaconet/phd/articles/article1/figures_article1", width = 155,height = 210,units = "mm", dpi = 600)
 
 #wrap_plots(pdps$rf_plots_lto[[1]]$plot_interactions, pdps$rf_plots_lto[[2]]$plot_interactions, pdps$rf_plots_lto[[3]]$plot_interactions, pdps$rf_plots_lto[[4]]$plot_interactions, pdps$rf_plots_lto[[5]]$plot_interactions, pdps$rf_plots_lto[[6]]$plot_interactions, nrow = 3, ncol = 2, byrow = F)  + plot_layout(guides = 'collect')
 
@@ -613,8 +635,8 @@ for(i in 1:nrow(res)){
    a$data_tocollect <-  imp_opensource$data_tocollect <- "Open source - complex model"
    b$data_tocollect <- imp_tocollect$data_tocollect <- "To collect"
    c$data_tocollect <- imp_opensource_simple$data_tocollect <- "Open source - simple model"
-   a1$data_tocollect <-  imp_opensource$data_tocollect <- "Open source - complex model - trained on the other area"
-   c1$data_tocollect <- imp_opensource_simple$data_tocollect <- "Open source - simple model - trained on the other area"
+   a1$data_tocollect <- "Open source - complex model - trained on the other area"
+   c1$data_tocollect <- "Open source - simple model - trained on the other area"
    
    a$weeks_before <-  b$weeks_before <-  c$weeks_before <-  a1$weeks_before <-  c1$weeks_before <- imp_opensource$weeks_before <- imp_tocollect$weeks_before <- imp_opensource_simple$weeks_before <-  j - 1
    a$mod <-  b$mod <-  c$mod <- imp_opensource$mod <- imp_tocollect$mod <- imp_opensource_simple$mod <- res$mod[[i]]
@@ -664,10 +686,32 @@ p1=ggplot(df_cv_quality_presence, aes(x=weeks_before,y=AUC,colour=data_tocollect
 df_cv_quality_presence2 <- df_cv %>%
   filter(mod=="presence") %>%
   group_by(species,data_tocollect, weeks_before,nummission,code_pays,mod, codevillage) %>%
-  summarise(pred=sum(pred), obs=sum(obs)) %>%
+  summarise(pred=mean(pred), obs=mean(obs)) %>%
   pivot_longer(c(pred,obs))
 
 p2 = ggplot(df_cv_quality_presence2 %>% filter(weeks_before == 0, code_pays == "CI", species == "An. gambiae s.s.", data_tocollect == "To collect"), aes(x=nummission,y=value,colour=name)) + geom_line(aes(group=name)) +  geom_point() + facet_wrap(.~codevillage) + theme_light()
+
+
+df_cv_quality_presence2 <- df_cv %>%
+  filter(mod=="presence") %>%
+  filter(weeks_before==0, data_tocollect=="To collect", species == "Anopheles genus") %>%
+  #mutate(pred=exp(pred-1),obs=exp(obs-1)) %>%
+  group_by(species,data_tocollect, weeks_before,code_pays,mod, codevillage) %>%
+  summarise(pred=mean(pred), obs=mean(obs))
+df_cv_quality_presence <- df_cv %>%
+  filter(mod=="presence") %>%
+  #mutate(pred=exp(pred-1),obs=exp(obs-1)) %>%
+  group_by(species,data_tocollect, weeks_before,code_pays,mod, codevillage) %>%
+  summarise(pred=mean(pred), obs=mean(obs)) %>%
+  pivot_longer(c(pred,obs)) %>%
+  filter(!(name=="obs" & weeks_before>0)) %>%
+  mutate(name = ifelse(name=="pred",paste(name,weeks_before,"w. bef."),name)) %>%
+  as_tibble() %>%
+  mutate(codevillage=fct_relevel(codevillage,levels(fct_reorder(df_cv_quality_presence2$codevillage, -df_cv_quality_presence2$obs) )))
+
+
+ggplot(df_cv_quality_presence %>% filter(species == "Anopheles genus", data_tocollect == "To collect"), aes(x=codevillage,y=value,colour=name)) + geom_line(aes(group=name)) + facet_wrap(.~code_pays, ncol = 5, scales = "free") + geom_point() + theme_light()
+
 
 
 # abondance
@@ -689,9 +733,46 @@ df_cv_quality_abundance <- df_cv %>%
   #mutate(pred=exp(pred-1),obs=exp(obs-1)) %>%
   group_by(species,data_tocollect, weeks_before,nummission,code_pays,mod, codevillage) %>%
   summarise(pred=sum(pred), obs=sum(obs)) %>%
-  pivot_longer(c(pred,obs))
+  pivot_longer(c(pred,obs)) %>%
+  filter(!(name=="obs" & weeks_before>0)) %>%
+  mutate(name = ifelse(name=="pred",paste(name,weeks_before,"w. bef."),name))
 
-ggplot(df_cv_quality_abundance %>% filter(weeks_before == 0, code_pays == "CI", species == "Anopheles genus", data_tocollect == "To collect"), aes(x=nummission,y=value,colour=name)) + geom_line(aes(group=name)) +  geom_point() + facet_wrap(.~codevillage) + theme_light()
+ggplot(df_cv_quality_abundance %>% filter(code_pays == "CI", species == "Anopheles genus", data_tocollect == "Open source - complex model - trained on the other area"), aes(x=nummission,y=value,colour=name)) + geom_line(aes(group=name)) +  geom_point() + facet_wrap(.~codevillage) + theme_light()
+
+
+df_cv_quality_abundance <- df_cv %>%
+  filter(mod=="abundance") %>%
+  #mutate(pred=exp(pred-1),obs=exp(obs-1)) %>%
+  group_by(species,data_tocollect, weeks_before,nummission,code_pays,mod) %>%
+  summarise(pred=sum(pred), obs=sum(obs)) %>%
+  pivot_longer(c(pred,obs)) %>%
+  filter(!(name=="obs" & weeks_before>0)) %>%
+  mutate(name = ifelse(name=="pred",paste(name,weeks_before,"w. bef."),name))
+
+ggplot(df_cv_quality_abundance %>% filter(species == "Anopheles genus"), aes(x=nummission,y=value,colour=name)) + geom_line(aes(group=name)) + facet_wrap(code_pays~data_tocollect, ncol = 5, scales = "free_y") + geom_point() + theme_light()
+
+
+df_cv_quality_abundance2 <- df_cv %>%
+  filter(mod=="abundance") %>%
+  filter(weeks_before==0, data_tocollect=="To collect", species == "Anopheles genus") %>%
+  #mutate(pred=exp(pred-1),obs=exp(obs-1)) %>%
+  group_by(species,data_tocollect, weeks_before,code_pays,mod, codevillage) %>%
+  summarise(pred=sum(pred), obs=sum(obs))
+df_cv_quality_abundance <- df_cv %>%
+  filter(mod=="abundance") %>%
+  #mutate(pred=exp(pred-1),obs=exp(obs-1)) %>%
+  group_by(species,data_tocollect, weeks_before,code_pays,mod, codevillage) %>%
+  summarise(pred=sum(pred), obs=sum(obs)) %>%
+  pivot_longer(c(pred,obs)) %>%
+  filter(!(name=="obs" & weeks_before>0)) %>%
+  mutate(name = ifelse(name=="pred",paste(name,weeks_before,"w. bef."),name)) %>%
+  as_tibble() %>%
+  mutate(codevillage=fct_relevel(codevillage,levels(fct_reorder(df_cv_quality_abundance2$codevillage, -df_cv_quality_abundance2$obs) )))
+
+
+ggplot(df_cv_quality_abundance %>% filter(species == "Anopheles genus", data_tocollect == "Open source - complex model - trained on the other area"), aes(x=codevillage,y=value,colour=name)) + geom_line(aes(group=name)) + facet_wrap(.~code_pays, ncol = 5, scales = "free") + geom_point() + theme_light()
+
+
 
 df_cv_quality_abundance <- df_cv %>%
   filter(mod=="abundance") %>%
@@ -739,12 +820,18 @@ df_imp <- fun_get_predictors_labels(table = df_imp, vector_predictors_name = "va
 
 df_imp <- df_imp %>%
   group_by(label,label_group,data_tocollect,weeks_before,mod,code_pays,species) %>%
-  summarise(importance = sum(importance))
+  summarise(importance = mean(importance)) %>%
+  mutate(label_group = ifelse(label_group %in% c("Landscape - wetlands","Landscape - other"),"Landscape",label_group))
 
-ggplot(df_imp %>% filter(mod=="presence", code_pays=="BF", data_tocollect == "Open source - complex model"), aes(x=weeks_before,y=label, fill = sqrt(importance), group = label_group)) + geom_tile(color = "white", show.legend = TRUE, size = 0.4) + facet_grid(rows = "label_group", scales = "free") +  theme_bw() + scale_fill_continuous(type = "viridis")
-ggplot(df_imp %>% filter(mod=="presence", code_pays=="BF", data_tocollect == "Open source - complex model"), aes(x=weeks_before,y=label, size = importance, group = label_group)) + geom_point() + facet_grid(rows = "label_group", scales = "free") +  theme_bw()
+# satellite - open source
+# satellite - field work needed
+# field
 
-## observed vs predicted
+#ggplot(df_imp %>% filter(mod=="presence", code_pays=="BF", data_tocollect == "Open source - complex model"), aes(x=weeks_before,y=label, fill = sqrt(importance), group = label_group)) + geom_tile(color = "white", show.legend = TRUE, size = 0.4) + facet_grid(rows = "label_group", scales = "free") +  theme_bw() + scale_fill_continuous(type = "viridis")
+ggplot(df_imp %>% filter(mod=="presence", code_pays=="BF", data_tocollect == "Open source - complex model", species == "Anopheles genus"), aes(x=weeks_before,y=tidytext::reorder_within(label,importance,label_group), label = lab,size = importance, group = label_group)) + geom_point() + facet_grid(rows = "label_group", scales = "free") +  theme_bw()
+
+ggplot(df_imp %>% filter(mod=="presence", data_tocollect == "Open source - complex model", species == "Anopheles genus"), aes(x=weeks_before,y=fct_reorder(label,importance, max), size = importance, colour = label_group)) + geom_point() +  theme_bw() + facet_grid(.~code_pays)
+ggplot(df_imp %>% filter(mod=="presence", data_tocollect == "Open source - complex model", species == "Anopheles genus"), aes(x=weeks_before,y=fct_reorder(label,importance, max),  fill = importance)) + geom_tile( colour = "black") +  theme_bw() + facet_grid(fct_reorder(label_group,-importance, max)~code_pays, scales = 'free', space = "free")
 
 
 

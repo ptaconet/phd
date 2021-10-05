@@ -111,6 +111,19 @@ df_points_metadata_entomo <- df_points_metadata_entomo %>%
 sf_points_metadata_entomo <- sf::st_as_sf(df_points_metadata_entomo,coords = c("longitude", "latitude"), crs = 4326)
 df_sampling_points_entomo <- eodataflow::prepare_df_points(df_points_metadata_entomo)
 
+# entomo - village level
+df_points_metadata_entomo_villagelevel <- df_points_metadata_entomo %>% 
+  st_drop_geometry() %>% 
+  dplyr::filter(codepays==country) %>% 
+  dplyr::select("codevillage","date_capture","nummission") %>% 
+  unique() %>%
+  mutate(idpointdecapture = paste0(nummission,codevillage)) %>%
+  left_join(sf_villages) %>%
+  dplyr::select("idpointdecapture","date_capture","X","Y") %>% 
+  dplyr::rename(id=idpointdecapture,date=date_capture,longitude=X,latitude=Y)
+sf_points_metadata_entomo_villagelevel <- sf::st_as_sf(df_points_metadata_entomo_villagelevel,coords = c("longitude", "latitude"), crs = 4326)
+df_sampling_points_entomo_villagelevel <- eodataflow::prepare_df_points(df_points_metadata_entomo_villagelevel)
+
 # epidemio
 df_points_metadata_epidemio <- df_points_metadata_epidemio %>% 
   st_drop_geometry() %>% 
@@ -125,6 +138,7 @@ df_sampling_points_epidemio <- eodataflow::prepare_df_points(df_points_metadata_
 df_points_metadata <- rbind(df_points_metadata_entomo,df_points_metadata_epidemio)
 sf_points_metadata <- sf::st_as_sf(df_points_metadata,coords = c("longitude", "latitude"), crs = 4326)
 df_sampling_points <- eodataflow::prepare_df_points(df_points_metadata)
+
 
 roi <- eodataflow::prepare_roi(df_points_metadata,buffer_sizes_v1)
 utm_zone <- eodataflow:::.getUTMepsg(roi)
@@ -196,21 +210,21 @@ rasts_lst_min <- eodataflow::prepare_mixed_products(rasts_lst_night_terra,rasts_
 # - LST day Weekly (aka. LST max)
 # - LST nigth Weekly (aka. LST min)
 TMAX8 <- eodataflow::extract_var_on_buffers(rasts_lst_max, df_sampling_points$sf_points, buffer_sizes_v1, "mean", TRUE, df_sampling_points$date, code_indice = "TMAX8")
-TMAX8$val <- TMAX8_A2$val - 273.15
+TMAX8$val <- TMAX8$val - 273.15
 TMIN8 <- eodataflow::extract_var_on_buffers(rasts_lst_min, df_sampling_points$sf_points, buffer_sizes_v1, "mean", TRUE, df_sampling_points$date, code_indice = "TMIN8")
-TMIN8$val <- TMIN8_A2$val - 273.15
+TMIN8$val <- TMIN8$val - 273.15
 ```
 
 Fill the NAs in daily and weekly products and compute temperature amplitude :
 
 ```{r }
 # Fill NAs for Daily and Weekly maximum temperature
-TMx_M_nafill <- eodataflow::ts_fillna_l1tol5(TMAX1_wNA,TMAX7_A2)
+TMx_M_nafill <- eodataflow::ts_fillna_l1tol5(TMAX1_wNA,TMAX8)
 TMAX1 <- TMx_M_nafill[[1]]
 TMAX8 <- TMx_M_nafill[[2]]
 
 # Fill NAs for Daily and Weekly minimum temperature
-TNx_M_nafill <- eodataflow::ts_fillna_l1tol5(TMIN1_wNA,TMIN7_A2)
+TNx_M_nafill <- eodataflow::ts_fillna_l1tol5(TMIN1_wNA,TMIN8)
 TMIN1 <- TNx_M_nafill[[1]]
 TMIN8 <- TNx_M_nafill[[2]]
 
@@ -236,9 +250,9 @@ Save to disk :
 write.csv(TMAX1, file.path("data",roi_name,"TMAX1.csv"), row.names = F)
 write.csv(TMIN1, file.path("data",roi_name,"TMIN1.csv"), row.names = F)
 write.csv(TAMP1, file.path("data",roi_name,"TAMP1.csv"), row.names = F)
-write.csv(TMAX7, file.path("data",roi_name,"TMAX8.csv"), row.names = F)
-write.csv(TMIN7, file.path("data",roi_name,"TMIN8.csv"), row.names = F)
-write.csv(TAMP7, file.path("data",roi_name,"TAMP8.csv"), row.names = F)
+write.csv(TMAX8, file.path("data",roi_name,"TMAX8.csv"), row.names = F)
+write.csv(TMIN8, file.path("data",roi_name,"TMIN8.csv"), row.names = F)
+write.csv(TAMP8, file.path("data",roi_name,"TAMP8.csv"), row.names = F)
 ```
 
 

@@ -162,6 +162,39 @@
     
     th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture[, colSums(is.na(th_trmetrics_entomo_postedecapture)) != nrow(th_trmetrics_entomo_postedecapture)]
 
+    if(code_pays == "BF"){
+      th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>%
+        mutate(season = case_when(nummission %in% c("3","4") ~ "wet",
+                                  nummission %in% c("1","5","6") ~ "dry-cold",
+                                  nummission %in% c("2","7") ~ "dry-hot")) %>%
+        mutate(season = fct_relevel(season,c("wet","dry-cold","dry-hot"))) %>%
+        mutate(period_interv = ifelse(nummission %in% c("1","2","3"),'pre-intervention','post-intervention')) %>% 
+        mutate(period_interv = fct_relevel(period_interv,c("pre-intervention","post-intervention")))
+    } else if(code_pays=="CI"){
+      th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>%
+        mutate(season = case_when(nummission %in% c("1","5") ~ "wet",
+                                  nummission %in% c("2","6","7") ~ "dry-cold",
+                                  nummission %in% c("3","4","8") ~ "dry-hot")) %>%
+        mutate(season = fct_relevel(season,c("wet","dry-cold","dry-hot"))) %>%
+        mutate(period_interv = ifelse(nummission %in% c("1","2","3","4"),'pre-intervention','post-intervention')) %>% 
+        mutate(period_interv = fct_relevel(period_interv,c("pre-intervention","post-intervention")))
+      
+    }
+    
+    if(code_pays == "CI"){
+      th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>%
+        mutate(VCM = ifelse(period_interv=="pre-intervention","< LLIN dist.",VCM)) %>%
+        mutate(VCM = fct_relevel(VCM, c("< LLIN dist.","LLIN","LLIN + IEC","LLIN + IRS","LLIN + Larv.")))
+      th_trmetrics_entomo_postedecapture$VCM <- droplevels(th_trmetrics_entomo_postedecapture$VCM)
+      
+    }
+    
+    if(code_pays == "CI" & response_var=="ma_funestus_ss"){
+      th_trmetrics_entomo_postedecapture <- th_trmetrics_entomo_postedecapture %>%
+        filter(VCM %in% c("< LLIN dist.","LLIN + IRS"))
+    }
+    
+    
     rf_lto <- NULL
     rf_llo <- NULL
     spatial_corrs_spearman <- NULL
@@ -320,7 +353,7 @@
      mutate(m2 = map2(data,m, ~.x[.y,"stock"]))
 
    cols_to_keep_spacevar <- as.character(unlist(spatial_corrs_spearman2$m2))
-   cols_to_keep_spacevar <- cols_to_keep_spacevar[!grepl('_3_11|_3_8|_3_10|_3_6|3_7|7_10', cols_to_keep_spacevar)]
+   cols_to_keep_spacevar <- cols_to_keep_spacevar[!grepl('_3_11|_3_8|_3_10|_3_6|3_7|8_10|8_3|8_2', cols_to_keep_spacevar)]
 
    cols_to_keep_timevar <- ccms_spearman %>%
      purrr::map_chr(.,~rownames(.)[which.max(.$abs_corr)])
@@ -389,7 +422,9 @@
     }
 
     
-    
+   if(code_pays=="CI" & response_var=="ma_funestus_ss"){
+     predictors <- predictors[!grepl('_8_5|_8_1|_8_9', predictors)]
+     }
     
     
     # # spatial_vars <- fun_feature_forward_selection(
@@ -497,7 +532,7 @@
   # 9 : BF avec tous les résultats
   # 10 : BF + CI, sans les RF , univariate avec glmm et spearman   center = TRUE et scale = TRUE
   # 12 : comme 9, avec en plus les données micro-climatiques
-  
+  # 14 : BF + CI, avec RF, bon pour les pdps des analyses multivariées
   
   
   df_input_params_glmm <- tibble(response_var = character(), code_pays = character(), mod = character())
