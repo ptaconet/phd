@@ -71,6 +71,7 @@ univ_spearman_spatial <- do.call(rbind.data.frame, model_univanalysis_results$sp
   mutate(indicator = ifelse(indicator == "presence","Presence","Abundance")) %>%
   mutate(buffer = ifelse(is.na(buffer),"2000",buffer)) %>%
   dplyr::rename(pval = p) %>%
+  mutate(correlation = ifelse((country=="CI" & pval <= 0.2 & correlation >=0.08 & correlation < 0.1), 0.1, correlation)) %>%
   mutate(correlation = ifelse(pval >= 0.2 | abs(correlation)<=0.08, NA, correlation)) %>%
   nest(-c(country))
 
@@ -209,36 +210,58 @@ model_validation <- res %>%
 
 
 # presence (courbes AUC)
- plots_validation_presence <- model_validation$df_cv2[[1]] %>%  # AUC plots
+ plots_validation_presence_bf <- model_validation$df_cv2[[1]] %>%  # AUC plots BF
    nest(-c(species)) %>%
    mutate(plots_validation = map2(data, species, ~fun_plot_validation_presence(..1,..2)))
 
+ plots_validation_presence_ci <- model_validation$df_cv2[[3]] %>%  # AUC plots CI
+   nest(-c(species)) %>%
+   mutate(plots_validation = map2(data, species, ~fun_plot_validation_presence(..1,..2)))
+ 
 
  
  # abundance (mean absolute error)
- plots_validation_abundance <- model_validation$df_cv2[[2]] %>% 
+ plots_validation_abundance_bf <- model_validation$df_cv2[[2]] %>% # abundance BF
    nest(-c(species)) %>%
-   mutate(plots_validation = map2(data, species, ~fun_plot_validation_abundance(..1,..2)))
+   mutate(plots_validation = map2(data, species, ~fun_plot_validation_abundance(..1,..2,"BF")))
  
+ plots_validation_abundance_ci <- model_validation$df_cv2[[4]] %>% # abundance CI
+   nest(-c(species)) %>%
+   mutate(plots_validation = map2(data, species, ~fun_plot_validation_abundance(..1,..2,"CI")))
  
-wrap_plots(list(plots_validation_presence$plots_validation[[1]],
-                 plots_validation_presence$plots_validation[[2]],
-                 plots_validation_presence$plots_validation[[3]],
+# presence bf
+wrap_plots(list(plots_validation_presence_bf$plots_validation[[1]],
+                plots_validation_presence_bf$plots_validation[[2]],
+                plots_validation_presence_bf$plots_validation[[3]],
                  model_validation$plot_validation[[1]][[2]],
                  model_validation$plot_validation[[1]][[3]],
                  model_validation$plot_validation[[1]][[1]]),
             nrow = 2, ncol = 3) + plot_layout(guides = 'collect', heights = c(1, 2))
 
 
-
-wrap_plots(list(plots_validation_abundance$plots_validation[[1]],
-                 plots_validation_abundance$plots_validation[[2]],
-                 plots_validation_abundance$plots_validation[[3]], 
+# abundance bf
+wrap_plots(list(plots_validation_abundance_bf$plots_validation[[1]],
+                 plots_validation_abundance_bf$plots_validation[[2]],
+                 plots_validation_abundance_bf$plots_validation[[3]], 
                 model_validation$plot_validation[[2]][[2]],
                  model_validation$plot_validation[[2]][[3]],
                  model_validation$plot_validation[[2]][[1]]),
             nrow = 2, ncol = 3) + plot_layout(guides = 'collect', heights = c(1, 2))
  
+# presence ci
+wrap_plots(list(plots_validation_presence_ci$plots_validation[[2]],
+                plots_validation_presence_ci$plots_validation[[1]],
+                model_validation$plot_validation[[3]][[1]],
+                model_validation$plot_validation[[3]][[2]]),
+           nrow = 2, ncol = 2) + plot_layout(guides = 'collect', heights = c(1, 2))
+
+
+# abundance ci
+wrap_plots(list(plots_validation_abundance_ci$plots_validation[[2]],
+                plots_validation_abundance_ci$plots_validation[[1]],
+                model_validation$plot_validation[[4]][[1]],
+                model_validation$plot_validation[[4]][[2]]),
+           nrow = 2, ncol = 2) + plot_layout(guides = 'collect', heights = c(1, 2))
  
 ######################
 ###### resistances
@@ -737,7 +760,7 @@ df_cv_quality_abundance <- df_cv %>%
   filter(!(name=="obs" & weeks_before>0)) %>%
   mutate(name = ifelse(name=="pred",paste(name,weeks_before,"w. bef."),name))
 
-ggplot(df_cv_quality_abundance %>% filter(code_pays == "CI", species == "Anopheles genus", data_tocollect == "Open source - complex model - trained on the other area"), aes(x=nummission,y=value,colour=name)) + geom_line(aes(group=name)) +  geom_point() + facet_wrap(.~codevillage) + theme_light()
+ggplot(df_cv_quality_abundance %>% filter(code_pays == "CI", species == "An. gambiae s.s.", data_tocollect == "To collect"), aes(x=nummission,y=value,colour=name)) + geom_line(aes(group=name)) +  geom_point() + facet_wrap(.~codevillage) + theme_light()
 
 
 df_cv_quality_abundance <- df_cv %>%
